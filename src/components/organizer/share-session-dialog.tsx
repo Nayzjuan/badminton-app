@@ -3,8 +3,9 @@
 // ============================================================
 // ShareSessionDialog — QR code + copy link for organizer
 // ============================================================
-// Generates a /play/join?session=[id] URL for players to scan
-// and join the session without needing to navigate manually.
+// Generates a /j/[sessionId] URL for players to scan or open in an
+// in-app browser. Session id lives in the path so wrappers that encode
+// or strip `?` cannot 404 the link.
 // ============================================================
 
 import { useState, useEffect, useRef, useSyncExternalStore } from "react";
@@ -17,8 +18,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { useClubSlug } from "@/hooks/use-club-slug";
-import { clubJoin } from "@/lib/club-paths";
+import { sessionShare } from "@/lib/club-paths";
 
 // `window.location.origin` cannot be read while rendering on the server, and
 // reading it during the hydrating render would desync from the server HTML.
@@ -49,21 +49,19 @@ export function ShareSessionDialog({
   onOpenChange,
 }: ShareSessionDialogProps) {
   const isControlled = open !== undefined;
-  const clubSlug = useClubSlug();
   const [copied, setCopied] = useState(false);
   // Tracks the "copied" reset timer so we can cancel it if the component
   // unmounts before the 2-second window expires (prevents setState on unmounted component).
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Build the URL client-side so window.location.origin is available. On a club
-  // route the QR points at /c/[slug]/join; otherwise the legacy /play/join shim
-  // (which forwards to the club join) keeps older surfaces working.
+  // Build the URL client-side so window.location.origin is available. Always
+  // the short /j/[id] share path — no query string, no club slug.
   const origin = useSyncExternalStore(
     subscribeToOrigin,
     getOriginSnapshot,
     getServerOriginSnapshot
   );
-  const path = clubSlug ? clubJoin(clubSlug, sessionId) : `/play/join?session=${sessionId}`;
+  const path = sessionShare(sessionId);
   // Stays "" until the origin is known; every consumer below treats "" as
   // "not generated yet" (skeleton QR, disabled copy button, no-op handleCopy).
   const joinUrl = origin ? `${origin}${path}` : "";

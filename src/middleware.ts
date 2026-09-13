@@ -6,10 +6,22 @@
 // subscriptions silently disconnect.
 // ============================================================
 
-import { type NextRequest } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/utils/supabase/middleware";
+import { resolveJoinRedirect } from "@/lib/repair-encoded-query-path";
 
 export async function middleware(request: NextRequest) {
+  // In-app browsers sometimes encode `?session=` into the path (`%3F`).
+  // Printed `?session=` links also land here — next.config redirects
+  // cannot drop the query (Next always forwards it), so the clean
+  // path-form 308 has to happen in middleware.
+  const repaired = resolveJoinRedirect(request.nextUrl.pathname, request.nextUrl.search);
+  if (repaired) {
+    const url = request.nextUrl.clone();
+    url.pathname = repaired;
+    url.search = "";
+    return NextResponse.redirect(url, 308);
+  }
   return await updateSession(request);
 }
 

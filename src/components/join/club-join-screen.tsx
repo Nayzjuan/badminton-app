@@ -1,0 +1,100 @@
+// ============================================================
+// Club QR / join screen — shared by /c/[slug]/join[/session] and /j/[session]
+// ============================================================
+// PUBLIC (outside the (app)/(full) membership gate — a fresh scanner isn't a
+// member yet). Resolves the club + (optional) session, then:
+//   • authed + has profile → auto-enroll in the club, queue them for the
+//     session (if any), and route to the club-scoped destination.
+//   • fresh visitor → registration form pre-wired with the club + session, so
+//     signInAnonymously enrolls them and routes into the club in one step.
+// ============================================================
+
+import { redirect, notFound } from "next/navigation";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
+import { getClubBySlug, ensureClubMembership } from "@/lib/clubs";
+import { lookupActiveJoinSession } from "@/lib/resolve-session-join";
+import { clubPlay, clubBase } from "@/lib/club-paths";
+import { LoginForm } from "@/components/login-form";
+import { enforceRenameGate } from "@/lib/rename-gate";
+
+export async function ClubJoinScreen({
+  clubSlug,
+  sessionId,
+}: {
+  clubSlug: string;
+  sessionId?: string;
+}) {
+  const club = await getClubBySlug(clubSlug);
+  if (!club) notFound();
+
+  const supabase = await createServerSupabaseClient();
+
+  // Validate the session (if a QR/share carried one): must be active AND belong
+  // to THIS club. A bad / inactive / cross-club id degrades to a plain club join.
+  let sessionName: string | null = null;
+  if (sessionId) {
+    const found = await lookupActiveJoinSession(sessionId);
+    if (found.ok && found.clubSlug === clubSlug) {
+      sessionName = found.name;
+    }
+  }
+  const validSessionId = sessionName ? sessionId : undefined;
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (user) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id, needs_rename, needs_name_confirm")
+      .eq("id", user.id)
+      .single();
+    if (profile) {
+      // Returning player — enroll in the club, queue for the session, route in.
+      const enroll = await ensureClubMembership(clubSlug, user.id);
+      if (!enroll.ok) {
+        // Enrollment write failed — don't strand them on a member-gated route
+        // they'd be bounced out of. Send them to their own player context
+        // (/play resolves their club or the join-via-QR screen), not /clubs.
+        redirect("/play");
+      }
+      const dest = validSessionId ? clubPlay(clubSlug, validSessionId) : clubBase(clubSlug);
+      await enforceRenameGate(profile, dest);
+      // Announce the join on the destination ONLY when this scan actually
+      // added them (first join / reactivation) — not when already a member.
+      const joinedQs = enroll.joined ? "?joined=1" : "";
+      if (validSessionId) {
+        await supabase
+          .from("queue_entries")
+          .upsert(
+            { session_id: validSessionId, player_id: user.id, status: "waiting" },
+            { onConflict: "session_id,player_id", ignoreDuplicates: true }
+          );
+        redirect(clubPlay(clubSlug, validSessionId) + joinedQs);
+      }
+      redirect(clubBase(clubSlug) + joinedQs);
+    }
+  }
+
+  // Fresh visitor — registration enrolls + routes via the club_slug hidden field.
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-12">
+      <div className="mb-8 w-full max-w-sm sm:max-w-md">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center dark:border-amber-800/50 dark:bg-amber-950/20">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-amber-700 dark:text-amber-400">
+            {sessionName ? "Joining Session" : "Joining Club"}
+          </p>
+          <h1 className="text-xl font-black tracking-tight text-foreground">
+            {sessionName ?? club.name}
+          </h1>
+          {sessionName && (
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-muted-foreground">{club.name}</p>
+          )}
+        </div>
+      </div>
+
+      <LoginForm sessionId={validSessionId} clubSlug={clubSlug} />
+    </main>
+  );
+}

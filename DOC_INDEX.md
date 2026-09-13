@@ -18,7 +18,7 @@ After a context compaction, do **not** re-read any of this.
 | `CLAUDE.md` | 11 KB | The rules. Read this in full — it is the only doc that is not optional. |
 | `HANDOFF.md` | 10 KB | Onboarding: repo paths, Supabase/Vercel connector discovery, workflow rules. |
 | `AGENTS.md` | 327 B | Next.js 16 is not the Next.js in your training data. Read before any Next API. |
-| `MEMORY.md` | 39 KB | Current state only: what is in flight, what is open, migration → prod stamps. |
+| `MEMORY.md` | 40 KB | Current state only: what is in flight, what is open, migration → prod stamps. |
 | `README.md` | 1 KB | Public-facing project readme. |
 | `PRODUCT.md` | 4 KB | What the product is for, in the user's language. |
 | `MATCHMAKING.md` | 20 KB | Standalone narrative of the matchmaking engine. |
@@ -26,7 +26,7 @@ After a context compaction, do **not** re-read any of this.
 
 ---
 
-## `APP_MANIFEST.md` — 397 KB
+## `APP_MANIFEST.md` — 400 KB
 
 | Section | Lines | Read with |
 |---|---|---|
@@ -84,65 +84,65 @@ After a context compaction, do **not** re-read any of this.
 | &nbsp;&nbsp;&nbsp;&nbsp;3.8c Google OAuth — Sign-in & Account Upgrade | 1123–1193 | `sed -n '1123,1193p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;3.8d Leaderboard read lockdown (2026-07-22) | 1194–1219 | `sed -n '1194,1219p' APP_MANIFEST.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;3.9 Leaderboard | 1220–1241 | `sed -n '1220,1241p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.10 QR-Code Session Join | 1242–1251 | `sed -n '1242,1251p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.11 H2H (Head-to-Head) Strip | 1252–1265 | `sed -n '1252,1265p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.12 TV Scoreboard | 1266–1273 | `sed -n '1266,1273p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.13 Pocket Ping (Push Notifications) | 1274–1309 | `sed -n '1274,1309p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.14 Step Out / Soft Pause | 1310–1324 | `sed -n '1310,1324p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.14b Queue — List / By-Skill view toggle | 1325–1341 | `sed -n '1325,1341p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.15 Player Self-Scoring | 1342–1349 | `sed -n '1342,1349p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.16 My Session History | 1350–1363 | `sed -n '1350,1363p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.17 Stateless Organizer Auth / Session Auto-Discovery | 1364–1371 | `sed -n '1364,1371p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.18 UUID Input Validation (Cross-cutting) | 1372–1388 | `sed -n '1372,1388p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.19 Checkout / Leave Session | 1389–1416 | `sed -n '1389,1416p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.20 Wait-time Monitor (Bottleneck Detection) | 1417–1440 | `sed -n '1417,1440p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.21 Fix Player Record (Historical Roster Correction) | 1441–1480 | `sed -n '1441,1480p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.22 Live Match Player Swap (Active Court Roster Correction) | 1481–1521 | `sed -n '1481,1521p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.22a RPC execute lockdown + live-swap session binding (2026-07-23) | 1522–1558 | `sed -n '1522,1558p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.23–3.44 Incident write-ups (moved out of this file) | 1559–1586 | `sed -n '1559,1586p' APP_MANIFEST.md` |
-| **4. UI/UX Conventions (Impeccable Standards)** | 1587–1588 | `sed -n '1587,1588p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;4.1 Design System — "Court Nights" Theme | 1589–1592 | `sed -n '1589,1592p' APP_MANIFEST.md` |
-| **Font Stack — 4 typefaces, 4 roles** | 1593–1603 | `sed -n '1593,1603p' APP_MANIFEST.md` |
-| **Color Space — OKLCH (perceptually uniform)** | 1604–1607 | `sed -n '1604,1607p' APP_MANIFEST.md` |
-| **Semantic tokens — Light mode (`:root`)** | 1608–1624 | `sed -n '1608,1624p' APP_MANIFEST.md` |
-| **Semantic tokens — Dark mode (`.dark`)** | 1625–1639 | `sed -n '1625,1639p' APP_MANIFEST.md` |
-| **Organizer Command-Center Token Namespace (`cc-*`)** | 1640–1661 | `sed -n '1640,1661p' APP_MANIFEST.md` |
-| **Key components added in the revamp** | 1662–1671 | `sed -n '1662,1671p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;4.2 Color Semantic Language | 1672–1686 | `sed -n '1672,1686p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;4.3 Typography Hierarchy | 1687–1701 | `sed -n '1687,1701p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;4.4 Spacing Conventions | 1702–1710 | `sed -n '1702,1710p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;4.5 The "No Box-in-a-Box" Rule | 1711–1720 | `sed -n '1711,1720p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;4.6 Anti-Pattern Prohibitions | 1721–1736 | `sed -n '1721,1736p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;4.7 Animations & Transitions | 1737–1750 | `sed -n '1737,1750p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;4.8 Component Patterns | 1751–1796 | `sed -n '1751,1796p' APP_MANIFEST.md` |
-| **5. Realtime Architecture** | 1797–1824 | `sed -n '1797,1824p' APP_MANIFEST.md` |
-| **6. Architectural Patterns & Rules** | 1825–1826 | `sed -n '1825,1826p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Server Action Convention | 1827–1874 | `sed -n '1827,1874p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;dnd-kit Isolation | 1875–1885 | `sed -n '1875,1885p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;TypeScript Convention | 1886–1892 | `sed -n '1886,1892p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Service Client Rule | 1893–1896 | `sed -n '1893,1896p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;PostgREST Gotchas | 1897–1901 | `sed -n '1897,1901p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Null-guard on Draft Functions | 1902–1907 | `sed -n '1902,1907p' APP_MANIFEST.md` |
-| **7. Testing** | 1908–1909 | `sed -n '1908,1909p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Unit Tests (Vitest) | 1910–2031 | `sed -n '1910,2031p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;E2E Tests (Playwright) | 2032–2059 | `sed -n '2032,2059p' APP_MANIFEST.md` |
-| **Post-deploy smoke (`.github/workflows/post-deploy-smoke.yml`)** | 2060–2103 | `sed -n '2060,2103p' APP_MANIFEST.md` |
-| **Nightly E2E regression (`.github/workflows/e2e-regression.yml`)** | 2104–2116 | `sed -n '2104,2116p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Integration Tests (Vitest — live Supabase) | 2117–2154 | `sed -n '2117,2154p' APP_MANIFEST.md` |
-| **The migration set must replay from scratch (2026-07-22)** | 2155–2237 | `sed -n '2155,2237p' APP_MANIFEST.md` |
-| **`after()` in integration tests** | 2238–2264 | `sed -n '2238,2264p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Test Helpers & Fixtures | 2265–2279 | `sed -n '2265,2279p' APP_MANIFEST.md` |
-| **8. File Map** | 2280–2533 | `sed -n '2280,2533p' APP_MANIFEST.md` |
-| **9. Known Gotchas** | 2534–2570 | `sed -n '2534,2570p' APP_MANIFEST.md` |
-| **10. Digital Twin — Interactive Architecture Documentation** | 2571–2576 | `sed -n '2571,2576p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Purpose | 2577–2580 | `sed -n '2577,2580p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Pages (all live as of 2026-05-09) | 2581–2594 | `sed -n '2581,2594p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Key Architecture Decisions | 2595–2613 | `sed -n '2595,2613p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Known Dev-Mode Quirk | 2614–2617 | `sed -n '2614,2617p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;Build & Dev Commands | 2618–2630 | `sed -n '2618,2630p' APP_MANIFEST.md` |
-| **11. Multi-Tenant (Clubs)** | 2631–2786 | `sed -n '2631,2786p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;11.1–11.8 Multi-tenant incident write-ups (moved out of this file) | 2787–2803 | `sed -n '2787,2803p' APP_MANIFEST.md` |
-| &nbsp;&nbsp;&nbsp;&nbsp;3.39–3.44 (late incident write-ups, formerly appended below §11) | 2804–2819 | `sed -n '2804,2819p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.10 QR-Code Session Join | 1242–1255 | `sed -n '1242,1255p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.11 H2H (Head-to-Head) Strip | 1256–1269 | `sed -n '1256,1269p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.12 TV Scoreboard | 1270–1277 | `sed -n '1270,1277p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.13 Pocket Ping (Push Notifications) | 1278–1313 | `sed -n '1278,1313p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.14 Step Out / Soft Pause | 1314–1328 | `sed -n '1314,1328p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.14b Queue — List / By-Skill view toggle | 1329–1345 | `sed -n '1329,1345p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.15 Player Self-Scoring | 1346–1353 | `sed -n '1346,1353p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.16 My Session History | 1354–1367 | `sed -n '1354,1367p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.17 Stateless Organizer Auth / Session Auto-Discovery | 1368–1375 | `sed -n '1368,1375p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.18 UUID Input Validation (Cross-cutting) | 1376–1392 | `sed -n '1376,1392p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.19 Checkout / Leave Session | 1393–1420 | `sed -n '1393,1420p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.20 Wait-time Monitor (Bottleneck Detection) | 1421–1444 | `sed -n '1421,1444p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.21 Fix Player Record (Historical Roster Correction) | 1445–1484 | `sed -n '1445,1484p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.22 Live Match Player Swap (Active Court Roster Correction) | 1485–1525 | `sed -n '1485,1525p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.22a RPC execute lockdown + live-swap session binding (2026-07-23) | 1526–1562 | `sed -n '1526,1562p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.23–3.44 Incident write-ups (moved out of this file) | 1563–1590 | `sed -n '1563,1590p' APP_MANIFEST.md` |
+| **4. UI/UX Conventions (Impeccable Standards)** | 1591–1592 | `sed -n '1591,1592p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;4.1 Design System — "Court Nights" Theme | 1593–1596 | `sed -n '1593,1596p' APP_MANIFEST.md` |
+| **Font Stack — 4 typefaces, 4 roles** | 1597–1607 | `sed -n '1597,1607p' APP_MANIFEST.md` |
+| **Color Space — OKLCH (perceptually uniform)** | 1608–1611 | `sed -n '1608,1611p' APP_MANIFEST.md` |
+| **Semantic tokens — Light mode (`:root`)** | 1612–1628 | `sed -n '1612,1628p' APP_MANIFEST.md` |
+| **Semantic tokens — Dark mode (`.dark`)** | 1629–1643 | `sed -n '1629,1643p' APP_MANIFEST.md` |
+| **Organizer Command-Center Token Namespace (`cc-*`)** | 1644–1665 | `sed -n '1644,1665p' APP_MANIFEST.md` |
+| **Key components added in the revamp** | 1666–1675 | `sed -n '1666,1675p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;4.2 Color Semantic Language | 1676–1690 | `sed -n '1676,1690p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;4.3 Typography Hierarchy | 1691–1705 | `sed -n '1691,1705p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;4.4 Spacing Conventions | 1706–1714 | `sed -n '1706,1714p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;4.5 The "No Box-in-a-Box" Rule | 1715–1724 | `sed -n '1715,1724p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;4.6 Anti-Pattern Prohibitions | 1725–1740 | `sed -n '1725,1740p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;4.7 Animations & Transitions | 1741–1754 | `sed -n '1741,1754p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;4.8 Component Patterns | 1755–1800 | `sed -n '1755,1800p' APP_MANIFEST.md` |
+| **5. Realtime Architecture** | 1801–1828 | `sed -n '1801,1828p' APP_MANIFEST.md` |
+| **6. Architectural Patterns & Rules** | 1829–1830 | `sed -n '1829,1830p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Server Action Convention | 1831–1878 | `sed -n '1831,1878p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;dnd-kit Isolation | 1879–1889 | `sed -n '1879,1889p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;TypeScript Convention | 1890–1896 | `sed -n '1890,1896p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Service Client Rule | 1897–1900 | `sed -n '1897,1900p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;PostgREST Gotchas | 1901–1905 | `sed -n '1901,1905p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Null-guard on Draft Functions | 1906–1911 | `sed -n '1906,1911p' APP_MANIFEST.md` |
+| **7. Testing** | 1912–1913 | `sed -n '1912,1913p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Unit Tests (Vitest) | 1914–2035 | `sed -n '1914,2035p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;E2E Tests (Playwright) | 2036–2064 | `sed -n '2036,2064p' APP_MANIFEST.md` |
+| **Post-deploy smoke (`.github/workflows/post-deploy-smoke.yml`)** | 2065–2108 | `sed -n '2065,2108p' APP_MANIFEST.md` |
+| **Nightly E2E regression (`.github/workflows/e2e-regression.yml`)** | 2109–2121 | `sed -n '2109,2121p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Integration Tests (Vitest — live Supabase) | 2122–2159 | `sed -n '2122,2159p' APP_MANIFEST.md` |
+| **The migration set must replay from scratch (2026-07-22)** | 2160–2242 | `sed -n '2160,2242p' APP_MANIFEST.md` |
+| **`after()` in integration tests** | 2243–2269 | `sed -n '2243,2269p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Test Helpers & Fixtures | 2270–2284 | `sed -n '2270,2284p' APP_MANIFEST.md` |
+| **8. File Map** | 2285–2549 | `sed -n '2285,2549p' APP_MANIFEST.md` |
+| **9. Known Gotchas** | 2550–2586 | `sed -n '2550,2586p' APP_MANIFEST.md` |
+| **10. Digital Twin — Interactive Architecture Documentation** | 2587–2592 | `sed -n '2587,2592p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Purpose | 2593–2596 | `sed -n '2593,2596p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Pages (all live as of 2026-05-09) | 2597–2610 | `sed -n '2597,2610p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Key Architecture Decisions | 2611–2629 | `sed -n '2611,2629p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Known Dev-Mode Quirk | 2630–2633 | `sed -n '2630,2633p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;Build & Dev Commands | 2634–2646 | `sed -n '2634,2646p' APP_MANIFEST.md` |
+| **11. Multi-Tenant (Clubs)** | 2647–2800 | `sed -n '2647,2800p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;11.1–11.8 Multi-tenant incident write-ups (moved out of this file) | 2801–2817 | `sed -n '2801,2817p' APP_MANIFEST.md` |
+| &nbsp;&nbsp;&nbsp;&nbsp;3.39–3.44 (late incident write-ups, formerly appended below §11) | 2818–2833 | `sed -n '2818,2833p' APP_MANIFEST.md` |
 
 ---
 
@@ -179,8 +179,8 @@ After a context compaction, do **not** re-read any of this.
 | **TESTING CONVENTIONS** | 345–346 | `sed -n '345,346p' docs/reference/ARCHITECTURE_QUICKREF.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;Unit Tests (Vitest) | 347–359 | `sed -n '347,359p' docs/reference/ARCHITECTURE_QUICKREF.md` |
 | &nbsp;&nbsp;&nbsp;&nbsp;E2E Tests (Playwright) | 360–384 | `sed -n '360,384p' docs/reference/ARCHITECTURE_QUICKREF.md` |
-| **FILE MAP (critical paths)** | 385–496 | `sed -n '385,496p' docs/reference/ARCHITECTURE_QUICKREF.md` |
-| **KNOWN GOTCHAS** | 497–532 | `sed -n '497,532p' docs/reference/ARCHITECTURE_QUICKREF.md` |
+| **FILE MAP (critical paths)** | 385–497 | `sed -n '385,497p' docs/reference/ARCHITECTURE_QUICKREF.md` |
+| **KNOWN GOTCHAS** | 498–533 | `sed -n '498,533p' docs/reference/ARCHITECTURE_QUICKREF.md` |
 
 ---
 

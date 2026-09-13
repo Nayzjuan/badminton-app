@@ -367,7 +367,7 @@ One-time club-wide "firsts" ledger (migration `20260704000001`). Append-only; RL
 | `migrate_player_identity(p_old_user_id, p_new_user_id)` | Reconnect identity migration; copies the old profile onto the new id (including `needs_name_confirm`). Returns `true` if old user is primary organizer. **Do not use this for Google `identity_already_exists`** — it would overwrite the keeper's name.                                                                                                                                                                                                                                                        |
 | `merge_guest_play_into_profile(p_guest_id, p_keeper_id)` | Link-collision merge: repoint guest play history onto the Google keeper; keeper name/skill/PIN/flags untouched. Service-role only. Returns jsonb `{ success }` / `{ success:false, error }`.                                                                                                                                                                                                                                                        |
 | `rename_player_identity(p_user_id, p_new_name)`         | Atomic rename + clear `needs_rename` / `needs_name_confirm` + audit. Infers reason from pre-update flags. Service-role only.                                                                                                                                                                                                                                                        |
-| `lookup_active_session(p_session_id)`                   | Safe public lookup for QR-code join (`/play/join`) — no RLS exposure                                                                                                                                                                                                                                                                 |
+| `lookup_active_session(p_session_id)`                   | Safe public lookup for QR-code join (`/j/[sessionId]`, `/c/[slug]/join/[sessionId]`) — no RLS exposure                                                                                                                                                                                                                               |
 | `swap_player_in_active_match(...)`                      | Replaces one player in an `in_progress` match with a queue player; recomputes `is_mixed_level`, marks `origin='modified'`                                                                                                                                                                                                            |
 | `swap_teams_in_active_match(...)`                       | Swaps team assignments of two players within the same `in_progress` match; no queue changes                                                                                                                                                                                                                                          |
 | `swap_active_from_ondeck(...)`                          | Atomic 3-way: pull on-deck player into active match + fill vacated on-deck slot from queue; returns original teams as OUT params for undo                                                                                                                                                                                            |
@@ -1100,7 +1100,7 @@ It reaches **three** awards over those two CTEs, because `prior_sessions_ranked`
 
 **Three enforcement layers:**
 
-1. **L1 redirect** — `enforceRenameGate(profile, nextPath)` at `/play`, club play, club layouts, `/welcome`, and `/c/[slug]/join` (after enroll, before enqueue). Fast path: zero queries when neither flag is set. `needs_name_confirm` always redirects (no grandfather / organizer carve-out). `needs_rename` grandfathers a player currently in a live queue/match and skips active organizers. Redirect-only (no cookie mutation → safe in a Server Component render). `enforceRenameGateForUser` is the layout helper.
+1. **L1 redirect** — `enforceRenameGate(profile, nextPath)` at `/play`, club play, club layouts, `/welcome`, and `ClubJoinScreen` (after enroll, before enqueue — the shared body of `/j/[sessionId]` and `/c/[slug]/join[/sessionId]`). Fast path: zero queries when neither flag is set. `needs_name_confirm` always redirects (no grandfather / organizer carve-out). `needs_rename` grandfathers a player currently in a live queue/match and skips active organizers. Redirect-only (no cookie mutation → safe in a Server Component render). `enforceRenameGateForUser` is the layout helper.
 2. **L2 action gate** — `joinQueueAction` reads `needs_rename` and `needs_name_confirm` as its first step and returns `requiresRename` (the client routes to `/rename`). The real mutation boundary.
 3. **L3 DB authority** — partial UNIQUE index `idx_profiles_unique_active_name` on the normalized name `WHERE needs_rename = false`. Flagged duplicates are excluded (so they keep their real name until they rename); the instant a rename flips the flag, the new name enters the index. This is the only TOCTOU/cross-instance-safe guard. **Held until the data fix flags duplicates** (it can't build over live collisions).
 
@@ -1241,11 +1241,15 @@ Rank-change flash animation: `data-flash="true"` triggers `leaderboard-flash` ke
 
 ### 3.10 QR-Code Session Join
 
-**Route:** `/play/join?session=[sessionId]`
+**Share / QR URL:** `/j/[sessionId]` (path-based — no query string). Club form: `/c/[slug]/join/[sessionId]`.
 
-- Uses `lookup_active_session(p_session_id)` RPC — safe public lookup that does not expose `organizer_passcode` or `created_by`.
-- Returns `{ id, name, is_active }` or empty array if session not found / inactive.
+- Share Session copies and encodes `/j/[sessionId]` so in-app browsers that encode or strip `?` cannot 404 the link.
+- `lookup_active_session(p_session_id)` is the anon-safe lookup — no `organizer_passcode` or `created_by`. Empty / inactive / club-less → `/play`, not a 404.
+- Back-compat: `/play/join?session=` and `/c/[slug]/join?session=` 308 to the path form in middleware (`resolveJoinRedirect`) — not `next.config` `redirects()`, which always forwards the query and would re-print `?session=` on `/j/<id>`. The same helper repairs a pathname that still has `%3Fsession=` in it.
+- Join routes omit `X-Frame-Options: DENY` and set CSP `frame-ancestors *` so an in-app browser that iframes the page can still render it. Every other route stays locked.
+- `generateMetadata` on the join pages emits Open Graph / Twitter cards for unfurlers.
 - Pre-wires the new player registration to the target session.
+- Authed returning players go through `ClubJoinScreen`: enroll, then `enforceRenameGate`, then enqueue. Confirm-pending / flagged names never land in the queue from a share/QR scan.
 
 ---
 
@@ -1962,7 +1966,7 @@ equality on a value derived from the wall clock.
 | `safe-next.test.ts` | **Suite SN — the open-redirect guard.** `safeNext` is the only redirect sanitiser in the app and had zero tests; the shipped `startsWith("//")` blacklist let `/\evil.com` through, which WHATWG URL parsing treats as protocol-relative. SN-4 asserts the bug and proves its own premise (`new URL("/\\evil.com", origin).origin !== origin`); SN-13 runs the property over a candidate list whose length is itself asserted, so the loop cannot pass vacuously. Enumerate the call sites with `rg -n 'safeNext\(' src/` |
 | `rename-gate.test.ts` | **Suite RG — `enforceRenameGate`.** Making the gate inert (`if (true) return;`) left `tsc` and the whole suite green before this file existed. RG-1 asserts the fast path issues *zero* queries; RG-3/RG-4 assert the grandfather and organizer carve-outs by their `column=value` pairs, not just by table name; RG-6 pins `encodeURIComponent` so a `next` carrying `&` is not truncated |
 | `session-active-guard.test.ts` | **Suite SA — `isSessionActive`.** Untested at every altitude: every unit file `vi.mock`s it away. SA-4/SA-5 pin the two branches that fail **OPEN** by design, so the deliberate choice is visible rather than inferred; SA-6 asserts the service client is the one used — fail-open plus an RLS-bound client would compose into a guard that never bites |
-| `club-member-management.test.ts` | **Suite CM — `src/app/actions/clubs.ts`,** which had no unit coverage at all: role changes, soft-remove/restore, and the last-owner guard, each with its negative |
+| `join-shims.test.ts` / `repair-encoded-query-path.test.ts` / `join-share-config.test.ts` / `join-share-middleware.test.ts` / `share-session-dialog.test.tsx` / `join-metadata.test.ts` / `resolve-session-join.test.ts` | **Suite JS / REQ / JSC / MWJ / SSD / JM / LSJ — share / join links.** Path-based `/j/[id]` and `/c/[slug]/join/[id]`; middleware repairs `%3Fsession=` in the pathname; next.config omits XFO DENY on join routes; Share Session copies `/j/<id>` with no query string. Enumerate with `rg -n 'sessionShare\|repairEncodedQueryPath\|clubJoin' src/` |
 | `courts-actions.test.ts` | **Suite CT — `src/app/actions/courts.ts`,** three organizer-only mutations that all write through the RLS-bypassing service client, so the TypeScript in that one file IS the write gate for the `courts` table. CT compares the recorded `.eq()` pairs EXACTLY — a presence check stays green for the swapped mutant `.eq("id", sessionId).eq("session_id", courtId)`, which still makes two `eq` calls — and asserts `createServiceClient` was never even constructed when a gate refuses. That guard-ORDER claim is unavailable to the integration lane, where the server client and the service client are the same object |
 | `h2h-actions.test.ts` | **Suite HH — `getH2HRecord`,** whose every rejection path returns a bare `null`; a deleted guard is therefore indistinguishable from a refusal by return value alone, so each negative also pins WHICH downstream work must not have happened. HH-5 asserts the membership fallback's column=value PAIRING — bound to the session AND the caller's own id — and HH-7/HH-8/HH-10 pin that `p_club_id` is server-derived, since `matches`/`match_players` carry no `club_id` and the RPC argument is the only tenancy boundary it gets |
 | `history-actions.test.ts` | **Suite HI — `getMatchHistory` / `getAllSessionsHistory`.** Both read `v_match_history` through the service client, and the club-scoped RLS that would otherwise apply restricts by club MEMBERSHIP, not by player identity — so `if (playerId !== user.id)` is the entire boundary between one member and another member's cross-club history. Every gate test asserts the exact refusal AND that no client was constructed; HI-4 pins that the compare is exact string equality, not a case- or whitespace-tolerant one |
@@ -2056,6 +2060,7 @@ after `renderHook` observes the effect's write, not the seed — only a per-rend
 | M — Player queue       | `scenario-m-player-queue.spec.ts`              | Queue position number, "in line" status UI                                                                     |
 | N — Leaderboard        | `scenario-n-leaderboard.spec.ts`               | Tab accessible; data after completed match; DB ordering (2 wins > 1 win via `v_session_leaderboard`)           |
 | O — Player scoring     | `scenario-o-player-scoring.spec.ts`            | Score form visible; submit asserts exact scores `completed\|21\|15` and `games_played=1`                       |
+| S — Share / join links | `scenario-s-share-join-links.spec.ts`          | `/j/<id>` and `/c/<slug>/join/<id>` render the join form; `?session=` 308s; `%3Fsession=` does not 404; OG tags; join allows framing; Share Session copies `/j/<id>` |
 
 #### Post-deploy smoke (`.github/workflows/post-deploy-smoke.yml`)
 
@@ -2147,7 +2152,7 @@ than reporting green.
 | `realtime-broadcast-rls.test.ts`| RB | **The broadcast topic's RLS actually refuses outsiders** (§3.35): a plain member and the organizer may read (RB-1/2); a stranger, a member of a *different* club, a deactivated member, an `anon` caller and a malformed topic are all refused (RB-3…7); nobody may INSERT, not even the organizer (RB-8). Every one is killed by at least one mutated policy — table in the file header |
 | `rls-edge-cases.test.ts`   | E     | Cross-session auth isolation, unauthenticated access blocks                                                                     |
 | `rpc-behaviors.test.ts`    | —     | `create_match_with_players` TOCTOU guards, NULL return contract                                                                 |
-| `schema-parity.test.ts`    | G     | DB schema matches `src/types/database.ts`; the function-`EXECUTE` invariants described below; and **a whole-schema sweep that every relation in `public` is SELECT-able by `service_role`** — the gate that was missing on the day `queue_status_events` shipped with no privileges stated at all (§3.44) |
+| `lookup-active-session.test.ts` | LAS | **The public join-link RPC** (`lookup_active_session`): anon can resolve an active session to `id/name/is_active/club_slug` (LAS-1); closing the session empties the next lookup (LAS-2); unknown id is empty not an error (LAS-3); the row is exactly those four keys (LAS-4); anon still holds EXECUTE (LAS-5). Enumerate with `rg -n 'lookup_active_session' src/` |
 | `score-submission.test.ts` | F     | `endMatchAction` cascade (scores, re-queue, court freed); `cancelMatchAction` (no games_played increment); **server-side score range validation (0–31 int, rejects float/negative/over-31, rejects draws)** |
 | `session-lifecycle.test.ts`| K     | `createSession` validation; `joinAsCoOrganizer` passcode auth and idempotency                                                   |
 | `upcoming-held-draft.test.ts`| UH  | `getUpcomingHeldDraft` against real rows: another player's held draft is invisible to this caller (UH-6), a held draft in a DIFFERENT session does not leak in (UH-7), and one whose match is no longer `pending` is ignored (UH-8) — one filter of the read's four made to fail per test. Seeds `pulled_player_ids` directly and says so: this suite covers the READ, not the held-draft lifecycle, which is Suite J's |
@@ -2317,7 +2322,9 @@ src/
 
     play/
       page.tsx                   # Player lobby — session list
-      join/page.tsx              # QR-code entry point (/play/join?session=)
+      join/page.tsx              # Legacy QR shim — /play/join?session= → /j/[sessionId]
+      join/[sessionId]/page.tsx  # Legacy path alias — /play/join/[id] → /j/[id]
+    j/[sessionId]/page.tsx       # Short share / QR join URL (path-based, OG tags, no query string)
       [sessionId]/page.tsx       # Player view route
 
     sandbox/                     # Dev-only UI preview pages (env-gated)
@@ -2491,6 +2498,14 @@ tests/
     use-score-form.test.ts       # Score validation boundaries (SF-1–8); clearError regression pin
     use-swap-state.test.ts       # Swap state machine (SS-1–10); undo arg reversal pin (SS-7)
     use-match-history.test.ts    # Match history enrichment (MH-1–9); createUnknownProfile fallback
+    club-paths.test.ts           # Path builders; sessionShare / clubJoin carry the id in the path
+    repair-encoded-query-path.test.ts # %3Fsession= pathname repair (REQ)
+    join-share-config.test.ts    # next.config join headers; no query-forwarding ?session= hops (JSC)
+    join-share-middleware.test.ts # middleware 308s encoded join paths (MWJ)
+    share-session-dialog.test.tsx # Share Session copies /j/<id> (SSD)
+    join-metadata.test.ts        # OG tags for public join routes (JM)
+    resolve-session-join.test.ts # lookupActiveJoinSession branches (LSJ)
+    join-shims.test.ts           # /play/join and /c/.../join query → path (JS)
   e2e/
     scenario-a-swap.spec.ts      # Bench→deck swap, undo
     scenario-b-engine-flows.spec.ts # Auto-matchmaking, gate, cap
@@ -2507,6 +2522,7 @@ tests/
     scenario-m-player-queue.spec.ts       # Join queue, see position number
     scenario-n-leaderboard.spec.ts        # Leaderboard tab (player + organizer)
     scenario-o-player-scoring.spec.ts     # In-progress score input + submission
+    scenario-s-share-join-links.spec.ts   # Path-based /j/ share URL, encoded-query repair, OG, framing, copy link
   helpers/
     teardown.ts                  # resetSandboxSession(), seedSession()
     init-sandbox.ts              # One-time sandbox session setup
@@ -2765,9 +2781,7 @@ hard refreshes of `/c/legacy/...` URLs, which the redirect covers. Stale "Legacy
 to "default club (CHILLAX)" in PR #21; the remaining `legacy` identifiers in code denote the pre-club routing layer
 (the `/play/[id]` / `/organizer/[id]` shims), not the CHILLAX club.
 
-**Onboarding.** QR/`/c/[slug]/join` (+ the `/play/join` back-compat shim → forwards to it): authed users
-auto-enroll + queue; fresh scanners register via `signInAnonymously` (a `club_slug` hidden field enrolls
-them post-registration). `lookup_active_session` (SECURITY DEFINER, anon-safe) returns `club_slug`.
+**Onboarding.** Share/QR is `/j/[sessionId]` (renders the public join screen). Club-scoped `/c/[slug]/join[/sessionId]` is the same screen. `/play/join?session=` 308s to `/j/[id]`. Authed users auto-enroll + queue; fresh scanners register via `signInAnonymously` (a `club_slug` hidden field enrolls them post-registration). `lookup_active_session` (SECURITY DEFINER, anon-safe) returns `club_slug`.
 
 **Phase 3 — club-scoped leaderboard + Wrapped (DONE, DB live on prod).** The leaderboard now filters by
 club. DB layer (additive, backward-compatible): `v_session_leaderboard` + `v_alltime_leaderboard_mat`

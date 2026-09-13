@@ -327,7 +327,7 @@ NULL-return convention: `{ data: null, error: null }` = graceful slot-skip. `{ d
 | Session Wrapped     | `wrapped/`, `wrapped.ts`, `wrapped-awards.ts` | 9-layer animated intro, award cards, archetype, `intro_dismissed_at` cross-device |
 | Player Reconnect    | `auth.ts`, `migrate_player_identity` RPC      | PIN-based identity migration; signOut() before signInAnonymously()                |
 | Leaderboard         | `leaderboard/`, `use-leaderboard.ts`          | Session + all-time (materialized), LeaderboardHeroCard, rank flash                |
-| QR-Code Join        | `/play/join?session=`                         | `lookup_active_session` RPC — safe, no RLS exposure                               |
+| QR-Code Join        | `/j/[sessionId]`                              | Path-based share URL; `lookup_active_session` RPC — safe, no RLS exposure         |
 | H2H Strip           | `h2h-strip.tsx`, `use-h2h.ts`                 | Compact strip on on-deck cards; renders null on no prior history                  |
 | TV Scoreboard       | `tv/[sessionId]/`                             | Public read-only; service-role client, no auth required                           |
 | Push Notifications  | `notifications/`, `push-client.ts`            | Web Push/VAPID; all 3 sub fields required (`endpoint`, `p256dh`, `auth_key`)      |
@@ -407,7 +407,8 @@ src/
       wrapped.ts       # dismissWrappedIntro
 
     organizer/[sessionId]/    # organizer dashboard route
-    play/join/page.tsx         # QR-code entry point (/play/join?session=)
+    play/join/page.tsx         # Legacy QR shim — /play/join?session= → /j/[sessionId]
+    j/[sessionId]/page.tsx     # Short share / QR join URL
     play/[sessionId]/          # player view route
     tv/[sessionId]/            # TV scoreboard
     wrapped/[sessionId]/[playerId]/  # Session Wrapped awards page

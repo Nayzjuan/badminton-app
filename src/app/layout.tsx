@@ -31,6 +31,9 @@ const jetbrains = JetBrains_Mono({
   variable: "--font-jetbrains",
 });
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "http://localhost:3000"
+  ),
   title: "Chillax Badminton",
   description: "Real-time badminton social queuing and matchmaking",
   // ── PWA / Apple home screen ──────────────────────────────────

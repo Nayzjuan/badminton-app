@@ -1,15 +1,14 @@
 // ============================================================
-// Legacy QR shim — /play/join?session=<id> → /c/[clubSlug]/join?session=<id>
+// Legacy QR shim — /play/join?session=<id> → /j/<id>
 // ============================================================
-// Already-printed QR codes point at /play/join. This resolves the session's
-// club (via the anon-safe SECURITY DEFINER RPC, which now returns club_slug)
-// and forwards to the club-namespaced join page, which owns enrollment +
-// routing. Keep this shim permanently so old codes never break.
+// Already-printed QR codes point at /play/join. next.config 308s a well-formed
+// ?session= UUID to /j/<id>. This page keeps the no-query / bad-id cases
+// working and is the fallback if the config redirect is skipped.
 // ============================================================
 
-import { redirect } from "next/navigation";
-import { createServerSupabaseClient } from "@/utils/supabase/server";
-import { clubJoin } from "@/lib/club-paths";
+import { redirect, permanentRedirect } from "next/navigation";
+import { sessionShare } from "@/lib/club-paths";
+import { isValidUUID } from "@/lib/validate";
 
 interface JoinShimProps {
   searchParams: Promise<{ session?: string }>;
@@ -17,17 +16,8 @@ interface JoinShimProps {
 
 export default async function JoinShim({ searchParams }: JoinShimProps) {
   const { session: sessionId } = await searchParams;
-  if (!sessionId) redirect("/play");
-
-  const supabase = await createServerSupabaseClient();
-  const { data: lookup } = await supabase.rpc("lookup_active_session", { p_session_id: sessionId });
-  const session = lookup?.[0] ?? null;
-
-  // Bad / inactive / club-less session → the player's own context (which
-  // resolves their club or the join-via-QR screen). Not /clubs (owner-only).
-  if (!session || !session.is_active || !session.club_slug) {
-    redirect("/play");
+  if (sessionId && isValidUUID(sessionId)) {
+    permanentRedirect(sessionShare(sessionId));
   }
-
-  redirect(clubJoin(session.club_slug, sessionId));
+  redirect("/play");
 }

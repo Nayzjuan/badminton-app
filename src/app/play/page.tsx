@@ -2,7 +2,7 @@
 // Session Picker — Choose which game session to join
 // ============================================================
 // Lists active sessions and lets the player pick one.
-// Direct entry only happens via the QR/share link (/play/join).
+// Direct entry only happens via the QR/share link (/j/[sessionId]).
 // Also allows updating profile (name/skill) from here.
 // ============================================================
 
