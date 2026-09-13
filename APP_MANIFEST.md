@@ -1133,7 +1133,7 @@ It reaches **three** awards over those two CTEs, because `prior_sessions_ranked`
 - `src/components/auth/google-link-button.tsx` — compact "Link Google Account" button for the overflow menu
 - `src/components/notifications/google-link-card.tsx` — dismissible upgrade card shown to non-linked players
 - `src/components/player/change-display-name.tsx` — self-serve name + skill editor
-- Migration `20260913000000_oauth_name_confirm.sql` — column, GRANT, Google-native backfill, RPC updates. **Hand-apply; merging ships TypeScript only.**
+- Migration `20260913000000_oauth_name_confirm.sql` — column, GRANT, Google-native backfill, RPC updates. `GRANT SELECT (needs_name_confirm)` is live on prod (operator-confirmed). Ledger stamp still comes from `list_migrations`.
 
 **Feature flag:** `NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED === "true"` gates all three components (each returns `null` when the flag is absent). Inlined at build time — must be set in the Vercel dashboard and a new build triggered to activate in production.
 
