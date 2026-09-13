@@ -26,6 +26,7 @@ import "server-only";
 import { redirect } from "next/navigation";
 import { createServiceClient } from "@/utils/supabase/service";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
+import { renameNextFromRequest } from "@/lib/request-path";
 import type { Profile, QueueStatus } from "@/types/database";
 
 const ACTIVE_QUEUE_STATUSES: QueueStatus[] = ["waiting", "drafted", "on_deck", "playing"];
@@ -88,5 +89,5 @@ export async function enforceRenameGateForUser(userId: string, nextPath: string)
     .eq("id", userId)
     .maybeSingle();
   if (!profile) return;
-  await enforceRenameGate(profile, nextPath);
+  await enforceRenameGate(profile, await renameNextFromRequest(nextPath));
 }

@@ -6,9 +6,10 @@
 // subscriptions silently disconnect.
 // ============================================================
 
-import { type NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/utils/supabase/middleware";
 import { resolveJoinRedirect } from "@/lib/repair-encoded-query-path";
+import { REQUEST_PATH_HEADER, requestPathHeaderValue } from "@/lib/request-path";
 
 export async function middleware(request: NextRequest) {
   // In-app browsers sometimes encode `?session=` into the path (`%3F`).
@@ -22,7 +23,15 @@ export async function middleware(request: NextRequest) {
     url.search = "";
     return NextResponse.redirect(url, 308);
   }
-  return await updateSession(request);
+
+  // Stamp the path the player asked for so club-layout rename gates
+  // can return them there (layouts only receive clubSlug).
+  const headers = new Headers(request.headers);
+  headers.set(
+    REQUEST_PATH_HEADER,
+    requestPathHeaderValue(request.nextUrl.pathname, request.nextUrl.search)
+  );
+  return await updateSession(new NextRequest(request, { headers }));
 }
 
 export const config = {

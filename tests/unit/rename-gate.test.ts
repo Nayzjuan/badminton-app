@@ -37,11 +37,16 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 vi.mock("@/utils/supabase/service", () => ({ createServiceClient: vi.fn() }));
 vi.mock("@/utils/supabase/server", () => ({ createServerSupabaseClient: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
+vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => ({ get: () => null })),
+}));
 
 import { createServiceClient } from "@/utils/supabase/service";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { enforceRenameGate, enforceRenameGateForUser } from "@/lib/rename-gate";
+import { REQUEST_PATH_HEADER } from "@/lib/request-path";
 import type { Profile } from "@/types/database";
 
 const ME = "00000000-0000-4000-8000-00000000d0e5";
@@ -96,7 +101,12 @@ function profile(needsRename: boolean, needsConfirm = false): Profile {
 const NONE = { data: null };
 const FOUND = { data: { id: "row-1" } };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(headers).mockResolvedValue({
+    get: () => null,
+  } as unknown as Awaited<ReturnType<typeof headers>>);
+});
 
 describe("Suite RG — enforceRenameGate", () => {
   it("RG-1: a profile that is not flagged returns immediately with zero queries", async () => {
@@ -242,5 +252,30 @@ describe("Suite RG — enforceRenameGateForUser", () => {
     expect(redirect).toHaveBeenCalledWith("/rename?next=%2Fc%2Fchillax");
     expect(recorded).toHaveLength(0);
     expect(ops).toContain("select:id, needs_rename, needs_name_confirm");
+  });
+
+  it("RG-12: a stamped session path wins over the club-base fallback", async () => {
+    const SID = "00000000-0000-4000-8000-000000000001";
+    vi.mocked(headers).mockResolvedValue({
+      get: (name: string) => (name === REQUEST_PATH_HEADER ? `/c/chillax/play/${SID}` : null),
+    } as unknown as Awaited<ReturnType<typeof headers>>);
+    useUserClient({ id: ME, needs_rename: false, needs_name_confirm: true });
+
+    await enforceRenameGateForUser(ME, "/c/chillax");
+
+    expect(redirect).toHaveBeenCalledWith(
+      `/rename?next=${encodeURIComponent(`/c/chillax/play/${SID}`)}`
+    );
+  });
+
+  it("RG-13: a stamped /rename path does not loop — fallback is used", async () => {
+    vi.mocked(headers).mockResolvedValue({
+      get: (name: string) => (name === REQUEST_PATH_HEADER ? "/rename?next=%2Fc%2Fchillax" : null),
+    } as unknown as Awaited<ReturnType<typeof headers>>);
+    useUserClient({ id: ME, needs_rename: false, needs_name_confirm: true });
+
+    await enforceRenameGateForUser(ME, "/c/chillax");
+
+    expect(redirect).toHaveBeenCalledWith("/rename?next=%2Fc%2Fchillax");
   });
 });

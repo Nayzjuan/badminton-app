@@ -35,6 +35,14 @@ describe("middleware join-path repair", () => {
     expect(updateSession).toHaveBeenCalledTimes(1);
   });
 
+  it("MWJ-4: pass-through requests stamp x-request-path for the rename gate", async () => {
+    const req = new NextRequest(`http://localhost/c/chillax/play/${SID}?tab=queue`);
+    await middleware(req);
+    expect(updateSession).toHaveBeenCalledTimes(1);
+    const forwarded = vi.mocked(updateSession).mock.calls[0]![0] as NextRequest;
+    expect(forwarded.headers.get("x-request-path")).toBe(`/c/chillax/play/${SID}?tab=queue`);
+  });
+
   it("MWJ-3: /play/join?session=<uuid> 308s onto /j/<uuid> with an empty search", async () => {
     const req = new NextRequest(`http://localhost/play/join?session=${SID}`);
     const res = await middleware(req);
