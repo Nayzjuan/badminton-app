@@ -1589,6 +1589,162 @@ describe("snakeDraft — fresh-pair preference", () => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// snakeDraft — consecutive-partnership hard ban
+// ─────────────────────────────────────────────────────────────
+// Last game's teammates cannot share a side again. The session cap of 2
+// still allows a second partnership later; lastPartners is what blocks
+// the immediate repeat.
+
+describe("snakeDraft — consecutive-partnership ban", () => {
+  function makeFourAlpha() {
+    const a = makePlayer("a", { skillInt: 6 });
+    const b = makePlayer("b", { skillInt: 5 });
+    const c = makePlayer("c", { skillInt: 4 });
+    const d = makePlayer("d", { skillInt: 3 });
+    return { a, b, c, d };
+  }
+
+  function lastPartnersOf(pairs: [string, string][]): Map<string, Set<string>> {
+    const map = new Map<string, Set<string>>();
+    for (const [x, y] of pairs) {
+      map.set(x, new Set([y]));
+      map.set(y, new Set([x]));
+    }
+    return map;
+  }
+
+  it("same four after Split 0 must sit a different balanced split", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    const counts = new Map([
+      ["a:d", 1],
+      ["b:c", 1],
+    ]);
+    const lastPartners = lastPartnersOf([
+      ["a", "d"],
+      ["b", "c"],
+    ]);
+    const result = snakeDraft(
+      [a, b, c, d],
+      counts,
+      MAX_PARTNERSHIP_REPEATS,
+      new Map(),
+      MAX_OPPONENT_REPEATS,
+      new Map(),
+      lastPartners
+    );
+    expect(result).not.toBeNull();
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "c"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "d"]);
+  });
+
+  it("a pair with count=1 from two games ago (not last) may still partner", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    // a+d partnered once earlier; last game a partnered with c.
+    const counts = new Map([
+      ["a:d", 1],
+      ["a:c", 1],
+      ["b:d", 1],
+    ]);
+    const lastPartners = lastPartnersOf([
+      ["a", "c"],
+      ["b", "d"],
+    ]);
+    const result = snakeDraft(
+      [a, b, c, d],
+      counts,
+      MAX_PARTNERSHIP_REPEATS,
+      new Map(),
+      MAX_OPPONENT_REPEATS,
+      new Map(),
+      lastPartners
+    );
+    expect(result).not.toBeNull();
+    expect(result!.usedCapOverride).toBeUndefined();
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "d"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "c"]);
+  });
+
+  it("usedCapOverride never reseats last partners — prefers an over-cap non-last split", () => {
+    const { a, b, c, d } = makeFourAlpha();
+    const counts = new Map([
+      ["a:d", 1],
+      ["b:c", 1],
+      ["a:c", MAX_PARTNERSHIP_REPEATS],
+      ["b:d", MAX_PARTNERSHIP_REPEATS],
+    ]);
+    const lastPartners = lastPartnersOf([
+      ["a", "d"],
+      ["b", "c"],
+    ]);
+    const result = snakeDraft(
+      [a, b, c, d],
+      counts,
+      MAX_PARTNERSHIP_REPEATS,
+      new Map(),
+      MAX_OPPONENT_REPEATS,
+      new Map(),
+      lastPartners
+    );
+    expect(result).not.toBeNull();
+    expect(result!.usedCapOverride).toBe(true);
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "c"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "d"]);
+  });
+
+  it("bans the pair when only ONE player still has the other as last partner", () => {
+    // a last partnered d; d has since partnered with someone else.
+    const { a, b, c, d } = makeFourAlpha();
+    const lastPartners = new Map<string, Set<string>>([
+      ["a", new Set(["d"])],
+      ["d", new Set(["x"])],
+      ["b", new Set(["c"])],
+      ["c", new Set(["y"])],
+    ]);
+    const result = snakeDraft(
+      [a, b, c, d],
+      new Map([
+        ["a:d", 1],
+        ["b:c", 1],
+      ]),
+      MAX_PARTNERSHIP_REPEATS,
+      new Map(),
+      MAX_OPPONENT_REPEATS,
+      new Map(),
+      lastPartners
+    );
+    expect(result).not.toBeNull();
+    expect(result!.teamA.map((p) => p.player_id).sort()).toEqual(["a", "c"]);
+    expect(result!.teamB.map((p) => p.player_id).sort()).toEqual(["b", "d"]);
+  });
+
+  it("returns null when the only balanced split is last partners (not usedCapOverride of that split)", () => {
+    // 7/4/4/1: only Split 0 is balanced (gap 0). Splits 1 and 2 are gap 6.
+    const a = makePlayer("a", { skillInt: 7 });
+    const b = makePlayer("b", { skillInt: 4 });
+    const c = makePlayer("c", { skillInt: 4 });
+    const d = makePlayer("d", { skillInt: 1 });
+    const counts = new Map([
+      ["a:d", 1],
+      ["b:c", 1],
+    ]);
+    const lastPartners = lastPartnersOf([
+      ["a", "d"],
+      ["b", "c"],
+    ]);
+    const result = snakeDraft(
+      [a, b, c, d],
+      counts,
+      MAX_PARTNERSHIP_REPEATS,
+      new Map(),
+      MAX_OPPONENT_REPEATS,
+      new Map(),
+      lastPartners
+    );
+    expect(result).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
 // snakeDraft — opponent-cap preference (4-pass crossNetOk)
 // ─────────────────────────────────────────────────────────────
 // Pass 1a: both team pairs fresh AND no cross-net pair at opponentCap
@@ -2435,6 +2591,167 @@ describe("runAlgorithm — last-resort fallback and no-match paths", () => {
     // candidates = [] (all filtered); capWasActive = pool.length-1 (3) > 0 = true
     expect(result.proposal).toBeNull();
     expect(result.capSaturation).toBe(true);
+    expect(result.capSaturationReason).toBe("session_cap");
+  });
+});
+
+describe("runAlgorithm — consecutive-partnership ban", () => {
+  function lastPartnersOf(pairs: [string, string][]): Map<string, Set<string>> {
+    const map = new Map<string, Set<string>>();
+    for (const [x, y] of pairs) {
+      map.set(x, new Set([y]));
+      map.set(y, new Set([x]));
+    }
+    return map;
+  }
+
+  it("does not emit last game's teammates as a team — rotates the same four", () => {
+    // 5/4/4/3 stays inside ±2 so the normal window seats; last partners are Split 0.
+    const a = makePlayer("a", { skillInt: 5, waitMinutes: 10 });
+    const b = makePlayer("b", { skillInt: 4, waitMinutes: 9 });
+    const c = makePlayer("c", { skillInt: 4, waitMinutes: 8 });
+    const d = makePlayer("d", { skillInt: 3, waitMinutes: 7 });
+    const counts = new Map([
+      [pairKey("a", "d"), 1],
+      [pairKey("b", "c"), 1],
+    ]);
+    const lastPartners = lastPartnersOf([
+      ["a", "d"],
+      ["b", "c"],
+    ]);
+    const result = runAlgorithm(
+      [a, b, c, d],
+      counts,
+      new Map(),
+      [],
+      new Map(),
+      [],
+      new Map(),
+      lastPartners
+    );
+    expect(result.proposal).not.toBeNull();
+    const teamOfA = result.proposal!.teamA.some((p) => p.player_id === "a")
+      ? result.proposal!.teamA
+      : result.proposal!.teamB;
+    expect(teamOfA.map((p) => p.player_id).sort()).not.toEqual(["a", "d"]);
+    const other = teamOfA[0].player_id === "a" ? teamOfA[1].player_id : teamOfA[0].player_id;
+    expect(other).toBe("c");
+  });
+
+  it("stalls with capSaturationReason consecutive when the only balanced split is last partners", () => {
+    // 7/4/4/1: pairwise max 6, so every skill window fails (Red Zone max is 4).
+    // Last-resort skips skill and snakeDraft sees only Split 0 as balanced —
+    // last-partnering that split returns null.
+    const a = makePlayer("a", { skillInt: 7, waitMinutes: CRITICAL_WAIT_MINUTES });
+    const b = makePlayer("b", { skillInt: 4, waitMinutes: 10 });
+    const c = makePlayer("c", { skillInt: 4, waitMinutes: 9 });
+    const d = makePlayer("d", { skillInt: 1, waitMinutes: 8 });
+    const counts = new Map([
+      [pairKey("a", "d"), 1],
+      [pairKey("b", "c"), 1],
+    ]);
+    const lastPartners = lastPartnersOf([
+      ["a", "d"],
+      ["b", "c"],
+    ]);
+    const result = runAlgorithm(
+      [a, b, c, d],
+      counts,
+      new Map(),
+      [],
+      new Map(),
+      [],
+      new Map(),
+      lastPartners
+    );
+    expect(result.proposal).toBeNull();
+    expect(result.capSaturation).toBe(true);
+    expect(result.capSaturationReason).toBe("consecutive");
+  });
+
+  it("does not report consecutive when lastPartners are outsiders and companion pairs are at session cap", () => {
+    const a = makePlayer("a", { skillInt: 5, waitMinutes: 10 });
+    const b = makePlayer("b", { skillInt: 5, waitMinutes: 9 });
+    const c = makePlayer("c", { skillInt: 5, waitMinutes: 8 });
+    const d = makePlayer("d", { skillInt: 5, waitMinutes: 7 });
+
+    const counts = new Map([
+      [pairKey("a", "b"), 1],
+      [pairKey("a", "c"), 1],
+      [pairKey("a", "d"), 1],
+      [pairKey("b", "c"), MAX_PARTNERSHIP_REPEATS],
+      [pairKey("b", "d"), MAX_PARTNERSHIP_REPEATS],
+      [pairKey("c", "d"), MAX_PARTNERSHIP_REPEATS],
+    ]);
+    const lastPartners = new Map<string, Set<string>>([
+      ["a", new Set(["x"])],
+      ["b", new Set(["y"])],
+      ["c", new Set(["z"])],
+      ["d", new Set(["w"])],
+    ]);
+    const recent = [["a", "b", "c", "d"]];
+
+    const withHistory = runAlgorithm(
+      [a, b, c, d],
+      counts,
+      new Map(),
+      recent,
+      new Map(),
+      [],
+      new Map(),
+      lastPartners
+    );
+    const withoutHistory = runAlgorithm(
+      [a, b, c, d],
+      counts,
+      new Map(),
+      recent,
+      new Map(),
+      [],
+      new Map(),
+      new Map()
+    );
+
+    expect(withoutHistory.proposal).toBeNull();
+    expect(withoutHistory.capSaturation).toBe(false);
+    expect(withHistory.proposal).toBeNull();
+    expect(withHistory.capSaturation).toBe(false);
+    expect(withHistory.capSaturationReason).toBeUndefined();
+  });
+
+  it("path out: a fifth body who is not a last partner lets the stalled four sit", () => {
+    const a = makePlayer("a", { skillInt: 5, waitMinutes: CRITICAL_WAIT_MINUTES });
+    const b = makePlayer("b", { skillInt: 4, waitMinutes: 10 });
+    const c = makePlayer("c", { skillInt: 4, waitMinutes: 9 });
+    const d = makePlayer("d", { skillInt: 2, waitMinutes: 8 });
+    const e = makePlayer("e", { skillInt: 4, waitMinutes: 7 });
+    const counts = new Map([
+      [pairKey("a", "d"), 1],
+      [pairKey("b", "c"), 1],
+    ]);
+    const lastPartners = lastPartnersOf([
+      ["a", "d"],
+      ["b", "c"],
+    ]);
+    const result = runAlgorithm(
+      [a, b, c, d, e],
+      counts,
+      new Map(),
+      [],
+      new Map(),
+      [],
+      new Map(),
+      lastPartners
+    );
+    expect(result.proposal).not.toBeNull();
+    expect(result.capSaturation).toBe(false);
+    const served = [...result.proposal!.teamA, ...result.proposal!.teamB].map((p) => p.player_id);
+    expect(served).toContain("e");
+    for (const team of [result.proposal!.teamA, result.proposal!.teamB]) {
+      const ids = team.map((p) => p.player_id).sort();
+      expect(ids).not.toEqual(["a", "d"]);
+      expect(ids).not.toEqual(["b", "c"]);
+    }
   });
 });
 

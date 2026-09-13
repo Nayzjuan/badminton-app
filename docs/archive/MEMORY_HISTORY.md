@@ -13,6 +13,20 @@
 
 ---
 
+## Part 0 — sessions 2026-09-11 and 2026-08-22 (archived 2026-09-13)
+
+Shipped notes moved out of `MEMORY.md` so the consecutive-partnership-ban heading could fit under the 40 KB cap. Behaviour lives in `APP_MANIFEST.md`.
+
+## 2026-09-11 — co-organizer UI: stale modals close; named toasts
+
+Idle score modal settles only when `endMatch` is not in flight, then reads `matches.status` so scored vs cancelled stays distinct (`idleScoreModalDecision`, `toastForTerminalMatchStatus`). Swap sheets still close on `PLAYER_NOT_IN_MATCH` (LS-22); they now toast the outgoing name and close from the **live** match list. `drafts_published` names a co-organizer publish. Auto-off/on toasts on the other tab via `pendingAuto` skip. `session_closed` may carry the closer; organizer `creditCloser` waits 200 ms for that name after a nameless row/poll. Pins: ISM-1–8, CT-1–3, SS-4c, LS-29, LS-29b, OD-24, PE-1/2, CST-12.
+
+## 2026-08-22 — two-highest stack banned unless tied for best gap
+
+`isBalancedSplit` (`matchmaking-core.ts`) still uses gap ≤ minGap + `SKILL_VARIANCE_MAX`, but a seating that puts the two highest-skill players on the same team is now balanced only when that gap equals minGap. That is what stops L.ADV+L.ADV vs U.INT+INT (gap 3) and vs U.INT+U.INT (gap 2): both were inside the +2 tolerance. Mixed Split 2 on 6/5/4/3 (gap 2, not stacked) stays eligible. e2e [H-2] 4/3/3/2 now rotates to Split 2 instead of Split 1; the assertion is still "partnership differs", so the spec does not change.
+
+---
+
 ## Part 1 — sessions 2026-08-20 back to 2026-07-24
 
 ## 🚢 PR #74 MERGED — `main` `5949f5e`, prod deploy READY — 2026-08-20

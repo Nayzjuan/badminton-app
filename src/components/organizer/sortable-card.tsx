@@ -73,11 +73,21 @@ export function CapSaturationNotice({
   if (!capSaturation) return null;
 
   const isRedZone = capSaturation.type === "red_zone";
+  const isConsecutive = capSaturation.reason === "consecutive";
+  const heading = isConsecutive ? "Last partnership blocked" : "Partner-pair cap reached";
+  const body = isConsecutive
+    ? isRedZone
+      ? `${capSaturation.anchorPlayerName} has been waiting over ${CRITICAL_WAIT_MINUTES} min but seating them would reuse last game's teammates. Manual assignment needed.`
+      : `Could not form a match for ${capSaturation.anchorPlayerName} — remaining combinations would reuse last game's teammates. Consider a manual override or wait for ongoing matches to finish.`
+    : isRedZone
+      ? `${capSaturation.anchorPlayerName} has been waiting over ${CRITICAL_WAIT_MINUTES} min but all available teammates have already hit the ${MAX_PARTNERSHIP_REPEATS}-game partner cap. Manual assignment needed.`
+      : `Could not form a match for ${capSaturation.anchorPlayerName} — all partner combinations have reached the ${MAX_PARTNERSHIP_REPEATS}-game cap. Consider a manual override or wait for ongoing matches to finish.`;
+  const noticeLabel = isConsecutive ? "Last-partnership notice" : "Partner-pair cap notice";
 
   return (
     <div
       role="alert"
-      aria-label="Partner-pair cap notice"
+      aria-label={noticeLabel}
       className={[
         "clip-cut-sm border animate-in slide-in-from-top-1 fade-in duration-200",
         isRedZone ? "border-cc-red/40 bg-cc-red-dim" : "border-cc-amber/35 bg-cc-amber-dim",
@@ -98,20 +108,16 @@ export function CapSaturationNotice({
                 isRedZone ? "text-cc-red" : "text-cc-amber",
               ].join(" ")}
             >
-              Partner-pair cap reached
+              {heading}
               {isRedZone && <span className="ml-1.5">— Urgent</span>}
             </p>
-            <p className="text-[11.5px] mt-0.5 leading-relaxed text-cc-t2">
-              {isRedZone
-                ? `${capSaturation.anchorPlayerName} has been waiting over ${CRITICAL_WAIT_MINUTES} min but all available teammates have already hit the ${MAX_PARTNERSHIP_REPEATS}-game partner cap. Manual assignment needed.`
-                : `Could not form a match for ${capSaturation.anchorPlayerName} — all partner combinations have reached the ${MAX_PARTNERSHIP_REPEATS}-game cap. Consider a manual override or wait for ongoing matches to finish.`}
-            </p>
+            <p className="text-[11.5px] mt-0.5 leading-relaxed text-cc-t2">{body}</p>
           </div>
         </div>
         {onDismiss && (
           <button
             onClick={onDismiss}
-            aria-label="Dismiss partner-pair cap notice"
+            aria-label={`Dismiss ${noticeLabel.toLowerCase()}`}
             className="shrink-0 p-1 transition-colors text-cc-t3 hover:text-cc-t2"
           >
             <X className="h-3.5 w-3.5" />

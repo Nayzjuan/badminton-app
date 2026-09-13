@@ -862,6 +862,7 @@ describe("runEngineForSession", () => {
       type: "general", // anchor waits 10min → priorityScore < RED_ZONE_SCORE_FLOOR
       anchorPlayerId: "p0",
       anchorPlayerName: "Player 0",
+      reason: "session_cap",
     });
 
     // The sibling else-branch must NOT have fired: cap saturation and
@@ -999,6 +1000,7 @@ describe("runEngineForSession", () => {
       type: "red_zone", // ← was "general" before isRedZonePlayer
       anchorPlayerId: "p0",
       anchorPlayerName: "Player 0",
+      reason: "session_cap",
     });
     expect(mock.rpc).not.toHaveBeenCalled();
   });

@@ -18,6 +18,8 @@
 //   derivePairCounts           — pure: same-team + cross-net pair counts
 //   deriveOverlapMap           — pure: per-anchor co-player familiarity weights
 //   deriveLastOpponents        — pure: who each player faced in their LAST match
+//   deriveLastPartners         — pure: who each player partnered in their LAST match
+//   deriveLastSides            — pure: both maps from one snapshot walk
 //   fetchPartnershipCounts     — snapshot + derivePairCounts, for non-engine callers
 //   executeMatch               — write: commit a MatchProposal via RPC
 //
@@ -451,8 +453,18 @@ export function deriveOverlapMap(
 // session above SESSION_MATCH_SNAPSHOT_CEILING (200) matches, so this is
 // O(≤200 × 4) with a per-player early-out.
 
-export function deriveLastOpponents(snapshot: SessionMatchSnapshot): Map<string, Set<string>> {
+export function deriveLastSides(snapshot: SessionMatchSnapshot): {
+  lastOpponents: Map<string, Set<string>>;
+  lastPartners: Map<string, Set<string>>;
+} {
   const lastOpponents = new Map<string, Set<string>>();
+  const lastPartners = new Map<string, Set<string>>();
+
+  const markSeenEmpty = (playerId: string): void => {
+    if (lastOpponents.has(playerId)) return;
+    lastOpponents.set(playerId, new Set());
+    lastPartners.set(playerId, new Set());
+  };
 
   for (const id of snapshot.matchIds) {
     const rows = snapshot.rowsByMatch.get(id);
@@ -481,16 +493,25 @@ export function deriveLastOpponents(snapshot: SessionMatchSnapshot): Map<string,
           // First (newest) match wins — later iterations are older matches.
           if (lastOpponents.has(playerId)) continue;
           lastOpponents.set(playerId, new Set(other));
+          lastPartners.set(playerId, new Set(own.filter((id) => id !== playerId)));
         }
       }
     } else {
       for (const row of rows) {
-        if (!lastOpponents.has(row.player_id)) lastOpponents.set(row.player_id, new Set());
+        markSeenEmpty(row.player_id);
       }
     }
   }
 
-  return lastOpponents;
+  return { lastOpponents, lastPartners };
+}
+
+export function deriveLastOpponents(snapshot: SessionMatchSnapshot): Map<string, Set<string>> {
+  return deriveLastSides(snapshot).lastOpponents;
+}
+
+export function deriveLastPartners(snapshot: SessionMatchSnapshot): Map<string, Set<string>> {
+  return deriveLastSides(snapshot).lastPartners;
 }
 
 // ─────────────────────────────────────────────────────────────
