@@ -41,6 +41,8 @@ import {
   derivePairCounts,
   deriveOverlapMap,
   deriveLastOpponents,
+  deriveLastPartners,
+  deriveLastSides,
   fetchPartnershipCounts,
   type DbClient,
   type SessionMatchSnapshot,
@@ -711,5 +713,131 @@ describe("deriveLastOpponents", () => {
 
     const last = deriveLastOpponents(snapshot);
     expect([...(last.get("p1") ?? [])].sort()).toEqual(["p3", "p4"]);
+  });
+});
+
+describe("deriveLastPartners", () => {
+  it("SNAP-LP-1: reports only SAME-SIDE players — an opponent is never a partner", () => {
+    const snapshot = snapshotOf([
+      {
+        id: "m1",
+        roster: [
+          ["p1", "a"],
+          ["p2", "a"],
+          ["p3", "b"],
+          ["p4", "b"],
+        ],
+      },
+    ]);
+
+    const last = deriveLastPartners(snapshot);
+    expect([...(last.get("p1") ?? [])].sort()).toEqual(["p2"]);
+    expect([...(last.get("p3") ?? [])].sort()).toEqual(["p4"]);
+    expect(last.get("p1")?.has("p3")).toBe(false);
+  });
+
+  it("SNAP-LP-2: the NEWEST match wins per player", () => {
+    const snapshot = snapshotOf([
+      {
+        id: "m0",
+        roster: [
+          ["p1", "a"],
+          ["p2", "a"],
+          ["p3", "b"],
+          ["p4", "b"],
+        ],
+      },
+      {
+        id: "m1",
+        roster: [
+          ["p1", "a"],
+          ["p7", "a"],
+          ["p5", "b"],
+          ["p6", "b"],
+        ],
+      },
+    ]);
+
+    const last = deriveLastPartners(snapshot);
+    expect([...(last.get("p1") ?? [])].sort()).toEqual(["p2"]);
+    expect([...(last.get("p5") ?? [])].sort()).toEqual(["p6"]);
+  });
+
+  it("SNAP-LP-3: a malformed roster marks its players SEEN with an empty set, not skipped", () => {
+    const snapshot = snapshotOf([
+      {
+        id: "m0",
+        roster: [
+          ["p1", "a"],
+          ["p2", "a"],
+          ["p3", "a"],
+          ["p4", "a"],
+        ],
+      },
+      {
+        id: "m1",
+        roster: [
+          ["p1", "a"],
+          ["p2", "a"],
+          ["p5", "b"],
+          ["p6", "b"],
+        ],
+      },
+    ]);
+
+    const last = deriveLastPartners(snapshot);
+    expect(last.has("p1")).toBe(true);
+    expect(last.get("p1")?.size).toBe(0);
+  });
+
+  it("SNAP-LP-4: a 3-1 roster is malformed too", () => {
+    const snapshot = snapshotOf([
+      {
+        id: "m0",
+        roster: [
+          ["p1", "a"],
+          ["p2", "a"],
+          ["p3", "a"],
+          ["p4", "b"],
+        ],
+      },
+      {
+        id: "m1",
+        roster: [
+          ["p4", "a"],
+          ["p7", "a"],
+          ["p5", "b"],
+          ["p6", "b"],
+        ],
+      },
+    ]);
+
+    const last = deriveLastPartners(snapshot);
+    expect(last.has("p4")).toBe(true);
+    expect(last.get("p4")?.size).toBe(0);
+    expect(last.get("p1")?.size).toBe(0);
+  });
+
+  it("SNAP-LP-5: an empty snapshot yields an empty map", () => {
+    expect(deriveLastPartners(snapshotOf([])).size).toBe(0);
+  });
+
+  it("SNAP-LP-6: deriveLastSides walks once — a teammate is never also an opponent", () => {
+    const snapshot = snapshotOf([
+      {
+        id: "m1",
+        roster: [
+          ["p1", "a"],
+          ["p2", "a"],
+          ["p3", "b"],
+          ["p4", "b"],
+        ],
+      },
+    ]);
+    const { lastOpponents, lastPartners } = deriveLastSides(snapshot);
+    expect([...(lastPartners.get("p1") ?? [])]).toEqual(["p2"]);
+    expect([...(lastOpponents.get("p1") ?? [])].sort()).toEqual(["p3", "p4"]);
+    expect(lastOpponents.get("p1")?.has("p2")).toBe(false);
+    expect(lastPartners.get("p1")?.has("p3")).toBe(false);
   });
 });

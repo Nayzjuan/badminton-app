@@ -10,6 +10,7 @@
 //   1. No same-team pair count ever exceeds MAX_PARTNERSHIP_REPEATS
 //   2. Every match has exactly 4 distinct players
 //   3. Non-mixed matches respect SKILL_VARIANCE_MAX
+//   7. No player reseats their immediately-previous teammate
 //
 // Additional targeted tests:
 //   4. capSignal fires when the cap is the sole blocker
@@ -177,7 +178,8 @@ type SimResult =
 function simRunAlgorithm(
   pool: ScoredPlayer[],
   partnershipCounts: Map<string, number>,
-  recentRosters: string[][]
+  recentRosters: string[][],
+  lastPartners: Map<string, Set<string>> = new Map()
 ): SimResult {
   const noMatch = (
     capSignal: boolean,
@@ -251,7 +253,11 @@ function simRunAlgorithm(
         const draft = snakeDraft(
           [anchor, ...swapGroup],
           partnershipCounts,
-          MAX_PARTNERSHIP_REPEATS
+          MAX_PARTNERSHIP_REPEATS,
+          undefined,
+          undefined,
+          undefined,
+          lastPartners
         );
         if (!draft || draft.usedCapOverride) continue;
         return {
@@ -269,7 +275,11 @@ function simRunAlgorithm(
         [anchor, ...group],
         recentRosters,
         partnershipCounts,
-        MAX_PARTNERSHIP_REPEATS
+        MAX_PARTNERSHIP_REPEATS,
+        undefined,
+        undefined,
+        undefined,
+        lastPartners
       );
       if (rotated) {
         return {
@@ -284,7 +294,15 @@ function simRunAlgorithm(
       // rotatedDraft returned null → all splits capped → expand window
     } else {
       // ── No diversity violation: snakeDraft with cap ────────
-      const draft = snakeDraft([anchor, ...group], partnershipCounts, MAX_PARTNERSHIP_REPEATS);
+      const draft = snakeDraft(
+        [anchor, ...group],
+        partnershipCounts,
+        MAX_PARTNERSHIP_REPEATS,
+        undefined,
+        undefined,
+        undefined,
+        lastPartners
+      );
       if (draft && !draft.usedCapOverride) {
         return {
           formed: true,
@@ -306,7 +324,11 @@ function simRunAlgorithm(
     const draft = snakeDraft(
       [anchor, ...fallbackGroup],
       partnershipCounts,
-      MAX_PARTNERSHIP_REPEATS
+      MAX_PARTNERSHIP_REPEATS,
+      undefined,
+      undefined,
+      undefined,
+      lastPartners
     );
     if (draft && !draft.usedCapOverride) {
       return {
@@ -326,7 +348,8 @@ function simRunAlgorithm(
 function recordMatch(
   match: SimMatch,
   partnershipCounts: Map<string, number>,
-  recentRosters: string[][]
+  recentRosters: string[][],
+  lastPartners: Map<string, Set<string>>
 ): void {
   // Record team pair counts
   for (const team of [match.teamA, match.teamB]) {
@@ -335,6 +358,10 @@ function recordMatch(
         const key = pairKey(team[i].player_id, team[j].player_id);
         partnershipCounts.set(key, (partnershipCounts.get(key) ?? 0) + 1);
       }
+    }
+    if (team.length === 2) {
+      lastPartners.set(team[0].player_id, new Set([team[1].player_id]));
+      lastPartners.set(team[1].player_id, new Set([team[0].player_id]));
     }
   }
   // Prepend to recent roster window
@@ -391,6 +418,7 @@ function runSimulation(
   const joinedAgo = new Map<string, number>(players.map((p, i) => [p.id, i * 0.1]));
 
   const partnershipCounts = new Map<string, number>();
+  const lastPartners = new Map<string, Set<string>>();
   const recentRosters: string[][] = [];
   const allMatches: SimMatch[] = [];
 
@@ -426,11 +454,11 @@ function runSimulation(
     for (let court = 0; court < courtsPerRound; court++) {
       if (queue.length < 4) break;
 
-      const result = simRunAlgorithm(queue, partnershipCounts, recentRosters);
+      const result = simRunAlgorithm(queue, partnershipCounts, recentRosters, lastPartners);
 
       if (result.formed) {
         const { match } = result;
-        recordMatch(match, partnershipCounts, recentRosters);
+        recordMatch(match, partnershipCounts, recentRosters, lastPartners);
         allMatches.push(match);
         matchesThisRound++;
 
@@ -604,6 +632,22 @@ describe("30-player session simulation", () => {
     console.log(`    ↳ max pair count observed: ${stats.maxPairCount}`);
   });
 
+  it("never reseats a player's immediately-previous teammate", () => {
+    const lastTeammate = new Map<string, string>();
+    for (const match of stats.allMatches) {
+      for (const team of [match.teamA, match.teamB]) {
+        const [x, y] = team.map((p) => p.player_id);
+        expect(lastTeammate.get(x)).not.toBe(y);
+        expect(lastTeammate.get(y)).not.toBe(x);
+      }
+      for (const team of [match.teamA, match.teamB]) {
+        const [x, y] = team.map((p) => p.player_id);
+        lastTeammate.set(x, y);
+        lastTeammate.set(y, x);
+      }
+    }
+  });
+
   // ─────────────────────────────────────────────────────────
   // Invariant 6: players with no valid partners fire capSignal,
   // not a violated match
@@ -751,6 +795,7 @@ describe("small isolated pool — cap saturation scenario", () => {
     );
 
     const counts = new Map<string, number>();
+    const lastPartners = new Map<string, Set<string>>();
     const rosters: string[][] = [];
     const matches: SimMatch[] = [];
 
@@ -758,7 +803,7 @@ describe("small isolated pool — cap saturation scenario", () => {
     let attempts = 0;
     while (attempts < 20) {
       // Re-score pool with updated games/wait (simplified: just use current state)
-      const result = simRunAlgorithm(pool6, counts, rosters);
+      const result = simRunAlgorithm(pool6, counts, rosters, lastPartners);
       if (!result.formed) {
         // When saturation fires: verify it's the cap, not an algorithm bug
         if (result.capSignal) {
@@ -771,7 +816,7 @@ describe("small isolated pool — cap saturation scenario", () => {
       }
 
       const { match } = result;
-      recordMatch(match, counts, rosters);
+      recordMatch(match, counts, rosters, lastPartners);
       matches.push(match);
       attempts++;
     }

@@ -71,7 +71,7 @@ import {
   deriveRecentRosters,
   derivePairCounts,
   deriveOverlapMap,
-  deriveLastOpponents,
+  deriveLastSides,
   executeMatch,
   fetchPullablePlayers,
   hasFeedableCapacity,
@@ -637,7 +637,7 @@ async function runEngineInternal(
     // between two NON-anchor co-players, which the anchor-relative overlapMap
     // structurally cannot see. Re-derived per slot because the match just
     // committed above is a new "last match" for four players.
-    const lastOpponents = deriveLastOpponents(snapshot);
+    const { lastOpponents, lastPartners } = deriveLastSides(snapshot);
 
     // ── Pure algorithm — zero DB calls ───────────────────────────
     const result = runAlgorithm(
@@ -647,7 +647,8 @@ async function runEngineInternal(
       recentRosters,
       opponentCounts,
       rejectedRosters,
-      lastOpponents
+      lastOpponents,
+      lastPartners
     );
     const { proposal, capSaturation } = result;
 
@@ -665,6 +666,7 @@ async function runEngineInternal(
           type: isRedZonePlayer(anchor) ? "red_zone" : "general",
           anchorPlayerId: anchor.player_id,
           anchorPlayerName: anchor.display_name,
+          reason: result.capSaturationReason ?? "session_cap",
         }).catch((err) => {
           console.warn("[matchmaking] broadcastCapSaturation failed (non-fatal):", err);
         });
@@ -783,6 +785,7 @@ async function runEngineInternal(
             opponentCounts,
             rejectedRosters,
             lastOpponents,
+            lastPartners,
             baseStaleness,
             forcedRepeat: result.forcedRepeat,
           }

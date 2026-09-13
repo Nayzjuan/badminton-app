@@ -350,6 +350,21 @@ export type TeamSplit = { teamA: ScoredPlayer[]; teamB: ScoredPlayer[] };
  */
 export type LastOpponents = ReadonlyMap<string, ReadonlySet<string>>;
 
+/**
+ * Who each player partnered with (same side) in their immediately-previous game.
+ * Produced by deriveLastPartners (matchmaking-db.ts). An empty map is always
+ * safe and reproduces the pre-ban seater exactly.
+ */
+export type LastPartners = ReadonlyMap<string, ReadonlySet<string>>;
+
+/** True when `a` and `b` were teammates in either player's last match. */
+export function isLastPartnership(aId: string, bId: string, lastPartners?: LastPartners): boolean {
+  if (!lastPartners || lastPartners.size === 0) return false;
+  const lastA = lastPartners.get(aId);
+  const lastB = lastPartners.get(bId);
+  return (!!lastA && lastA.has(bId)) || (!!lastB && lastB.has(aId));
+}
+
 // Skill gap between the two teams of a split — 0 means perfectly balanced.
 function splitSkillGap(split: TeamSplit): number {
   return Math.abs(
@@ -573,15 +588,25 @@ type SplitConstraints = {
   opponentCounts?: Map<string, number>;
   opponentCap?: number;
   lastOpponents?: LastOpponents;
+  lastPartners?: LastPartners;
   /** When true, pass 2 treats every split as under the partnership cap so
    *  snakeDraft can still seat a mixed four. Preview / swaps / rotatedDraft
-   *  must not set this. */
+   *  must not set this. Does NOT waive the consecutive-partnership ban. */
   ignorePartnershipCap?: boolean;
 };
 
 function selectSplit(pool: TeamSplit[], c: SplitConstraints): TeamSplit | null {
   const pairCount = (a: ScoredPlayer, b: ScoredPlayer): number =>
     c.partnershipCounts.get(pairKey(a.player_id, b.player_id)) ?? 0;
+
+  // Hard ban: never reseat last game's teammates. Applied before the freshness
+  // ladder (and before ignorePartnershipCap) so usedCapOverride cannot waive it.
+  const legal = pool.filter(
+    (split) =>
+      !isLastPartnership(split.teamA[0].player_id, split.teamA[1].player_id, c.lastPartners) &&
+      !isLastPartnership(split.teamB[0].player_id, split.teamB[1].player_id, c.lastPartners)
+  );
+  if (legal.length === 0) return null;
 
   // True when no cross-net pair is at or above the opponent cap.
   // Always true when opponentCounts / opponentCap are absent.
@@ -613,7 +638,7 @@ function selectSplit(pool: TeamSplit[], c: SplitConstraints): TeamSplit | null {
   for (const qualifies of passes) {
     let best: TeamSplit | null = null;
     let bestRepeats = Infinity;
-    for (const split of pool) {
+    for (const split of legal) {
       if (!qualifies(split)) continue;
       const repeats = countConsecutiveOpponentRepeats(split, c.lastOpponents);
       // Strict `<` keeps the earliest (most balanced / natural rotation) split
@@ -636,7 +661,8 @@ export function snakeDraft(
   cap?: number,
   opponentCounts?: Map<string, number>,
   opponentCap?: number,
-  lastOpponents?: LastOpponents
+  lastOpponents?: LastOpponents,
+  lastPartners?: LastPartners
 ): SnakeDraftResult | null {
   const { splits, minGap, sorted } = splitsForFour(allFour);
   const balancedSplits = splits.filter((s) => isBalancedSplit(s, minGap, sorted));
@@ -664,6 +690,7 @@ export function snakeDraft(
     opponentCounts,
     opponentCap,
     lastOpponents,
+    lastPartners,
   };
 
   const balanced = selectSplit(balancedSplits, constraints);
@@ -887,6 +914,7 @@ export type SplitPreviewContext = {
   opponentCounts?: Map<string, number>;
   opponentCap?: number;
   lastOpponents?: LastOpponents;
+  lastPartners?: LastPartners;
 };
 
 export function buildCombinationGroup(
@@ -967,7 +995,8 @@ export function buildCombinationGroup(
           splitPreview.cap,
           splitPreview.opponentCounts,
           splitPreview.opponentCap,
-          lastOpponents
+          lastOpponents,
+          splitPreview.lastPartners
         );
         // A null split, or one that only seats by breaking the partnership
         // cap (`usedCapOverride`), must score as the worst case, never as
@@ -1059,7 +1088,8 @@ export function rotatedDraft(
   cap?: number,
   opponentCounts?: Map<string, number>,
   opponentCap?: number,
-  lastOpponents?: LastOpponents
+  lastOpponents?: LastOpponents,
+  lastPartners?: LastPartners
 ): TeamSplit | null {
   const sorted = [...allFour].sort((a, b) => b.skill_level_int - a.skill_level_int);
 
@@ -1099,6 +1129,7 @@ export function rotatedDraft(
     opponentCounts,
     opponentCap,
     lastOpponents,
+    lastPartners,
   });
 }
 
@@ -1244,8 +1275,10 @@ export type MatchProposal = {
 
 export type AlgorithmResult = {
   proposal: MatchProposal | null;
-  /** True when the partnership cap shrank the candidate pool and no match was formed. */
+  /** True when a partnership constraint (session cap or last-partner ban) blocked a match. */
   capSaturation: boolean;
+  /** Which partnership constraint fired. Absent when capSaturation is false. */
+  capSaturationReason?: "session_cap" | "consecutive";
   /**
    * True ONLY when the proposal is a forced repeat — the Tier-3 partner rotation
    * or the last-resort fallback (a recent group re-emitted). The cross-court
@@ -1399,6 +1432,7 @@ export function buildCrossCourtProposal(
     opponentCounts: Map<string, number>;
     rejectedRosters: string[][];
     lastOpponents: LastOpponents;
+    lastPartners?: LastPartners;
     /** Staleness of the waiting-only four this reach has to beat. */
     baseStaleness: number;
     /**
@@ -1462,7 +1496,8 @@ export function buildCrossCourtProposal(
           args.recentRosters,
           args.opponentCounts,
           args.rejectedRosters,
-          args.lastOpponents
+          args.lastOpponents,
+          args.lastPartners ?? new Map()
         );
         // forcedRepeat here means runAlgorithm had to re-serve a group that
         // failed the diversity / rejection check. Never worth a pull.
@@ -1577,7 +1612,10 @@ export function runAlgorithm(
   // silent positional shift would drop rejection memory while still compiling.
   // Defaulting to an empty map keeps every existing caller — and every test —
   // byte-identical to the pre-freshness engine.
-  lastOpponents: LastOpponents = new Map()
+  lastOpponents: LastOpponents = new Map(),
+  // Who each player partnered with in their LAST game (deriveLastPartners).
+  // Trailing optional — same positional-safety reason as lastOpponents.
+  lastPartners: LastPartners = new Map()
 ): AlgorithmResult {
   // pool must be pre-scored and pre-sorted (pool[0] = anchor).
   const anchor = pool[0];
@@ -1619,6 +1657,22 @@ export function runAlgorithm(
 
   // Track whether the cap reduced the candidate pool.
   const capWasActive = pool.length - 1 > candidates.length;
+  // True when the seater refused a four solely because every balanced split
+  // reused last game's teammates. OR'd into capSaturation so the organizer
+  // sees a partnership-constraint notice, not a silent skill-exhaustion miss.
+  let lastPartnerBlocked = false;
+  const lastPartnerBanActive = lastPartners.size > 0;
+  // lastPartners is non-empty after the first match of a session, so a bare
+  // `!draft` is not proof the consecutive ban fired — rotatedDraft also
+  // returns null when companion pairs are at the session cap. Re-seat without
+  // the ban; only then is the miss attributable to last teammates.
+  const markLastPartnerBlock = (
+    seated: SnakeDraftResult | TeamSplit | null,
+    retryWithoutBan: () => SnakeDraftResult | TeamSplit | null
+  ): void => {
+    if (seated || lastPartnerBlocked || !lastPartnerBanActive) return;
+    if (retryWithoutBan()) lastPartnerBlocked = true;
+  };
 
   if (process.env.DEBUG_MATCHMAKING === "true") {
     const filtered = pool.length - 1 - candidates.length;
@@ -1651,6 +1705,7 @@ export function runAlgorithm(
     opponentCounts,
     opponentCap: MAX_OPPONENT_REPEATS,
     lastOpponents,
+    lastPartners,
   };
 
   // ── 3. Progressive expansion ──────────────────────────────
@@ -1739,7 +1794,19 @@ export function runAlgorithm(
                 MAX_PARTNERSHIP_REPEATS,
                 opponentCounts,
                 MAX_OPPONENT_REPEATS,
-                lastOpponents
+                lastOpponents,
+                lastPartners
+              );
+              markLastPartnerBlock(draft, () =>
+                snakeDraft(
+                  [anchor, ...swapGroup],
+                  partnershipCounts,
+                  MAX_PARTNERSHIP_REPEATS,
+                  opponentCounts,
+                  MAX_OPPONENT_REPEATS,
+                  lastOpponents,
+                  new Map()
+                )
               );
               if (!draft || draft.usedCapOverride) {
                 if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -1787,7 +1854,19 @@ export function runAlgorithm(
                     MAX_PARTNERSHIP_REPEATS,
                     opponentCounts,
                     MAX_OPPONENT_REPEATS,
-                    lastOpponents
+                    lastOpponents,
+                    lastPartners
+                  );
+                  markLastPartnerBlock(draft, () =>
+                    snakeDraft(
+                      [anchor, ...swapGroup],
+                      partnershipCounts,
+                      MAX_PARTNERSHIP_REPEATS,
+                      opponentCounts,
+                      MAX_OPPONENT_REPEATS,
+                      lastOpponents,
+                      new Map()
+                    )
                   );
                   if (!draft || draft.usedCapOverride) {
                     if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -1820,7 +1899,20 @@ export function runAlgorithm(
             MAX_PARTNERSHIP_REPEATS,
             opponentCounts,
             MAX_OPPONENT_REPEATS,
-            lastOpponents
+            lastOpponents,
+            lastPartners
+          );
+          markLastPartnerBlock(rotatedResult, () =>
+            rotatedDraft(
+              [anchor, ...group],
+              recentRosters,
+              partnershipCounts,
+              MAX_PARTNERSHIP_REPEATS,
+              opponentCounts,
+              MAX_OPPONENT_REPEATS,
+              lastOpponents,
+              new Map()
+            )
           );
           if (!rotatedResult) {
             if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -1853,9 +1945,21 @@ export function runAlgorithm(
         MAX_PARTNERSHIP_REPEATS,
         opponentCounts,
         MAX_OPPONENT_REPEATS,
-        lastOpponents
+        lastOpponents,
+        lastPartners
       );
       if (!draft) {
+        markLastPartnerBlock(draft, () =>
+          snakeDraft(
+            allFour,
+            partnershipCounts,
+            MAX_PARTNERSHIP_REPEATS,
+            opponentCounts,
+            MAX_OPPONENT_REPEATS,
+            lastOpponents,
+            new Map()
+          )
+        );
         if (process.env.DEBUG_MATCHMAKING === "true") {
           console.log(
             `[matchmaking] ±${maxVariance} window: group valid but all team splits capped — expanding`
@@ -1891,7 +1995,8 @@ export function runAlgorithm(
               MAX_PARTNERSHIP_REPEATS,
               opponentCounts,
               MAX_OPPONENT_REPEATS,
-              lastOpponents
+              lastOpponents,
+              lastPartners
             );
             if (altDraft && !altDraft.usedCapOverride) {
               if (process.env.DEBUG_MATCHMAKING === "true") {
@@ -1977,7 +2082,19 @@ export function runAlgorithm(
         MAX_PARTNERSHIP_REPEATS,
         opponentCounts,
         MAX_OPPONENT_REPEATS,
-        lastOpponents
+        lastOpponents,
+        lastPartners
+      );
+      markLastPartnerBlock(draft, () =>
+        snakeDraft(
+          allFour,
+          partnershipCounts,
+          MAX_PARTNERSHIP_REPEATS,
+          opponentCounts,
+          MAX_OPPONENT_REPEATS,
+          lastOpponents,
+          new Map()
+        )
       );
       if (draft) {
         return {
@@ -1995,5 +2112,16 @@ export function runAlgorithm(
   // ── 5. No match ───────────────────────────────────────────────────
   // capSaturation: true tells the orchestrator to broadcast a warning
   // to the organizer. Broadcast itself is a side effect handled there.
-  return { proposal: null, capSaturation: capWasActive };
+  // Session-cap pre-filter wins the reason when both constraints fired —
+  // those candidates were gone before the seater ran.
+  const capSaturation = capWasActive || lastPartnerBlocked;
+  return {
+    proposal: null,
+    capSaturation,
+    ...(capWasActive
+      ? { capSaturationReason: "session_cap" as const }
+      : lastPartnerBlocked
+        ? { capSaturationReason: "consecutive" as const }
+        : {}),
+  };
 }

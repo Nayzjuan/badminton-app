@@ -326,6 +326,13 @@ export interface CapSaturationPayload {
   type: "general" | "red_zone";
   anchorPlayerId: string;
   anchorPlayerName: string;
+  /**
+   * Which partnership constraint blocked the match.
+   * "session_cap" — a pair is already at MAX_PARTNERSHIP_REPEATS.
+   * "consecutive" — seating would reuse last game's teammates.
+   * Absent on older broadcasts; the UI treats that as session_cap.
+   */
+  reason?: "session_cap" | "consecutive";
 }
 
 /**
