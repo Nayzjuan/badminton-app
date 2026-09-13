@@ -35,11 +35,13 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("@/utils/supabase/service", () => ({ createServiceClient: vi.fn() }));
+vi.mock("@/utils/supabase/server", () => ({ createServerSupabaseClient: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 
 import { createServiceClient } from "@/utils/supabase/service";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { redirect } from "next/navigation";
-import { enforceRenameGate } from "@/lib/rename-gate";
+import { enforceRenameGate, enforceRenameGateForUser } from "@/lib/rename-gate";
 import type { Profile } from "@/types/database";
 
 const ME = "00000000-0000-4000-8000-00000000d0e5";
@@ -50,7 +52,10 @@ type Recorded = { table: string; ops: string[] };
 /** Chainable builder that records every filter as `op:column=value`. */
 function builder(resp: Resp, ops: string[]) {
   const b: Record<string, unknown> = {};
-  b["select"] = () => b;
+  b["select"] = (cols?: string) => {
+    if (cols) ops.push(`select:${cols}`);
+    return b;
+  };
   b["limit"] = () => b;
   b["eq"] = (col: string, val: unknown) => {
     ops.push(`eq:${col}=${String(val)}`);
@@ -185,5 +190,57 @@ describe("Suite RG — enforceRenameGate", () => {
     await enforceRenameGate(profile(false, true), "/c/chillax/organizer");
 
     expect(redirect).toHaveBeenCalledWith("/rename?next=%2Fc%2Fchillax%2Forganizer");
+  });
+});
+
+function useUserClient(
+  profileRow: { id: string; needs_rename: boolean; needs_name_confirm: boolean } | null
+) {
+  const ops: string[] = [];
+  const from = vi.fn((table: string) => {
+    ops.push(`from:${table}`);
+    return builder({ data: profileRow }, ops);
+  });
+  vi.mocked(createServerSupabaseClient).mockResolvedValue({
+    from,
+  } as unknown as Awaited<ReturnType<typeof createServerSupabaseClient>>);
+  return ops;
+}
+
+describe("Suite RG — enforceRenameGateForUser", () => {
+  it("RG-9: a missing profile is a no-op — no redirect, no service-role carve-out", async () => {
+    const ops = useUserClient(null);
+    const recorded = useService({ queue_entries: FOUND, sessions: FOUND });
+
+    await enforceRenameGateForUser(ME, "/c/chillax");
+
+    expect(redirect).not.toHaveBeenCalled();
+    expect(
+      recorded,
+      "a missing profile must not fall through to the service-role carve-outs"
+    ).toHaveLength(0);
+    expect(ops).toContain("from:profiles");
+    expect(ops).toContain(`eq:id=${ME}`);
+  });
+
+  it("RG-10: a clean profile is a no-op after the flag read", async () => {
+    useUserClient({ id: ME, needs_rename: false, needs_name_confirm: false });
+    const recorded = useService({});
+
+    await enforceRenameGateForUser(ME, "/c/chillax");
+
+    expect(redirect).not.toHaveBeenCalled();
+    expect(recorded).toHaveLength(0);
+  });
+
+  it("RG-11: confirm-pending loaded by user id redirects and skips carve-outs", async () => {
+    const ops = useUserClient({ id: ME, needs_rename: false, needs_name_confirm: true });
+    const recorded = useService({ queue_entries: FOUND, sessions: FOUND });
+
+    await enforceRenameGateForUser(ME, "/c/chillax");
+
+    expect(redirect).toHaveBeenCalledWith("/rename?next=%2Fc%2Fchillax");
+    expect(recorded).toHaveLength(0);
+    expect(ops).toContain("select:id, needs_rename, needs_name_confirm");
   });
 });
