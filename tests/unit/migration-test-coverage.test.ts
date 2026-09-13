@@ -119,8 +119,11 @@ const ALLOWLIST: Record<string, string> = {};
  *   `rename_player_identity` — Suite RN (tests/unit/rename-actions.test.ts)
  *     asserts the RPC's argument binding and the mapping of each failure code
  *     it can return.
+ *   `lookup_active_session` — Suite LAS (tests/integration/lookup-active-session.test.ts)
+ *     asserts the anon join-link contract: active row shape, close empties
+ *     the next lookup, unknown id is empty, EXECUTE still granted to anon.
  *
- * MTC-2 is what forced all four edits, exactly as designed.
+ * MTC-2 is what forced all five edits, exactly as designed.
  */
 const GRANDFATHERED: string[] = [
   "_fix_record_partnership_delta",
@@ -138,7 +141,6 @@ const GRANDFATHERED: string[] = [
   "is_session_club_member",
   "is_session_organizer",
   "leaderboard_refresh_state",
-  "lookup_active_session",
   "player_renames",
   "push_subscriptions",
   "realtime_topic_session_id",

@@ -77,6 +77,19 @@ const SECURITY_HEADERS = [
   },
 ];
 
+// Public join / share routes are opened inside third-party in-app browsers
+// (Reclub, Facebook IAB) that sometimes iframe the page. DENY +
+// frame-ancestors 'none' then blank the WebView. These routes are a
+// registration form, not an authenticated dashboard — allowing framing
+// here is the clickjacking tradeoff for those clients. Every other route
+// keeps the lock.
+const JOIN_SECURITY_HEADERS = SECURITY_HEADERS.filter((h) => h.key !== "X-Frame-Options").map(
+  (h) =>
+    h.key === "Content-Security-Policy"
+      ? { ...h, value: h.value.replace("frame-ancestors 'none'", "frame-ancestors *") }
+      : h
+);
+
 const nextConfig: NextConfig = {
   // Next.js 16 defaults to Turbopack. Declaring turbopack: {} here
   // suppresses the "webpack config present but no turbopack config"
@@ -86,8 +99,31 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        source: "/(.*)",
+        // Everything except the public join / share surfaces. Those must
+        // omit X-Frame-Options: DENY — a later source can override CSP but
+        // cannot "unset" XFO, so they are excluded here and listed below.
+        source: "/((?!j/|play/join|c/[^/]+/join).*)",
         headers: SECURITY_HEADERS,
+      },
+      {
+        source: "/c/:clubSlug/join",
+        headers: JOIN_SECURITY_HEADERS,
+      },
+      {
+        source: "/c/:clubSlug/join/:sessionId",
+        headers: JOIN_SECURITY_HEADERS,
+      },
+      {
+        source: "/play/join",
+        headers: JOIN_SECURITY_HEADERS,
+      },
+      {
+        source: "/play/join/:sessionId",
+        headers: JOIN_SECURITY_HEADERS,
+      },
+      {
+        source: "/j/:sessionId",
+        headers: JOIN_SECURITY_HEADERS,
       },
     ];
   },
@@ -107,6 +143,10 @@ const nextConfig: NextConfig = {
         destination: "/c/chillax/:path*",
         permanent: true,
       },
+      // Printed `?session=` links are rewritten in middleware
+      // (`resolveJoinRedirect`). next.config `redirects()` always forwards
+      // the original query, so a hop here would mint `/j/<id>?session=<id>`
+      // — the exact token in-app browsers encode into a 404.
     ];
   },
 };

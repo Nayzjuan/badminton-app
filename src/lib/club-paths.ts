@@ -45,7 +45,15 @@ export function clubLeaderboard(slug: string, sessionId?: string): string {
   return sessionId ? `/c/${slug}/leaderboard/${sessionId}` : `/c/${slug}/leaderboard`;
 }
 
-/** QR / passcode join entry — /c/[slug]/join[?session=sessionId] */
+/** QR / club join entry — /c/[slug]/join[/sessionId] */
 export function clubJoin(slug: string, sessionId?: string): string {
-  return sessionId ? `/c/${slug}/join?session=${encodeURIComponent(sessionId)}` : `/c/${slug}/join`;
+  return sessionId ? `/c/${slug}/join/${encodeURIComponent(sessionId)}` : `/c/${slug}/join`;
+}
+
+/**
+ * External share / QR URL. Session id lives in the path so in-app browsers
+ * that encode or strip `?` cannot turn the link into a 404.
+ */
+export function sessionShare(sessionId: string): string {
+  return `/j/${encodeURIComponent(sessionId)}`;
 }
