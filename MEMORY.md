@@ -17,11 +17,11 @@
 
 ---
 
-## 2026-09-13 — Google name confirm + skill + identity merge (UNAPPLIED)
+## 2026-09-13 — Google name confirm + skill + identity merge
 
 `profiles.needs_name_confirm` + `/rename` confirm mode (keep-same valid) + skill picker + self-serve `ChangeDisplayName`. Fresh Google unique path claims the name and sets the flag; collision stays `needs_rename`. Historical **Google-native** rows (google identity, no anonymous) are backfilled. `identity_already_exists` + `intent=link` → signed cookie → `/auth/continue-google` → `merge_guest_play_into_profile` (keeper name untouched — **not** `migrate_player_identity`). Join L1 lives in `ClubJoinScreen` (after enroll, before enqueue) so `/j/[id]` and `/c/[slug]/join/[id]` share it.
 
-⚠️ **`20260913000000_oauth_name_confirm.sql` is NOT applied.** Without the GRANT, authenticated `/play` `/rename` L2 500 on the new column. Do not claim a prod stamp until `list_migrations` shows it.
+⚠️ **`20260913000000` applied.** Prod stamp `20260913055840` (`oauth_name_confirm`). GRANT SELECT on `needs_name_confirm` for authenticated and anon. Google-native backfill: 32.
 
 ## 🔴 OPEN — committed credentials removed from the tree, NOT yet revoked
 
@@ -148,6 +148,7 @@ Resolve a suspected gap file by file, never by count — and check that doc befo
 
 | Applied | Stamp |
 |---|---|
+| `20260913000000_oauth_name_confirm` | `20260913055840` |
 | `20260821000000_prior_sessions_exclude_hidden` | `20260821000000` |
 | `20260820000000_wrapped_reads_the_ledger_as_of_this_session` | `20260820000000` |
 | `20260818120000_lock_queue_status_events_grants` | `20260819011750` |
