@@ -100,6 +100,7 @@ describe("Suite LU — createUnknownProfile", () => {
       needs_rename: false,
       collided_name: null,
       flagged_at: null,
+      needs_name_confirm: false,
       created_at: "",
       updated_at: "",
     } satisfies Profile);

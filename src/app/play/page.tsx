@@ -18,6 +18,7 @@ import { SignOutButton } from "@/components/sign-out-button";
 import { AllSessionsHistory } from "@/components/player/all-sessions-history";
 import { VipTag } from "@/components/ui/vip-tag";
 import { GoogleLinkCard } from "@/components/notifications/google-link-card";
+import { ChangeDisplayName } from "@/components/player/change-display-name";
 import { Trophy } from "lucide-react";
 
 export default async function PlayPage() {
@@ -84,6 +85,13 @@ export default async function PlayPage() {
               )}
             </div>
             <p className="text-sm text-muted-foreground mt-1">Pick a session to join.</p>
+            <div className="mt-1.5">
+              <ChangeDisplayName
+                currentName={profile.display_name}
+                currentSkill={profile.skill_level}
+                compact
+              />
+            </div>
             {hasGoogleLinked && (
               <div className="flex items-center gap-1.5 mt-1.5">
                 <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" aria-hidden="true">

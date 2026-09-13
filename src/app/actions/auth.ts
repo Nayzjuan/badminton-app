@@ -777,10 +777,11 @@ export async function reconnectPlayer(
   // modal routes a requiresRename result to /rename.
   const { data: renamedProfile } = await service
     .from("profiles")
-    .select("needs_rename")
+    .select("needs_rename, needs_name_confirm")
     .eq("id", newUserId)
     .maybeSingle();
-  const requiresRename = renamedProfile?.needs_rename ?? false;
+  const requiresRename =
+    (renamedProfile?.needs_rename ?? false) || (renamedProfile?.needs_name_confirm ?? false);
 
   return {
     success: true,

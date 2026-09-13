@@ -15,9 +15,10 @@
 
 import { createServiceClient } from "@/utils/supabase/service";
 import { getAuthenticatedUser } from "@/app/actions/_shared";
-import { displayNameSchema } from "@/lib/schemas/auth";
+import { displayNameSchema, skillLevelSchema } from "@/lib/schemas/auth";
 import { isNameTaken } from "@/lib/dup-name";
 import { normalizeName } from "@/lib/normalize-name";
+import type { SkillLevel } from "@/types/database";
 
 export type NameCheckResult =
   | { available: true }
@@ -79,7 +80,10 @@ export type RenameResult =
  * unique-index 23505 (race lost) and server-side R1 re-check are mapped to
  * friendly, recoverable messages.
  */
-export async function renamePlayer(rawName: string): Promise<RenameResult> {
+export async function renamePlayer(
+  rawName: string,
+  skillLevel?: SkillLevel
+): Promise<RenameResult> {
   const user = await getAuthenticatedUser();
   if (!user) {
     return { success: false, code: "error", error: "Not signed in. Please refresh." };
@@ -90,6 +94,15 @@ export async function renamePlayer(rawName: string): Promise<RenameResult> {
     return { success: false, code: "invalid", error: parsed.error.issues[0].message };
   }
   const name = parsed.data;
+
+  let skill: SkillLevel | undefined;
+  if (skillLevel !== undefined) {
+    const skillParsed = skillLevelSchema.safeParse(skillLevel);
+    if (!skillParsed.success) {
+      return { success: false, code: "invalid", error: skillParsed.error.issues[0].message };
+    }
+    skill = skillParsed.data;
+  }
 
   const svc = createServiceClient();
   const { data, error } = await svc.rpc("rename_player_identity", {
@@ -124,6 +137,16 @@ export async function renamePlayer(rawName: string): Promise<RenameResult> {
           code: "error",
           error: "Couldn't save your name. Please try again.",
         };
+    }
+  }
+
+  if (skill) {
+    const { error: skillError } = await svc
+      .from("profiles")
+      .update({ skill_level: skill })
+      .eq("id", user.id);
+    if (skillError) {
+      console.error("[renamePlayer] skill update failed:", skillError.message);
     }
   }
 

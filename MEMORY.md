@@ -17,9 +17,11 @@
 
 ---
 
-## 2026-09-13 — share links: path-based join for in-app browsers
+## 2026-09-13 — Google name confirm + skill + identity merge (UNAPPLIED)
 
-Share Session now copies `/j/[sessionId]` (QR too). Club join is `/c/[slug]/join/[sessionId]`. Old `?session=` URLs 308 to the path form; middleware repairs `%3Fsession=` encoded into the pathname (the Reclub-class 404). Join routes allow framing (`frame-ancestors *`, no XFO DENY) and emit OG tags. Pins: CP-8/10, REQ-1–13, JM-1/2, LSJ-1–3, JS-1–6, JSC-1–3, MWJ-1–3, SSD-1, LAS-1–5, E2E S-1–7. S-1–6 verified against local Next; S-7 is the post-deploy pin of the organizer copy URL (current production still prints `?session=`). Work is UNCOMMITTED on `security/purge-committed-credentials`.
+`profiles.needs_name_confirm` + `/rename` confirm mode (keep-same valid) + skill picker + self-serve `ChangeDisplayName`. Fresh Google unique path claims the name and sets the flag; collision stays `needs_rename`. Historical **Google-native** rows (google identity, no anonymous) are backfilled. `identity_already_exists` + `intent=link` → signed cookie → `/auth/continue-google` → `merge_guest_play_into_profile` (keeper name untouched — **not** `migrate_player_identity`). Join L1 lives in `ClubJoinScreen` (after enroll, before enqueue) so `/j/[id]` and `/c/[slug]/join/[id]` share it.
+
+⚠️ **`20260913000000_oauth_name_confirm.sql` is NOT applied.** Without the GRANT, authenticated `/play` `/rename` L2 500 on the new column. Do not claim a prod stamp until `list_migrations` shows it.
 
 ## 🔴 OPEN — committed credentials removed from the tree, NOT yet revoked
 

@@ -26,9 +26,13 @@
 //   QST-11 Session name shown as eyebrow in not-in-queue state
 // ============================================================
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { QueueEntry } from "@/types/database";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+}));
 
 // ── Import the internal QueueSubTab via its parent MyStatusTab ─
 // QueueSubTab is not exported — test it through MyStatusTab's
@@ -52,6 +56,7 @@ const mockProfile: Profile = {
   needs_rename: false,
   collided_name: null,
   flagged_at: null,
+  needs_name_confirm: false,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 };

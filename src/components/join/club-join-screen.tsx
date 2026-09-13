@@ -15,6 +15,7 @@ import { getClubBySlug, ensureClubMembership } from "@/lib/clubs";
 import { lookupActiveJoinSession } from "@/lib/resolve-session-join";
 import { clubPlay, clubBase } from "@/lib/club-paths";
 import { LoginForm } from "@/components/login-form";
+import { enforceRenameGate } from "@/lib/rename-gate";
 
 export async function ClubJoinScreen({
   clubSlug,
@@ -46,7 +47,7 @@ export async function ClubJoinScreen({
   if (user) {
     const { data: profile } = await supabase
       .from("profiles")
-      .select("id")
+      .select("id, needs_rename, needs_name_confirm")
       .eq("id", user.id)
       .single();
     if (profile) {
@@ -58,6 +59,8 @@ export async function ClubJoinScreen({
         // (/play resolves their club or the join-via-QR screen), not /clubs.
         redirect("/play");
       }
+      const dest = validSessionId ? clubPlay(clubSlug, validSessionId) : clubBase(clubSlug);
+      await enforceRenameGate(profile, dest);
       // Announce the join on the destination ONLY when this scan actually
       // added them (first join / reactivation) — not when already a member.
       const joinedQs = enroll.joined ? "?joined=1" : "";

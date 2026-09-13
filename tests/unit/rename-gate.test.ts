@@ -35,11 +35,18 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("@/utils/supabase/service", () => ({ createServiceClient: vi.fn() }));
+vi.mock("@/utils/supabase/server", () => ({ createServerSupabaseClient: vi.fn() }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
+vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => ({ get: () => null })),
+}));
 
 import { createServiceClient } from "@/utils/supabase/service";
+import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { redirect } from "next/navigation";
-import { enforceRenameGate } from "@/lib/rename-gate";
+import { headers } from "next/headers";
+import { enforceRenameGate, enforceRenameGateForUser } from "@/lib/rename-gate";
+import { REQUEST_PATH_HEADER } from "@/lib/request-path";
 import type { Profile } from "@/types/database";
 
 const ME = "00000000-0000-4000-8000-00000000d0e5";
@@ -50,7 +57,10 @@ type Recorded = { table: string; ops: string[] };
 /** Chainable builder that records every filter as `op:column=value`. */
 function builder(resp: Resp, ops: string[]) {
   const b: Record<string, unknown> = {};
-  b["select"] = () => b;
+  b["select"] = (cols?: string) => {
+    if (cols) ops.push(`select:${cols}`);
+    return b;
+  };
   b["limit"] = () => b;
   b["eq"] = (col: string, val: unknown) => {
     ops.push(`eq:${col}=${String(val)}`);
@@ -80,14 +90,23 @@ function useService(byTable: Record<string, Resp>): Recorded[] {
 }
 
 /** Minimal profile — only the two fields the gate reads. */
-function profile(needsRename: boolean): Profile {
-  return { id: ME, needs_rename: needsRename } as unknown as Profile;
+function profile(needsRename: boolean, needsConfirm = false): Profile {
+  return {
+    id: ME,
+    needs_rename: needsRename,
+    needs_name_confirm: needsConfirm,
+  } as unknown as Profile;
 }
 
 const NONE = { data: null };
 const FOUND = { data: { id: "row-1" } };
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(headers).mockResolvedValue({
+    get: () => null,
+  } as unknown as Awaited<ReturnType<typeof headers>>);
+});
 
 describe("Suite RG — enforceRenameGate", () => {
   it("RG-1: a profile that is not flagged returns immediately with zero queries", async () => {
@@ -162,5 +181,101 @@ describe("Suite RG — enforceRenameGate", () => {
     expect(redirect).toHaveBeenCalledWith(
       "/rename?next=%2Fc%2Fchillax%2Fplay%2Fabc%3Ftab%3Dqueue%26x%3D1"
     );
+  });
+
+  it("RG-7: confirm-pending redirects even when the player is in a live queue", async () => {
+    const recorded = useService({ queue_entries: FOUND, sessions: FOUND });
+
+    await enforceRenameGate(profile(false, true), "/play");
+
+    expect(redirect).toHaveBeenCalledWith("/rename?next=%2Fplay");
+    expect(recorded, "confirm-pending must not run the duplicate carve-out queries").toHaveLength(
+      0
+    );
+  });
+
+  it("RG-8: confirm-pending redirects even when the player is an active organizer", async () => {
+    useService({ queue_entries: NONE, sessions: FOUND });
+
+    await enforceRenameGate(profile(false, true), "/c/chillax/organizer");
+
+    expect(redirect).toHaveBeenCalledWith("/rename?next=%2Fc%2Fchillax%2Forganizer");
+  });
+});
+
+function useUserClient(
+  profileRow: { id: string; needs_rename: boolean; needs_name_confirm: boolean } | null
+) {
+  const ops: string[] = [];
+  const from = vi.fn((table: string) => {
+    ops.push(`from:${table}`);
+    return builder({ data: profileRow }, ops);
+  });
+  vi.mocked(createServerSupabaseClient).mockResolvedValue({
+    from,
+  } as unknown as Awaited<ReturnType<typeof createServerSupabaseClient>>);
+  return ops;
+}
+
+describe("Suite RG — enforceRenameGateForUser", () => {
+  it("RG-9: a missing profile is a no-op — no redirect, no service-role carve-out", async () => {
+    const ops = useUserClient(null);
+    const recorded = useService({ queue_entries: FOUND, sessions: FOUND });
+
+    await enforceRenameGateForUser(ME, "/c/chillax");
+
+    expect(redirect).not.toHaveBeenCalled();
+    expect(
+      recorded,
+      "a missing profile must not fall through to the service-role carve-outs"
+    ).toHaveLength(0);
+    expect(ops).toContain("from:profiles");
+    expect(ops).toContain(`eq:id=${ME}`);
+  });
+
+  it("RG-10: a clean profile is a no-op after the flag read", async () => {
+    useUserClient({ id: ME, needs_rename: false, needs_name_confirm: false });
+    const recorded = useService({});
+
+    await enforceRenameGateForUser(ME, "/c/chillax");
+
+    expect(redirect).not.toHaveBeenCalled();
+    expect(recorded).toHaveLength(0);
+  });
+
+  it("RG-11: confirm-pending loaded by user id redirects and skips carve-outs", async () => {
+    const ops = useUserClient({ id: ME, needs_rename: false, needs_name_confirm: true });
+    const recorded = useService({ queue_entries: FOUND, sessions: FOUND });
+
+    await enforceRenameGateForUser(ME, "/c/chillax");
+
+    expect(redirect).toHaveBeenCalledWith("/rename?next=%2Fc%2Fchillax");
+    expect(recorded).toHaveLength(0);
+    expect(ops).toContain("select:id, needs_rename, needs_name_confirm");
+  });
+
+  it("RG-12: a stamped session path wins over the club-base fallback", async () => {
+    const SID = "00000000-0000-4000-8000-000000000001";
+    vi.mocked(headers).mockResolvedValue({
+      get: (name: string) => (name === REQUEST_PATH_HEADER ? `/c/chillax/play/${SID}` : null),
+    } as unknown as Awaited<ReturnType<typeof headers>>);
+    useUserClient({ id: ME, needs_rename: false, needs_name_confirm: true });
+
+    await enforceRenameGateForUser(ME, "/c/chillax");
+
+    expect(redirect).toHaveBeenCalledWith(
+      `/rename?next=${encodeURIComponent(`/c/chillax/play/${SID}`)}`
+    );
+  });
+
+  it("RG-13: a stamped /rename path does not loop — fallback is used", async () => {
+    vi.mocked(headers).mockResolvedValue({
+      get: (name: string) => (name === REQUEST_PATH_HEADER ? "/rename?next=%2Fc%2Fchillax" : null),
+    } as unknown as Awaited<ReturnType<typeof headers>>);
+    useUserClient({ id: ME, needs_rename: false, needs_name_confirm: true });
+
+    await enforceRenameGateForUser(ME, "/c/chillax");
+
+    expect(redirect).toHaveBeenCalledWith("/rename?next=%2Fc%2Fchillax");
   });
 });

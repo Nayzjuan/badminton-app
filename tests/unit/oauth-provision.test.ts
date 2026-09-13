@@ -127,13 +127,40 @@ const EXISTING_PIN = "4821";
 const GENERATED_PIN = "9137";
 
 /** The row handle_new_user leaves behind for a first-time Google sign-in. */
-const UNRESOLVED_STUB = { needs_rename: true, collided_name: null, pin: EXISTING_PIN };
+const UNRESOLVED_STUB = {
+  needs_rename: true,
+  collided_name: null,
+  needs_name_confirm: false,
+  pin: EXISTING_PIN,
+};
 /** A Google user who has signed in before — resolved, name is theirs. */
-const RETURNING_USER = { needs_rename: false, collided_name: null, pin: EXISTING_PIN };
+const RETURNING_USER = {
+  needs_rename: false,
+  collided_name: null,
+  needs_name_confirm: false,
+  pin: EXISTING_PIN,
+};
+/** Assigned unique name, still waiting to keep-or-change it. */
+const CONFIRM_PENDING = {
+  needs_rename: false,
+  collided_name: null,
+  needs_name_confirm: true,
+  pin: EXISTING_PIN,
+};
 /** An anonymous player who linked Google — keeps the name they picked. */
-const LINKED_ANON = { needs_rename: false, collided_name: "Miggy", pin: EXISTING_PIN };
+const LINKED_ANON = {
+  needs_rename: false,
+  collided_name: "Miggy",
+  needs_name_confirm: false,
+  pin: EXISTING_PIN,
+};
 /** An anonymous registrant already flagged as a duplicate, awaiting /rename. */
-const FLAGGED_ANON = { needs_rename: true, collided_name: "Miggy", pin: EXISTING_PIN };
+const FLAGGED_ANON = {
+  needs_rename: true,
+  collided_name: "Miggy",
+  needs_name_confirm: false,
+  pin: EXISTING_PIN,
+};
 
 type Resp = { data?: unknown; error?: unknown };
 type ReadCall = { table: string; ops: string[] };
@@ -220,7 +247,7 @@ beforeEach(() => {
 
 // ── The two resolved outcomes (the positive controls) ─────────
 describe("OP: ensureOAuthProfile — resolving a first-time stub", () => {
-  it("OP-1: a unique derived name is assigned, the flag cleared, and the name returned", async () => {
+  it("OP-1: a unique derived name is assigned, confirm is set, and the gate stays up", async () => {
     const svc = useServiceClient(
       serviceClient({ profile: { data: UNRESOLVED_STUB, error: null } })
     );
@@ -233,17 +260,18 @@ describe("OP: ensureOAuthProfile — resolving a first-time stub", () => {
     ).toBe(1);
     expect(
       svc.updates[0]?.payload,
-      "the resolving write no longer assigns the name AND clears the flag AND blanks collided_name in one payload; leaving needs_rename true keeps the rename gate up on a name that is already unique"
+      "the resolving write must claim the name, clear needs_rename (enter the unique index), and set needs_name_confirm"
     ).toEqual({
       display_name: DERIVED,
       needs_rename: false,
       collided_name: null,
+      needs_name_confirm: true,
       pin: EXISTING_PIN,
     });
     expect(
       result,
-      "a uniquely-resolved sign-in must report the assigned name and NOT require a rename — the callback routes on exactly this"
-    ).toEqual({ requiresRename: false, assignedName: DERIVED });
+      "a uniquely-resolved first-time sign-in must still require the confirm screen"
+    ).toEqual({ requiresRename: true, assignedName: DERIVED });
   });
 
   it("OP-2: a colliding derived name records collided_name and leaves the gate up", async () => {
@@ -296,8 +324,8 @@ describe("OP: ensureOAuthProfile — resolving a first-time stub", () => {
 
     expect(
       svc.reads[0]?.ops,
-      "the read no longer projects needs_rename, collided_name and pin together — dropping `pin` makes profile.pin undefined, so the ?? mints a fresh PIN and overwrites the reconnect credential on every sign-in, with nothing anywhere reporting it"
-    ).toContain("select:needs_rename, collided_name, pin");
+      "the read no longer projects needs_rename, collided_name, needs_name_confirm and pin together"
+    ).toContain("select:needs_rename, collided_name, needs_name_confirm, pin");
   });
 
   it("OP-22 (negative): only `profiles` is touched, and a resolved sign-in issues exactly one write", async () => {
@@ -344,6 +372,21 @@ describe("OP: ensureOAuthProfile — no-op for anyone who is not an unresolved s
       result,
       "a returning, resolved user was told they need to rename — the callback would divert them to /rename on every login"
     ).toEqual({ requiresRename: false });
+  });
+
+  it("OP-23 (negative): confirm-pending is not a stub — zero writes, still requiresRename", async () => {
+    const svc = useServiceClient(
+      serviceClient({ profile: { data: CONFIRM_PENDING, error: null } })
+    );
+
+    const result = await ensureOAuthProfile(USER_ID, META);
+
+    expect(
+      svc.updates,
+      "a confirm-pending Google user was written to — their chosen (or assigned) name is overwritten on every sign-in"
+    ).toEqual([]);
+    expect(vi.mocked(deriveDisplayName)).not.toHaveBeenCalled();
+    expect(result).toEqual({ requiresRename: true });
   });
 
   it("OP-4 (negative): an anonymous user who LINKED Google keeps their name", async () => {

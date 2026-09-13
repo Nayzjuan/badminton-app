@@ -125,6 +125,7 @@ function makeProfile(id: string, displayName: string): Profile {
     needs_rename: false,
     collided_name: null,
     flagged_at: null,
+    needs_name_confirm: false,
     created_at: "2026-08-01T00:00:00.000Z",
     updated_at: "2026-08-01T00:00:00.000Z",
   };

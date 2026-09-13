@@ -49,7 +49,7 @@ function profileColumns(): string[] {
 
 function migrateInsertColumns(): string[] {
   const src = readFileSync(
-    resolve(ROOT, "supabase/migrations/20260608000000_duplicate_name_resolution.sql"),
+    resolve(ROOT, "supabase/migrations/20260913000000_oauth_name_confirm.sql"),
     "utf8"
   );
   // The Step-2 INSERT inside migrate_player_identity.
@@ -74,12 +74,13 @@ describe("migrate_player_identity column parity (schema-drift guard)", () => {
     expect(cols).toContain("needs_rename");
     expect(cols).toContain("collided_name");
     expect(cols).toContain("flagged_at");
+    expect(cols).toContain("needs_name_confirm");
 
     const missing = cols.filter((c) => !INTENTIONALLY_DEFAULTED.has(c) && !carried.has(c));
     expect(
       missing,
       `migrate_player_identity drops these profile columns on reconnect: ${missing.join(", ")}. ` +
-        `Add them to the Step-2 INSERT/SELECT in 20260608000000_duplicate_name_resolution.sql.`
+        `Add them to the Step-2 INSERT/SELECT in 20260913000000_oauth_name_confirm.sql.`
     ).toEqual([]);
   });
 

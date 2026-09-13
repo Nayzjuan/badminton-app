@@ -19,6 +19,7 @@ import { QrCode } from "lucide-react";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { getPrimaryClubSlug } from "@/lib/clubs";
 import { SignOutButton } from "@/components/sign-out-button";
+import { enforceRenameGate } from "@/lib/rename-gate";
 
 export default async function WelcomePage() {
   const supabase = await createServerSupabaseClient();
@@ -33,9 +34,12 @@ export default async function WelcomePage() {
 
   const { data: profileRow } = await supabase
     .from("profiles")
-    .select("display_name")
+    .select("id, display_name, needs_rename, needs_name_confirm")
     .eq("id", user.id)
     .maybeSingle();
+  if (profileRow) {
+    await enforceRenameGate(profileRow, "/welcome");
+  }
   const name = profileRow?.display_name ?? null;
 
   return (

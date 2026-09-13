@@ -9,12 +9,16 @@ import "server-only";
 //   • derive a display_name from Google metadata,
 //   • ensure a reconnect PIN exists (so OAuth accounts keep the
 //     name+PIN recovery fallback — no lockout),
-//   • if the derived name is unique → assign it + clear the flag,
-//   • if it collides → record collided_name and leave the flag so the
-//     existing /rename gate forces a unique pick.
+//   • if the derived name is unique → assign it, claim the unique
+//     index (needs_rename=false), and set needs_name_confirm so
+//     /rename asks them to keep or change it,
+//   • if it collides → record collided_name and leave needs_rename
+//     so the existing /rename force-mode forbids reusing it.
 //
 // Idempotent + no-op for already-resolved profiles (returning Google
 // users, or anonymous users who LINKED Google — those keep their name).
+// A confirm-pending row (needs_name_confirm=true, needs_rename=false)
+// is NOT a stub — zero writes, still requiresRename.
 // ============================================================
 
 import { createServiceClient } from "@/utils/supabase/service";
@@ -23,10 +27,15 @@ import { isNameTaken } from "@/lib/dup-name";
 import { generatePin } from "@/lib/pin";
 
 export interface OAuthProvisionResult {
-  /** true when the profile still needs the /rename gate (name collided). */
+  /** true when the profile still needs the /rename gate (confirm or collision). */
   requiresRename: boolean;
-  /** the display_name assigned (only when uniquely resolved). */
+  /** the display_name assigned (only when uniquely resolved this call). */
   assignedName?: string;
+}
+
+/** Destination after a fresh (non-link) Google callback. */
+export function oauthPostLoginPath(next: string, requiresRename: boolean): string {
+  return requiresRename ? `/rename?next=${encodeURIComponent(next)}` : next;
 }
 
 export async function ensureOAuthProfile(
@@ -37,7 +46,7 @@ export async function ensureOAuthProfile(
 
   const { data: profile } = await svc
     .from("profiles")
-    .select("needs_rename, collided_name, pin")
+    .select("needs_rename, collided_name, needs_name_confirm, pin")
     .eq("id", userId)
     .maybeSingle();
 
@@ -45,27 +54,36 @@ export async function ensureOAuthProfile(
   if (!profile) return { requiresRename: false };
 
   // Only an UNRESOLVED OAuth stub has (needs_rename=true AND collided_name=null).
-  // Anonymous duplicate-flags always carry a collided_name; resolved/linked
-  // profiles have needs_rename=false. Either way → leave their name untouched.
+  // Confirm-pending rows have needs_rename=false. Duplicate-flags carry a
+  // collided_name. Linked / historical Google have both flags false.
   const isUnresolvedStub = profile.needs_rename === true && profile.collided_name === null;
   if (!isUnresolvedStub) {
-    return { requiresRename: profile.needs_rename === true };
+    return {
+      requiresRename: profile.needs_rename === true || profile.needs_name_confirm === true,
+    };
   }
 
   const derived = deriveDisplayName(meta);
   const pin = profile.pin ?? generatePin(); // never overwrite an existing PIN
 
   if (await isNameTaken(svc, derived, userId)) {
-    // Collision — hand off to the /rename gate. Record the colliding name so the
-    // screen prefills the stem and R1 forbids reusing it; ensure a PIN exists.
+    // Collision — hand off to the /rename force gate. Record the colliding
+    // name so the screen prefills the stem and R1 forbids reusing it.
     await svc.from("profiles").update({ collided_name: derived, pin }).eq("id", userId);
     return { requiresRename: true };
   }
 
-  // Unique — assign silently, clear the flag, ensure a PIN.
+  // Unique — claim the name (enter the unique index) and leave the confirm
+  // gate up. Do NOT clear into the app: the player must keep or change it.
   const { error: assignError } = await svc
     .from("profiles")
-    .update({ display_name: derived, needs_rename: false, collided_name: null, pin })
+    .update({
+      display_name: derived,
+      needs_rename: false,
+      collided_name: null,
+      needs_name_confirm: true,
+      pin,
+    })
     .eq("id", userId);
 
   if (assignError) {
@@ -76,5 +94,5 @@ export async function ensureOAuthProfile(
     return { requiresRename: true };
   }
 
-  return { requiresRename: false, assignedName: derived };
+  return { requiresRename: true, assignedName: derived };
 }
