@@ -1,15 +1,15 @@
 // ============================================================
-// /rename — forced duplicate-name resolution gate (L1 screen)
+// /rename — name gate (duplicate force OR Google confirm)
 // ============================================================
-// A flagged-duplicate profile is routed here before it can view any
-// authenticated screen under the duplicated name. force-dynamic so the
-// needs_rename flag is read fresh per request (never RSC/route-cached).
+// force-dynamic so the flags are read fresh per request.
 // ============================================================
 
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { RenameScreen } from "@/components/player/rename-screen";
 import { safeNext } from "@/lib/safe-next";
+import { renamePageDecision } from "@/lib/rename-decision";
+import type { SkillLevel } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -29,16 +29,21 @@ export default async function RenamePage({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("display_name, collided_name, needs_rename")
+    .select("display_name, collided_name, needs_rename, needs_name_confirm, skill_level")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (!profile) redirect("/"); // profileless → recovery path
-  if (!profile.needs_rename) redirect(dest); // not flagged → nothing to resolve
+  if (!profile) redirect("/");
 
-  // Stem the player is disambiguating from (the persisted collided name,
-  // falling back to the current display name).
-  const stem = profile.collided_name ?? profile.display_name;
+  const decision = renamePageDecision(profile);
+  if (decision.action === "bounce") redirect(dest);
 
-  return <RenameScreen collidedName={stem} next={dest} />;
+  return (
+    <RenameScreen
+      mode={decision.action}
+      currentName={decision.currentName}
+      next={dest}
+      currentSkill={profile.skill_level as SkillLevel}
+    />
+  );
 }

@@ -17,6 +17,12 @@
 
 ---
 
+## 2026-09-13 — Google name confirm + skill + identity merge (UNAPPLIED)
+
+`profiles.needs_name_confirm` + `/rename` confirm mode (keep-same valid) + skill picker + self-serve `ChangeDisplayName`. Fresh Google unique path claims the name and sets the flag; collision stays `needs_rename`. Historical **Google-native** rows (google identity, no anonymous) are backfilled. `identity_already_exists` + `intent=link` → signed cookie → `/auth/continue-google` → `merge_guest_play_into_profile` (keeper name untouched — **not** `migrate_player_identity`).
+
+⚠️ **`20260913000000_oauth_name_confirm.sql` is NOT applied.** Merging ships TypeScript only. Without the GRANT, authenticated `/play` `/rename` L2 500 on the new column. Do not claim a prod stamp until `list_migrations` shows it.
+
 ## 🔴 OPEN — committed credentials removed from the tree, NOT yet revoked
 
 An audit found live credentials in tracked files. **The code is fixed; the credentials are still

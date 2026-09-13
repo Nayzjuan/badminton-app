@@ -81,11 +81,14 @@ type RpcCall = { fn: string; args: Record<string, unknown> };
  * was bound to, and every rpc() call — then resolves reads to `profile` and
  * rpc() to `rpc`.
  */
-function serviceClient(opts: { profile?: Resp; rpc?: Resp } = {}) {
+type TableWrite = { table: string; payload: unknown; ops: string[] };
+
+function serviceClient(opts: { profile?: Resp; rpc?: Resp; updateError?: unknown } = {}) {
   const profileResp: Resp = opts.profile ?? { data: null, error: null };
   const rpcResp: Resp = opts.rpc ?? { data: null, error: null };
 
   const reads: TableRead[] = [];
+  const updates: TableWrite[] = [];
   const rpcCalls: RpcCall[] = [];
 
   const from = vi.fn((table: string) => {
@@ -97,6 +100,11 @@ function serviceClient(opts: { profile?: Resp; rpc?: Resp } = {}) {
       rec.ops.push(`select:${cols}`);
       return b;
     };
+    b.update = (payload: unknown) => {
+      rec.ops.push("update");
+      updates.push({ table, payload, ops: rec.ops });
+      return b;
+    };
     for (const m of ["eq", "neq", "ilike", "in", "or", "gte", "lte", "order", "limit"]) {
       b[m] = (col: unknown, val: unknown) => {
         rec.ops.push(`${m}:${String(col)}=${String(val)}`);
@@ -106,7 +114,9 @@ function serviceClient(opts: { profile?: Resp; rpc?: Resp } = {}) {
     b.maybeSingle = () => Promise.resolve(profileResp);
     b.single = () => Promise.resolve(profileResp);
     b.then = (res: (v: Resp) => unknown, rej?: (e: unknown) => unknown) =>
-      Promise.resolve(profileResp).then(res, rej);
+      Promise.resolve(
+        rec.ops.includes("update") ? { data: null, error: opts.updateError ?? null } : profileResp
+      ).then(res, rej);
     return b;
   });
 
@@ -119,6 +129,7 @@ function serviceClient(opts: { profile?: Resp; rpc?: Resp } = {}) {
     from,
     rpc,
     rpcCalls,
+    updates,
     tables: () => reads.map((r) => r.table),
     opsFor: (table: string) => reads.filter((r) => r.table === table).flatMap((r) => r.ops),
   };
@@ -547,5 +558,40 @@ describe("RN: renamePlayer RPC binding and failure mapping", () => {
       errorSpy,
       "the transport failure went unlogged because the payload short-circuited it"
     ).toHaveBeenCalledWith("[renamePlayer] RPC error:", "boom");
+  });
+
+  it("RN-23: a successful rename with a skill writes skill_level bound to the caller", async () => {
+    const svc = serviceClient({
+      rpc: { data: { success: true, new_name: "Juan Cruz" }, error: null },
+    });
+    useServiceClient(svc);
+
+    expect(await renamePlayer("Juan Cruz", "intermediate")).toEqual({ success: true });
+    expect(svc.updates).toHaveLength(1);
+    expect(svc.updates[0]?.payload).toEqual({ skill_level: "intermediate" });
+    expect(svc.updates[0]?.ops).toContain(`eq:id=${CALLER.id}`);
+  });
+
+  it("RN-24 (negative): a failed RPC never writes skill_level", async () => {
+    const svc = serviceClient({
+      rpc: { data: { success: false, error: "name_taken" }, error: null },
+    });
+    useServiceClient(svc);
+
+    const r = failed(await renamePlayer("Juan Cruz", "advanced"));
+    expect(r.code).toBe("taken");
+    expect(svc.updates, "skill must not be written when the name RPC refused").toEqual([]);
+  });
+
+  it("RN-25 (negative): an invalid skill is rejected before the RPC", async () => {
+    const svc = serviceClient({
+      rpc: { data: { success: true, new_name: "Juan Cruz" }, error: null },
+    });
+    useServiceClient(svc);
+
+    const r = failed(await renamePlayer("Juan Cruz", "pro" as never));
+    expect(r.code).toBe("invalid");
+    expect(svc.rpc, "a bad skill must not reach the rename RPC").not.toHaveBeenCalled();
+    expect(svc.updates).toEqual([]);
   });
 });

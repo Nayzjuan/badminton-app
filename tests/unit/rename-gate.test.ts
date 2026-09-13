@@ -80,8 +80,12 @@ function useService(byTable: Record<string, Resp>): Recorded[] {
 }
 
 /** Minimal profile — only the two fields the gate reads. */
-function profile(needsRename: boolean): Profile {
-  return { id: ME, needs_rename: needsRename } as unknown as Profile;
+function profile(needsRename: boolean, needsConfirm = false): Profile {
+  return {
+    id: ME,
+    needs_rename: needsRename,
+    needs_name_confirm: needsConfirm,
+  } as unknown as Profile;
 }
 
 const NONE = { data: null };
@@ -162,5 +166,24 @@ describe("Suite RG — enforceRenameGate", () => {
     expect(redirect).toHaveBeenCalledWith(
       "/rename?next=%2Fc%2Fchillax%2Fplay%2Fabc%3Ftab%3Dqueue%26x%3D1"
     );
+  });
+
+  it("RG-7: confirm-pending redirects even when the player is in a live queue", async () => {
+    const recorded = useService({ queue_entries: FOUND, sessions: FOUND });
+
+    await enforceRenameGate(profile(false, true), "/play");
+
+    expect(redirect).toHaveBeenCalledWith("/rename?next=%2Fplay");
+    expect(recorded, "confirm-pending must not run the duplicate carve-out queries").toHaveLength(
+      0
+    );
+  });
+
+  it("RG-8: confirm-pending redirects even when the player is an active organizer", async () => {
+    useService({ queue_entries: NONE, sessions: FOUND });
+
+    await enforceRenameGate(profile(false, true), "/c/chillax/organizer");
+
+    expect(redirect).toHaveBeenCalledWith("/rename?next=%2Fc%2Fchillax%2Forganizer");
   });
 });

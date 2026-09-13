@@ -15,6 +15,8 @@ import { isPlatformOwner } from "@/lib/platform";
 import { ClubSwitcher } from "@/components/clubs/club-switcher";
 import { ClubChromeNav } from "@/components/clubs/club-chrome-nav";
 import { ClubJoinToast } from "@/components/clubs/club-join-toast";
+import { enforceRenameGateForUser } from "@/lib/rename-gate";
+import { clubBase } from "@/lib/club-paths";
 
 export default async function ClubAppLayout({
   children,
@@ -26,6 +28,7 @@ export default async function ClubAppLayout({
   const { clubSlug } = await params;
 
   const { userId, club, role } = await requireClubMembership(clubSlug);
+  await enforceRenameGateForUser(userId, clubBase(clubSlug));
   const isAdmin = role === "owner" || role === "admin";
   // Only the platform owner gets cross-club affordances (switch to / browse /
   // create other clubs). Everyone else is scoped to this club.

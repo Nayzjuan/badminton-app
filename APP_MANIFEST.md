@@ -145,6 +145,7 @@ Mirrors `auth.users` 1:1 — the UUID is the `auth.users.id`.
 | `needs_rename`  | `boolean`          | Duplicate-name flag — must rename at next login/join (§3.8b). Default `false`.   |
 | `collided_name` | `text \| null`     | The name this profile was flagged on (R1 source of truth). `null` when not flagged. |
 | `flagged_at`    | `timestamptz \| null` | When the duplicate flag was set.                                              |
+| `needs_name_confirm` | `boolean`     | First-run Google confirm — assigned unique name not yet kept-or-changed on `/rename` (§3.8c). Default `false`. Distinct from `needs_rename` (which forbids keeping `collided_name`). |
 | `created_at`   | `timestamptz`      |                                                                                 |
 | `updated_at`   | `timestamptz`      |                                                                                 |
 
@@ -363,7 +364,9 @@ One-time club-wide "firsts" ledger (migration `20260704000001`). Append-only; RL
 | `get_h2h_record(p_team_a, p_team_b, p_session_id)`      | Head-to-head wins for exact 2v2 team pairing (all-time + tonight)                                                                                                                                                                                                                                                                    |
 | `toggle_auto_matchmaking(p_session_id)`                 | Atomic toggle; returns new boolean value                                                                                                                                                                                                                                                                                             |
 | `auto_publish_match(p_match_id, p_session_id)`          | **Auto-publish mode** (migration `20260623000001`). `publish_match` minus the organizer gate — service-role-only (grants revoked from anon/authenticated, `20260623000002`). Used by `recomputeHeldReadiness` to publish a held draft the instant it becomes ready. Keeps the `HAS_LEFT_PLAYERS`/`CONFLICT` guards; sets `is_published=true` and transitions roster `drafted`/`waiting` → `on_deck`. Returns `SUCCESS` \| `HAS_LEFT_PLAYERS` \| `CONFLICT` \| `NOT_PENDING` \| `ALREADY_PUBLISHED` \| `NOT_FOUND`. |
-| `migrate_player_identity(p_old_user_id, p_new_user_id)` | Reconnect identity migration; returns `true` if old user is primary organizer                                                                                                                                                                                                                                                        |
+| `migrate_player_identity(p_old_user_id, p_new_user_id)` | Reconnect identity migration; copies the old profile onto the new id (including `needs_name_confirm`). Returns `true` if old user is primary organizer. **Do not use this for Google `identity_already_exists`** — it would overwrite the keeper's name.                                                                                                                                                                                                                                                        |
+| `merge_guest_play_into_profile(p_guest_id, p_keeper_id)` | Link-collision merge: repoint guest play history onto the Google keeper; keeper name/skill/PIN/flags untouched. Service-role only. Returns jsonb `{ success }` / `{ success:false, error }`.                                                                                                                                                                                                                                                        |
+| `rename_player_identity(p_user_id, p_new_name)`         | Atomic rename + clear `needs_rename` / `needs_name_confirm` + audit. Infers reason from pre-update flags. Service-role only.                                                                                                                                                                                                                                                        |
 | `lookup_active_session(p_session_id)`                   | Safe public lookup for QR-code join (`/play/join`) — no RLS exposure                                                                                                                                                                                                                                                                 |
 | `swap_player_in_active_match(...)`                      | Replaces one player in an `in_progress` match with a queue player; recomputes `is_mixed_level`, marks `origin='modified'`                                                                                                                                                                                                            |
 | `swap_teams_in_active_match(...)`                       | Swaps team assignments of two players within the same `in_progress` match; no queue changes                                                                                                                                                                                                                                          |
@@ -1097,19 +1100,21 @@ It reaches **three** awards over those two CTEs, because `prior_sessions_ranked`
 
 **Three enforcement layers:**
 
-1. **L1 redirect** — `enforceRenameGate(profile, nextPath)` at the top of `/play` and `/play/[sessionId]` routes a flagged profile to `/rename`. Fast path: zero queries for clean profiles. Grandfathers a player who is currently in a live queue/match; skips active organizers. Redirect-only (no cookie mutation → safe in a Server Component render).
-2. **L2 action gate** — `joinQueueAction` reads `needs_rename` as its first step and returns `requiresRename` (the client routes to `/rename`). The real mutation boundary.
+1. **L1 redirect** — `enforceRenameGate(profile, nextPath)` at `/play`, club play, club layouts, `/welcome`, and `/c/[slug]/join` (after enroll, before enqueue). Fast path: zero queries when neither flag is set. `needs_name_confirm` always redirects (no grandfather / organizer carve-out). `needs_rename` grandfathers a player currently in a live queue/match and skips active organizers. Redirect-only (no cookie mutation → safe in a Server Component render). `enforceRenameGateForUser` is the layout helper.
+2. **L2 action gate** — `joinQueueAction` reads `needs_rename` and `needs_name_confirm` as its first step and returns `requiresRename` (the client routes to `/rename`). The real mutation boundary.
 3. **L3 DB authority** — partial UNIQUE index `idx_profiles_unique_active_name` on the normalized name `WHERE needs_rename = false`. Flagged duplicates are excluded (so they keep their real name until they rename); the instant a rename flips the flag, the new name enters the index. This is the only TOCTOU/cross-instance-safe guard. **Held until the data fix flags duplicates** (it can't build over live collisions).
 
-**`/rename` screen:** `force-dynamic` (flag read fresh per request). Full-screen, non-dismissible. Prefilled with the stem + trailing space; one-tap suffix chips. Validation ladder mirrors the server: shape (Zod) → R1 (per-keystroke, amber guidance) → R2 (debounced async, `fetchSeq`-guarded, red error). a11y: real `<label>`, `aria-invalid`/`aria-busy`/`aria-describedby`, `aria-live` status, focus starts on the heading, every cue is icon + text, `motion-reduce` spinners.
+**`/rename` screen:** `force-dynamic` (flags read fresh per request). Two modes via `renamePageDecision`: **force** (`needs_rename`) — stem + trailing space, suffix chips, R1 forbids `collided_name`; **confirm** (`needs_name_confirm`) — prefills the assigned `display_name`, keeping it is valid, plus a skill picker. Bounce when both flags are false. Validation ladder mirrors the server: shape (Zod) → R1 (force only) → R2 (debounced async, `fetchSeq`-guarded). a11y: real `<label>`, `aria-invalid`/`aria-busy`/`aria-describedby`, `aria-live` status, focus starts on the heading, every cue is icon + text, `motion-reduce` spinners.
 
-**`rename_player_identity(p_user_id, p_new_name)` RPC:** single transaction — server-side R1 recheck → `UPDATE display_name + needs_rename=false + collided_name=null` (the unique index arbitrates R2; 23505 → `name_taken`) → `player_renames` audit insert. SECURITY DEFINER, pinned `search_path`, granted to `service_role` only (the action derives the user id from the session — no IDOR).
+**`rename_player_identity(p_user_id, p_new_name)` RPC:** single transaction — server-side R1 recheck → `UPDATE display_name + needs_rename=false + needs_name_confirm=false + collided_name=null` (the unique index arbitrates R2; 23505 → `name_taken`) → `player_renames` audit insert. Reason is inferred from the pre-update flags: `oauth_confirm` (confirm only), `duplicate_flag` (`needs_rename`), else `self_chosen`. SECURITY DEFINER, pinned `search_path`, granted to `service_role` only (the action derives the user id from the session — no IDOR). `renamePlayer` may also write `skill_level` after a successful RPC (confirm screen + self-serve editor).
+
+**Self-serve:** `ChangeDisplayName` on My Status and the session picker greeting. Same `renamePlayer` path; audit reason `self_chosen` when neither flag is set. Does not force a different name.
 
 **Registration change:** `signInAnonymously` enforces global uniqueness. The already-authed path **upserts** (re-creating a missing profile), which — together with `/` falling through to the login form for an authed-but-profileless user — breaks the profileless redirect loop left by a merged-away ghost.
 
 > **The returning-player check is PIN-blind (2026-07-21, security).** It used to be `.ilike(name).eq("pin", pin)` answering "Looks like you've played before!" on a hit vs "Name taken" on a miss. Registration is unauthenticated and deliberately unthrottled, so those two replies were a free oracle over the 9,000-value PIN space — and it bypassed the `reconnectPlayer` limiter (§3.8a) end to end: recover the PIN here for nothing, then spend one reconnect attempt. **Every "name exists" arm now returns the same `NAME_TAKEN_MESSAGE`** (pre-check, both 23505 paths), so a right and a wrong PIN are indistinguishable. Two PIN-blind checks run in order: (1) a name-only lookup across **all** profiles, then (2) `isNameTaken` (normalized key, non-flagged only). Check (1) exists because `isNameTaken` skips flagged profiles to mirror the partial index — without it a **flagged** returning player would register a second account and strand their history behind a ghost. The accepted cost: a name held *only* by a flagged duplicate is unclaimable until that duplicate renames — and clearing a flag is **self-serve only** (`renamePlayer` derives the user from the session; no organizer or admin path exists), so a player who never returns leaves that name blocked until someone touches the DB. Narrow in practice: while the non-flagged holder still exists, `isNameTaken` blocks the name anyway, and the message already tells the registrant to add an initial. Pinned by `tests/unit/registration-pin-oracle.test.ts` (RO-STRUCT / RO-BLIND / RO-FLAG).
 
-**Schema:** `profiles.needs_rename boolean NOT NULL DEFAULT false`, `collided_name text`, `flagged_at timestamptz`; partial lookup index `idx_profiles_needs_rename`; audit table `player_renames(id, player_id, old_name, new_name, reason, actor_user_id, session_id, created_at)`.
+**Schema:** `profiles.needs_rename boolean NOT NULL DEFAULT false`, `collided_name text`, `flagged_at timestamptz`, `needs_name_confirm boolean NOT NULL DEFAULT false`; partial lookup indexes `idx_profiles_needs_rename` and `idx_profiles_needs_name_confirm`; audit table `player_renames` reason includes `oauth_confirm` and `self_chosen`. Column lockdown (`20260701000010`) is an explicit SELECT list — `GRANT SELECT (needs_name_confirm)` ships with `20260913000000`.
 
 **Data fix (hand-run, guarded, idempotent):** merge Miggy ghost + Lianne (keep latest PIN), flag the non-canonical Tristan/Bea/Jason (canonical = most completed games, tiebreak earliest), build the unique index, refresh the leaderboard, recompute merge-affected Wrapped.
 
@@ -1119,12 +1124,16 @@ It reaches **three** awards over those two CTEs, because `prior_sessions_ranked`
 
 **Files:**
 - `src/app/actions/oauth.ts` — `signInWithGoogle` + `linkWithGoogle` server actions
-- `src/app/auth/callback/route.ts` — PKCE exchange; `intent=link` branch; `ensureOAuthProfile` for fresh sign-ins
-- `src/lib/oauth-provision.ts` — `ensureOAuthProfile` (derive display name → check uniqueness → assign or flag for rename)
+- `src/app/auth/callback/route.ts` — PKCE exchange; `intent=link` branch; `identity_already_exists` merge hop; `ensureOAuthProfile` for fresh sign-ins
+- `src/app/auth/continue-google/route.ts` — second hop: fresh Google sign-in (not `linkIdentity`) as the keeper
+- `src/lib/oauth-provision.ts` — `ensureOAuthProfile` (derive display name → unique assign + `needs_name_confirm`, or collision + `needs_rename`); `oauthPostLoginPath`
 - `src/lib/oauth-name.ts` — `deriveDisplayName` / `sanitizeToDisplayName` (Google name → `[a-zA-Z0-9 ]`, 3–30 chars)
+- `src/lib/oauth-merge.ts` / `src/lib/oauth-guest-merge.ts` — signed guest-id cookie; `merge_guest_play_into_profile` (keeper name untouched)
 - `src/components/auth/google-sign-in-button.tsx` — "Continue with Google" button on the login form
 - `src/components/auth/google-link-button.tsx` — compact "Link Google Account" button for the overflow menu
 - `src/components/notifications/google-link-card.tsx` — dismissible upgrade card shown to non-linked players
+- `src/components/player/change-display-name.tsx` — self-serve name + skill editor
+- Migration `20260913000000_oauth_name_confirm.sql` — column, GRANT, Google-native backfill, RPC updates. **Hand-apply; merging ships TypeScript only.**
 
 **Feature flag:** `NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED === "true"` gates all three components (each returns `null` when the flag is absent). Inlined at build time — must be set in the Vercel dashboard and a new build triggered to activate in production.
 
@@ -1135,7 +1144,8 @@ It reaches **three** awards over those two CTEs, because `prior_sessions_ranked`
 **Sign-in flow (fresh user):**
 1. User taps "Continue with Google" → `signInWithGoogle(next?)` → `supabase.auth.signInWithOAuth` → returns provider URL.
 2. Client does `window.location.href = result.url` (full-page PKCE redirect to Google).
-3. Google redirects to `/auth/callback?next=<path>` → `exchangeCodeForSession` → `ensureOAuthProfile` provisions or collides the profile → redirect to `next`.
+3. Google redirects to `/auth/callback?next=<path>` → `exchangeCodeForSession` → `ensureOAuthProfile`.
+4. Unique derived name → claim it (`needs_rename=false`, enters the unique index) and set `needs_name_confirm=true`. Collision → record `collided_name`, leave `needs_rename`. Either way `oauthPostLoginPath` sends them to `/rename?next=` (confirm: keep-or-change + skill; force: must pick a different name). Linking (`intent=link`) and already-resolved profiles are not written.
 
 **Account upgrade flow (anonymous → Google-linked):**
 1. User taps "Link Google Account" (menu or card) → `linkWithGoogle(next?)` → `supabase.auth.linkIdentity` → returns provider URL.
@@ -1143,6 +1153,14 @@ It reaches **three** awards over those two CTEs, because `prior_sessions_ranked`
 3. Callback detects `intent=link` → skips profile provisioning (name already set) → redirects to `next`.
 4. The user's `auth.uid()` is **unchanged** — all queue entries, match history, and display name are preserved.
 5. On next page load `user.identities?.some(i => i.provider === "google")` returns `true` → all upgrade surfaces disappear.
+
+**`identity_already_exists` (link a Google identity that already belongs to another user):**
+1. Guest is still signed in. Callback stashes their id in a signed `oauth_merge_from` cookie and sends them to `/auth/continue-google`.
+2. That route starts a **fresh** Google sign-in (not `linkIdentity`). After consent they land on `/auth/callback` as the keeper.
+3. `mergeGuestPlayIntoKeeper` calls `merge_guest_play_into_profile(guest, keeper)` — repoints queue/match/club/session history onto the keeper, then deletes the guest profile. **Does not copy the guest profile onto the keeper** (`migrate_player_identity` would overwrite the Google name). Refuses if the guest is an active organizer.
+4. Then `ensureOAuthProfile` + `oauthPostLoginPath` as a normal sign-in.
+
+**Historical Google-native backfill** (same migration): `needs_name_confirm=true` for profiles that have a `google` identity and **no** `anonymous` identity. Linked PIN accounts have both identities and stay unprompted.
 
 **Prerequisite — Supabase dashboard settings:**
 - Google provider enabled (Authentication → Providers → Google) with OAuth client ID + secret.
@@ -1170,8 +1188,6 @@ It reaches **three** awards over those two CTEs, because `prior_sessions_ranked`
 **`hasGoogleLinked` — data flow:**
 - `src/app/play/[sessionId]/page.tsx` and `src/app/play/page.tsx` both compute `const hasGoogleLinked = user.identities?.some(i => i.provider === "google") ?? false;` after `auth.getUser()`.
 - Threaded as a prop from the server page component down to `PlayerDashboard` → `MyStatusTab`.
-
-**Deferred (Phase 3):** `/auth/callback` has a stub for `error_code=identity_already_exists` — this fires when a Google account is already linked to a *different* anonymous user. The correct resolution is `migrate_player_identity(existingUserId, currentUserId)`, but the wiring is not yet built.
 
 ---
 

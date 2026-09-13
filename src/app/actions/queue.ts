@@ -395,11 +395,11 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
   // /rename. Single cheap lookup; the column is indexed for flagged rows.
   const { data: gateProfile } = await supabase
     .from("profiles")
-    .select("needs_rename")
+    .select("needs_rename, needs_name_confirm")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (gateProfile?.needs_rename) {
+  if (gateProfile?.needs_rename || gateProfile?.needs_name_confirm) {
     return {
       success: false,
       requiresRename: true,

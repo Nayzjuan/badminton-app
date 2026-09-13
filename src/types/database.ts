@@ -117,6 +117,12 @@ export type Profile = {
   collided_name: string | null;
   /** When the duplicate flag was set. null when not flagged. */
   flagged_at: string | null;
+  /**
+   * First-run Google name confirmation. true = provision assigned a unique
+   * derived name that the player has not yet kept-or-changed on /rename.
+   * Distinct from needs_rename (which forbids keeping collided_name).
+   */
+  needs_name_confirm: boolean;
   created_at: string; // ISO 8601 timestamptz
   updated_at: string;
 };
@@ -131,7 +137,7 @@ export type Profile = {
  * constructing a `Profile` object so consumers keep a stable shape.
  */
 export const PUBLIC_PROFILE_COLUMNS =
-  "id, display_name, skill_level, vip_tag, vip_theme, needs_rename, collided_name, flagged_at, created_at, updated_at" as const;
+  "id, display_name, skill_level, vip_tag, vip_theme, needs_rename, collided_name, flagged_at, needs_name_confirm, created_at, updated_at" as const;
 
 /**
  * Every `sessions` column except `organizer_passcode` — the browser/anon-key
@@ -149,7 +155,13 @@ export type PlayerRename = {
   player_id: string;
   old_name: string | null;
   new_name: string;
-  reason: "duplicate_flag" | "organizer_manual" | "self_reconnect" | "data_fix_merge";
+  reason:
+    | "duplicate_flag"
+    | "organizer_manual"
+    | "self_reconnect"
+    | "data_fix_merge"
+    | "oauth_confirm"
+    | "self_chosen";
   actor_user_id: string | null;
   session_id: string | null;
   created_at: string;
@@ -198,10 +210,7 @@ export type SessionOrganizer = {
 };
 
 export type SessionNotificationKind =
-  | "player_left"
-  | "player_checked_out"
-  | "player_paused_long"
-  | "score_correction";
+  "player_left" | "player_checked_out" | "player_paused_long" | "score_correction";
 
 export type SessionNotificationStatus = "unread" | "read" | "resolved" | "superseded";
 
@@ -435,6 +444,7 @@ export type ProfileUpdate = Partial<
     | "needs_rename"
     | "collided_name"
     | "flagged_at"
+    | "needs_name_confirm"
   >
 >;
 
@@ -1091,6 +1101,13 @@ export type Database = {
           success: boolean;
           new_name?: string;
           error?: "profile_not_found" | "reused_dup_name" | "name_taken";
+        };
+      };
+      merge_guest_play_into_profile: {
+        Args: { p_guest_id: string; p_keeper_id: string };
+        Returns: {
+          success: boolean;
+          error?: "same_user" | "guest_not_found" | "keeper_not_found" | "guest_is_organizer";
         };
       };
       swap_player_in_match: {

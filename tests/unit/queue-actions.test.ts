@@ -102,9 +102,18 @@ function makeBuilder(response: MockResponse) {
  * check) as its FIRST from() call, so we auto-inject that response ahead of the
  * caller's responses. Pass opts.needsRename=true to exercise the gate.
  */
-function makeMockClient(fromResponses: MockResponse[], opts?: { needsRename?: boolean }) {
+function makeMockClient(
+  fromResponses: MockResponse[],
+  opts?: { needsRename?: boolean; needsConfirm?: boolean }
+) {
   const responses: MockResponse[] = [
-    { data: { needs_rename: opts?.needsRename ?? false }, error: null },
+    {
+      data: {
+        needs_rename: opts?.needsRename ?? false,
+        needs_name_confirm: opts?.needsConfirm ?? false,
+      },
+      error: null,
+    },
     ...fromResponses,
   ];
   let idx = 0;
@@ -219,6 +228,18 @@ describe("joinQueueAction — active-match guard", () => {
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toBeUndefined();
+  });
+
+  it("blocks confirm-pending with requiresRename before any join logic (L2 gate)", async () => {
+    const mock = makeMockClient([], { needsConfirm: true });
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    mockServiceClient.from = mock.from;
+
+    const result = await joinQueueAction(SESSION_ID);
+
+    expect(result.requiresRename).toBe(true);
+    expect(result.success).toBe(false);
+    expect(mock.from).toHaveBeenCalledTimes(1);
   });
 
   it("blocks a flagged duplicate with requiresRename before any join logic (L2 gate)", async () => {

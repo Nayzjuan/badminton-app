@@ -11,6 +11,7 @@ import { QueueStatus } from "./queue-status";
 import { OnDeckAlert } from "./on-deck-alert";
 import { MatchHistory } from "./match-history";
 import { GoogleLinkCard } from "@/components/notifications/google-link-card";
+import { ChangeDisplayName } from "@/components/player/change-display-name";
 import type { useQueue } from "@/hooks/use-queue";
 import type { usePlayerMatch } from "@/hooks/use-player-match";
 import type { Profile, Session } from "@/types/database";
@@ -108,6 +109,8 @@ export function MyStatusTab({
           <GoogleLinkCard next={`/play/${session.id}`} />
         </Suspense>
       )}
+
+      <ChangeDisplayName currentName={profile.display_name} currentSkill={profile.skill_level} />
 
       {/* Sub-tabs: Queue / History */}
       <div className="flex rounded-xl bg-slate-100 dark:bg-muted p-1">

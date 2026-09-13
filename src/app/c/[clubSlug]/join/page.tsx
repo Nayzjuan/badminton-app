@@ -16,6 +16,7 @@ import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { getClubBySlug, ensureClubMembership } from "@/lib/clubs";
 import { clubPlay, clubBase } from "@/lib/club-paths";
 import { LoginForm } from "@/components/login-form";
+import { enforceRenameGate } from "@/lib/rename-gate";
 
 interface ClubJoinPageProps {
   params: Promise<{ clubSlug: string }>;
@@ -52,7 +53,7 @@ export default async function ClubJoinPage({ params, searchParams }: ClubJoinPag
   if (user) {
     const { data: profile } = await supabase
       .from("profiles")
-      .select("id")
+      .select("id, needs_rename, needs_name_confirm")
       .eq("id", user.id)
       .single();
     if (profile) {
@@ -64,6 +65,8 @@ export default async function ClubJoinPage({ params, searchParams }: ClubJoinPag
         // (/play resolves their club or the join-via-QR screen), not /clubs.
         redirect("/play");
       }
+      const dest = validSessionId ? clubPlay(clubSlug, validSessionId) : clubBase(clubSlug);
+      await enforceRenameGate(profile, dest);
       // Announce the join on the destination ONLY when this scan actually
       // added them (first join / reactivation) — not when already a member.
       const joinedQs = enroll.joined ? "?joined=1" : "";

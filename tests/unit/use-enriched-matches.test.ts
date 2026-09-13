@@ -88,6 +88,7 @@ function makeProfile(id: string, displayName = "Player"): Profile {
     needs_rename: false,
     collided_name: null,
     flagged_at: null,
+    needs_name_confirm: false,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };

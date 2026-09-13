@@ -24,6 +24,7 @@ export function createUnknownProfile(id: string): Profile {
     needs_rename: false,
     collided_name: null,
     flagged_at: null,
+    needs_name_confirm: false,
     created_at: "",
     updated_at: "",
   };

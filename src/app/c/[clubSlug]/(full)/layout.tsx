@@ -14,6 +14,8 @@ import { requireClubMembership, getMyClubs, getMyActiveClubIds } from "@/lib/clu
 import { isPlatformOwner } from "@/lib/platform";
 import { ClubSwitcher } from "@/components/clubs/club-switcher";
 import { ClubJoinToast } from "@/components/clubs/club-join-toast";
+import { enforceRenameGateForUser } from "@/lib/rename-gate";
+import { clubBase } from "@/lib/club-paths";
 
 export default async function ClubFullLayout({
   children,
@@ -24,6 +26,7 @@ export default async function ClubFullLayout({
 }) {
   const { clubSlug } = await params;
   const { userId, club } = await requireClubMembership(clubSlug); // auth + 404 + member gate
+  await enforceRenameGateForUser(userId, clubBase(clubSlug));
 
   // Hot path (play/organizer): do the cheap 1-query count first; only load the
   // full club rows (names/roles for the switcher) when the player is multi-club.
