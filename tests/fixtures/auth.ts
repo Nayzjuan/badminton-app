@@ -215,7 +215,9 @@ async function injectSupabaseCookies(
   baseURL: string
 ): Promise<void> {
   const projectRef = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).hostname.split(".")[0];
-  const domain = new URL(baseURL).hostname;
+  const parsed = new URL(baseURL);
+  const domain = parsed.hostname;
+  const secure = parsed.protocol === "https:";
   const cookieName = `sb-${projectRef}-auth-token`;
   const sessionJson = JSON.stringify(session);
 
@@ -244,7 +246,7 @@ async function injectSupabaseCookies(
         domain,
         path: "/",
         httpOnly: false,
-        secure: true,
+        secure,
         sameSite: "Lax",
       },
     ];
@@ -273,7 +275,7 @@ async function injectSupabaseCookies(
       domain,
       path: "/",
       httpOnly: false,
-      secure: true,
+      secure,
       sameSite: "Lax",
     }));
   }
@@ -287,9 +289,15 @@ async function injectSupabaseCookies(
 // This bypasses the anonymous login form which is incompatible with
 // the email+password organizer bot account.
 // Saves storage state for reuse on subsequent calls.
-export async function signInOrganizerBot(page: Page, baseURL: string): Promise<void> {
-  // If we already have a saved storage state, skip sign-in entirely.
-  if (fs.existsSync(ORGANIZER_STORAGE_STATE)) {
+export async function signInOrganizerBot(
+  page: Page,
+  baseURL: string,
+  opts?: { force?: boolean }
+): Promise<void> {
+  // If we already have a saved storage state, skip sign-in entirely —
+  // unless the caller needs cookies minted for THIS origin (localhost
+  // vs the live Vercel host are not interchangeable).
+  if (!opts?.force && fs.existsSync(ORGANIZER_STORAGE_STATE)) {
     return;
   }
 
@@ -360,11 +368,14 @@ export async function signInOrganizerBot(page: Page, baseURL: string): Promise<v
   // The middleware may redirect — wait for any /play or /organizer URL
   await page.waitForURL(/\/(play|organizer)/, { timeout: 20_000 });
 
-  // Persist storage state for all subsequent test re-uses
-  fs.mkdirSync(path.dirname(ORGANIZER_STORAGE_STATE), { recursive: true });
-  await page.context().storageState({ path: ORGANIZER_STORAGE_STATE });
-
-  console.log(`[auth] Organizer bot signed in via cookie injection → saved storage state`);
+  // Persist storage state for all subsequent test re-uses — skip when
+  // force-signing a one-off origin so we do not overwrite the CI file
+  // with localhost cookies.
+  if (!opts?.force) {
+    fs.mkdirSync(path.dirname(ORGANIZER_STORAGE_STATE), { recursive: true });
+    await page.context().storageState({ path: ORGANIZER_STORAGE_STATE });
+    console.log(`[auth] Organizer bot signed in via cookie injection → saved storage state`);
+  }
 }
 
 // ── clearOrganizerStorageState ────────────────────────────────

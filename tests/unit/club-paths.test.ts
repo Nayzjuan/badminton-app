@@ -14,6 +14,7 @@ import {
   clubWrapped,
   clubLeaderboard,
   clubJoin,
+  sessionShare,
 } from "@/lib/club-paths";
 
 describe("club-paths", () => {
@@ -48,9 +49,15 @@ describe("club-paths", () => {
     expect(clubLeaderboard("chillax", "sess-1")).toBe("/c/chillax/leaderboard/sess-1");
   });
 
-  it("CP-8: clubJoin with and without session (session is query-encoded)", () => {
+  it("CP-8: clubJoin with and without session (session is a path segment)", () => {
     expect(clubJoin("chillax")).toBe("/c/chillax/join");
-    expect(clubJoin("chillax", "sess-1")).toBe("/c/chillax/join?session=sess-1");
+    expect(clubJoin("chillax", "sess-1")).toBe("/c/chillax/join/sess-1");
+  });
+
+  it("CP-10: sessionShare is the short in-app-browser-safe join URL", () => {
+    expect(sessionShare("00000000-0000-4000-8000-000000000001")).toBe(
+      "/j/00000000-0000-4000-8000-000000000001"
+    );
   });
 
   it("CP-9: every builder is prefixed with /c/<slug>", () => {

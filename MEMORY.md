@@ -17,6 +17,10 @@
 
 ---
 
+## 2026-09-13 — share links: path-based join for in-app browsers
+
+Share Session now copies `/j/[sessionId]` (QR too). Club join is `/c/[slug]/join/[sessionId]`. Old `?session=` URLs 308 to the path form; middleware repairs `%3Fsession=` encoded into the pathname (the Reclub-class 404). Join routes allow framing (`frame-ancestors *`, no XFO DENY) and emit OG tags. Pins: CP-8/10, REQ-1–13, JM-1/2, LSJ-1–3, JS-1–6, JSC-1–3, MWJ-1–3, SSD-1, LAS-1–5, E2E S-1–7. S-1–6 verified against local Next; S-7 is the post-deploy pin of the organizer copy URL (current production still prints `?session=`). Work is UNCOMMITTED on `security/purge-committed-credentials`.
+
 ## 🔴 OPEN — committed credentials removed from the tree, NOT yet revoked
 
 An audit found live credentials in tracked files. **The code is fixed; the credentials are still
