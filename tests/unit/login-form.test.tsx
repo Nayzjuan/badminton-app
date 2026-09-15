@@ -85,6 +85,37 @@ describe("LoginForm", () => {
     expect(screen.getByLabelText(/your name/i)).toHaveValue("Miggy");
   });
 
+  it("LF-5b: name_taken focuses PIN when already on Returning", async () => {
+    let resolveSignIn!: (value: {
+      success: false;
+      error: string;
+      field: "name";
+      code: "name_taken";
+    }) => void;
+    vi.mocked(signInAnonymously).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSignIn = resolve;
+        })
+    );
+    const user = userEvent.setup();
+    render(<LoginForm />);
+    await user.type(screen.getByLabelText(/your name/i), "Miggy");
+    await user.type(screen.getByLabelText(/choose a 4-digit pin/i), "1234");
+    const submit = user.click(screen.getByRole("button", { name: /create player profile/i }));
+    await user.click(screen.getByRole("tab", { name: /returning/i }));
+    resolveSignIn({
+      success: false,
+      error: "That name is already registered.",
+      field: "name",
+      code: "name_taken",
+    });
+    await submit;
+    await vi.waitFor(() => {
+      expect(screen.getByLabelText(/your pin/i)).toHaveFocus();
+    });
+  });
+
   it("LF-6: Returning is a real form; Enter with incomplete input does not reconnect", async () => {
     const user = userEvent.setup();
     render(<LoginForm />);

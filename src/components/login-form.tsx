@@ -8,7 +8,7 @@
 //   RETURNING    — name + PIN → Reconnect (native form)
 // ============================================================
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, UserPlus, RotateCcw } from "lucide-react";
 import { signInAnonymously, reconnectPlayer } from "@/app/actions/auth";
@@ -78,10 +78,16 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
   const [reconnectIsPending, startReconnectTransition] = useTransition();
   const [googleHint, setGoogleHint] = useState(false);
   const reconnectFocused = useRef(false);
+  const [pinFocusNonce, setPinFocusNonce] = useState(0);
 
   useEffect(() => {
     trackRegistration({ step: "viewed", entry });
   }, [entry]);
+
+  useLayoutEffect(() => {
+    if (pinFocusNonce === 0) return;
+    document.getElementById("reconnect_pin")?.focus();
+  }, [pinFocusNonce]);
 
   useEffect(() => {
     router.prefetch(
@@ -138,7 +144,7 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
         if (result.code === "name_taken") {
           setReconnectName(nameValue.trim());
           handleModeSwitch("returning", { keepName: true });
-          window.setTimeout(() => document.getElementById("reconnect_pin")?.focus(), 0);
+          setPinFocusNonce((n) => n + 1);
           return;
         }
         trackRegistration({ step: "validation_error", entry, method: "anonymous", field });
