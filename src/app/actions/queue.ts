@@ -358,11 +358,15 @@ export async function checkoutPlayer(sessionId: string): Promise<CheckoutResult>
 // success field is mandatory per the action contract (CLAUDE.md).
 // Callers that previously only checked `result.error` continue to work
 // since the field is additive; new callers should check `result.success`.
+export type JoinQueueActionKind = "inserted" | "reactivated" | "unchanged";
+
 export type JoinQueueResult = {
   success: boolean;
   error?: string;
   /** Set when the player must resolve a duplicate name before joining (→ /rename). */
   requiresRename?: boolean;
+  /** Present on success when the RPC (or fallback) reports a transition kind. */
+  action?: JoinQueueActionKind;
 };
 
 /**
@@ -393,13 +397,17 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
   // a queue entry is created (this is the real mutation boundary — the page-level
   // gate is only a UX redirect). The client routes a requiresRename result to
   // /rename. Single cheap lookup; the column is indexed for flagged rows.
-  const { data: gateProfile } = await supabase
+  const { data: gateProfile, error: gateError } = await supabase
     .from("profiles")
     .select("needs_rename, needs_name_confirm")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (gateProfile?.needs_rename || gateProfile?.needs_name_confirm) {
+  if (gateError || !gateProfile) {
+    return { success: false, error: "Unable to load your profile. Please try again." };
+  }
+
+  if (gateProfile.needs_rename || gateProfile.needs_name_confirm) {
     return {
       success: false,
       requiresRename: true,
@@ -439,24 +447,24 @@ export async function joinQueueAction(sessionId: string): Promise<JoinQueueResul
 
   console.log(`[joinQueueAction] ${result.action} games_played=${result.games_played}`);
 
-  // join_queue does not touch pause. A kicked-while-paused row (or a leftover
-  // from before remove started clearing) would otherwise re-enter still paused
-  // with a stale paused_at and fire a 15-minute reminder immediately.
-  await svc
-    .from("queue_entries")
-    .update({ is_paused: false, paused_at: null })
-    .eq("session_id", sessionId)
-    .eq("player_id", user.id)
-    .eq("status", "waiting");
+  const action = parseJoinQueueAction(result.action);
+  // Pause clear + engine only for real transitions. `unchanged` must not
+  // rewrite joined_at / pause or kick the engine (retry / already in a match).
+  // A missing action (pre-migration RPC) is treated as a transition so a
+  // TypeScript deploy cannot strand a first join without matchmaking.
+  if (action !== "unchanged") {
+    after(() =>
+      runEngineForSession(sessionId).catch((err) =>
+        console.error("[engine] after() unhandled failure:", err)
+      )
+    );
+  }
+  return { success: true, action };
+}
 
-  // Fire-and-forget: schedule the engine after the response is sent so the
-  // client gets confirmation immediately rather than waiting for matchmaking.
-  after(() =>
-    runEngineForSession(sessionId).catch((err) =>
-      console.error("[engine] after() unhandled failure:", err)
-    )
-  );
-  return { success: true };
+function parseJoinQueueAction(raw: string | undefined): JoinQueueActionKind {
+  if (raw === "inserted" || raw === "reactivated" || raw === "unchanged") return raw;
+  return "inserted";
 }
 
 // ============================================================
@@ -691,14 +699,12 @@ async function joinQueueFallback(
 
   if (
     existing &&
-    (existing.status === "drafted" ||
+    (existing.status === "waiting" ||
+      existing.status === "drafted" ||
       existing.status === "on_deck" ||
       existing.status === "playing")
   ) {
-    return {
-      success: false,
-      error: "You're currently in a match — wait for it to finish before rejoining the queue.",
-    };
+    return { success: true, action: "unchanged" };
   }
 
   const { data: floorRow, error: floorError } = await supabase
@@ -739,7 +745,7 @@ async function joinQueueFallback(
         console.error("[engine] after() unhandled failure:", err)
       )
     );
-    return { success: true };
+    return { success: true, action: "reactivated" };
   }
 
   const { error: insertError } = await supabase.from("queue_entries").insert({
@@ -760,5 +766,5 @@ async function joinQueueFallback(
       console.error("[engine] after() unhandled failure:", err)
     )
   );
-  return { success: true };
+  return { success: true, action: "inserted" };
 }

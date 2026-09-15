@@ -141,6 +141,7 @@ export default defineConfig({
         "src/lib/session-notice-write.ts",
         "src/lib/wrapped-awards.ts",
         "src/lib/validate.ts",
+        "src/lib/registration-analytics.ts",
         "src/lib/utils.ts",
         // Hooks (Suites CS / SI / PC / VR / EMH / LS / OAL / OC / OQ / SD / CP).
         // The weakest of these is use-organizer-alerts.ts at

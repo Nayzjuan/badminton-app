@@ -49,19 +49,21 @@ export default async function HomePage() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-[#FAFAF7] dark:bg-background px-6 py-12">
-      <div className="w-full max-w-sm sm:max-w-md space-y-8 text-center">
+    <main className="flex min-h-dvh flex-col items-center justify-center bg-[#FAFAF7] dark:bg-background px-6 py-8">
+      <div className="w-full max-w-sm sm:max-w-md space-y-5 text-center">
         {/* Branding */}
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <div
-            className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl
+            className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl
                           bg-amber-500 text-[#0E1C3A] ring-4 ring-amber-500/20 dark:ring-amber-400/20"
           >
             <BadmintonRacketIcon className="h-7 w-7" />
           </div>
-          <h1 className="text-3xl font-black tracking-tight text-foreground">Badminton Queue</h1>
+          <h1 className="truncate text-3xl font-black tracking-tight text-foreground">
+            Badminton Queue
+          </h1>
           <p className="text-sm text-muted-foreground leading-relaxed">
-            No account needed — pick a name, skill, and a 4-digit PIN to play.
+            Create a player profile, then scan your organizer&apos;s session QR to join the queue.
           </p>
         </div>
 

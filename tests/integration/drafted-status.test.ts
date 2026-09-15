@@ -342,9 +342,8 @@ describe("drafted queue_status", () => {
     const restore = mockAuthAs(players[0].id);
     try {
       const result = await joinQueueAction(session.id);
-      // Must return an error, not succeed
-      expect("error" in result).toBe(true);
-      expect(typeof (result as { error: string }).error).toBe("string");
+      expect(result.success).toBe(true);
+      expect(result.action).toBe("unchanged");
     } finally {
       restore();
     }
@@ -941,7 +940,8 @@ describe("drafted queue_status", () => {
     const restore = mockAuthAs(players[0].id);
     try {
       const result = await joinQueueAction(session.id);
-      expect("error" in result).toBe(true);
+      expect(result.success).toBe(true);
+      expect(result.action).toBe("unchanged");
     } finally {
       restore();
     }

@@ -17,15 +17,17 @@
 
 ---
 
+## 2026-09-15 — registration usability / one-submit QR join
+
+QR/club authenticated join is `JoinFinalizer` → `completeRegistrationJoinAction` (auth, bind, rename, membership, `join_queue`). Direct `/` CTA is `Create Player Profile` then `/welcome`. Reconnect in a QR context returns to `/j/[id]`. Google `next` is `sessionShare` / `clubJoin`. Compact native 6-level skill `<select>`. Funnel: `@vercel/analytics` behind `NEXT_PUBLIC_VERCEL_ANALYTICS`, `Referrer-Policy: origin`.
+
+Prod stamp `20260915150524` / `join_queue_session_lock_and_idempotent` (repo file `20260915120000_join_queue_session_lock_and_idempotent.sql`). waiting / drafted / on_deck / playing are `unchanged` no-ops; session row locked. EXECUTE is service_role + postgres. Rollback body is in that file's header.
+
+---
+
 ## 2026-09-13 — consecutive partnership ban (session cap of 2 unchanged)
 
 `MAX_PARTNERSHIP_REPEATS` is still 2 — pre-filter + seater, no waivers. New hard ban: last game's teammates cannot share a side on the next draft (`deriveLastPartners` / `deriveLastSides`, same snapshot as last-opponents). They may face each other immediately and may partner again later while count is 1. `usedCapOverride` does not waive the ban. A stall from this path broadcasts `capSaturationReason: "consecutive"` so the organizer notice is not the 2-game-cap copy. Pins: SNAP-LP-1–6, snakeDraft consecutive suite, runAlgorithm rotate / stall / path-out, session-sim last-teammate invariant, MC-new-4 still `session_cap`.
-
-## 2026-09-13 — Google name confirm + skill + identity merge (UNAPPLIED)
-
-`profiles.needs_name_confirm` + `/rename` confirm mode (keep-same valid) + skill picker + self-serve `ChangeDisplayName`. Fresh Google unique path claims the name and sets the flag; collision stays `needs_rename`. Historical **Google-native** rows (google identity, no anonymous) are backfilled. `identity_already_exists` + `intent=link` → signed cookie → `/auth/continue-google` → `merge_guest_play_into_profile` (keeper name untouched — **not** `migrate_player_identity`). Join L1 lives in `ClubJoinScreen` (after enroll, before enqueue) so `/j/[id]` and `/c/[slug]/join/[id]` share it.
-
-⚠️ **`20260913000000_oauth_name_confirm.sql` is NOT applied.** Without the GRANT, authenticated `/play` `/rename` L2 500 on the new column. Do not claim a prod stamp until `list_migrations` shows it.
 
 ## 🔴 OPEN — committed credentials removed from the tree, NOT yet revoked
 

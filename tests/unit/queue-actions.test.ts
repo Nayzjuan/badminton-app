@@ -2,12 +2,12 @@
 // Unit Tests: Queue Actions — joinQueueAction guard suite
 // ============================================================
 //
-// Covers the active-match guard introduced in joinQueueAction:
-//   • Players with status "on_deck" are blocked from re-joining.
-//   • Players with status "playing" are blocked from re-joining.
-//   • Players with status "waiting" are allowed to re-join.
-//   • Players with status "left" are allowed to re-join (returning player).
+// Covers the joinQueueAction guard suite:
+//   • Players with status "on_deck" / "playing" / "waiting" / "drafted"
+//     succeed as unchanged no-ops (retry idempotency).
+//   • Players with status "left" are allowed to re-join.
 //   • First-time joiners (no existing row) proceed normally.
+//   • Missing / unreadable profiles fail closed.
 //
 // Also verifies the Inherited Games floor logic is applied to
 // returning players (existing.games_played < sessionFloor).
@@ -148,44 +148,32 @@ beforeEach(() => {
 // ── Guard: on_deck / playing statuses ─────────────────────────
 
 describe("joinQueueAction — active-match guard", () => {
-  it('returns an error and does NOT re-queue a player whose status is "on_deck"', async () => {
+  it('treats "on_deck" as an unchanged success and does not rewrite the row', async () => {
     const mock = makeMockClient([
-      // Step 1: existing row fetch → on_deck
       { data: { id: "entry-1", games_played: 2, status: "on_deck" }, error: null },
-      // Step 2 would be floor query — should NOT be reached
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
-    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
-    // is revoked for anon/authenticated (20260721190000), so its reads and
-    // writes must go through service_role. Route the same builder there —
-    // the DB interaction sequence each test asserts is unchanged.
     mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
 
-    expect(result.error).toBeDefined();
-    expect(result.error).toMatch(/currently in a match/i);
-    // Two from() calls: needs_rename gate + existing-row fetch; floor never ran.
+    expect(result.success).toBe(true);
+    expect(result.action).toBe("unchanged");
+    expect(result.error).toBeUndefined();
     expect(mock.from).toHaveBeenCalledTimes(2);
   });
 
-  it('returns an error and does NOT re-queue a player whose status is "playing"', async () => {
+  it('treats "playing" as an unchanged success and does not rewrite the row', async () => {
     const mock = makeMockClient([
-      // Step 1: existing row → playing
       { data: { id: "entry-2", games_played: 3, status: "playing" }, error: null },
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
-    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
-    // is revoked for anon/authenticated (20260721190000), so its reads and
-    // writes must go through service_role. Route the same builder there —
-    // the DB interaction sequence each test asserts is unchanged.
     mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
 
-    expect(result.error).toBeDefined();
-    expect(result.error).toMatch(/currently in a match/i);
-    // needs_rename gate + existing-row fetch, then the guard fires.
+    expect(result.success).toBe(true);
+    expect(result.action).toBe("unchanged");
     expect(mock.from).toHaveBeenCalledTimes(2);
   });
 
@@ -207,27 +195,21 @@ describe("joinQueueAction — active-match guard", () => {
 
     const result = await joinQueueAction(SESSION_ID);
 
-    // No error — re-join should proceed
     expect(result.error).toBeUndefined();
+    expect(result.action).toBe("reactivated");
   });
 
-  it('allows re-join when existing status is "waiting" (concurrent tap guard)', async () => {
-    // Edge case: player somehow calls joinQueue while already waiting.
-    // The guard must NOT block this — only on_deck/playing are blocked.
+  it('allows re-join when existing status is "waiting" without rewriting joined_at', async () => {
     const mock = makeMockClient([
       { data: { id: "entry-4", games_played: 0, status: "waiting" }, error: null },
-      { data: { games_played: 0 }, error: null },
-      { data: null, error: null },
     ]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
-    // joinQueueFallback now runs on the SERVICE client: queue_entries UPDATE
-    // is revoked for anon/authenticated (20260721190000), so its reads and
-    // writes must go through service_role. Route the same builder there —
-    // the DB interaction sequence each test asserts is unchanged.
     mockServiceClient.from = mock.from;
 
     const result = await joinQueueAction(SESSION_ID);
-    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+    expect(result.action).toBe("unchanged");
+    expect(mock.from).toHaveBeenCalledTimes(2);
   });
 
   it("blocks confirm-pending with requiresRename before any join logic (L2 gate)", async () => {
@@ -278,6 +260,7 @@ describe("joinQueueAction — active-match guard", () => {
 
     const result = await joinQueueAction(SESSION_ID);
     expect(result.error).toBeUndefined();
+    expect(result.action).toBe("inserted");
   });
 });
 
@@ -417,5 +400,49 @@ describe("joinQueueAction — closed-session guard", () => {
     expect(result.error).toMatch(/session has ended/i);
     // Only the needs_rename gate ran — no existing-row fetch, no insert.
     expect(mock.from).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the profile row is missing", async () => {
+    const mock = makeMockClient([]);
+    const responses = [{ data: null, error: null }];
+    let idx = 0;
+    mock.from = vi.fn(() => {
+      const res = responses[idx++] ?? { data: null, error: null };
+      const b: Record<string, unknown> = {};
+      b["then"] = (resFn: (v: unknown) => unknown, rej: (e: unknown) => unknown) =>
+        Promise.resolve(res).then(resFn, rej);
+      b["maybeSingle"] = () => Promise.resolve(res);
+      b["single"] = () => Promise.resolve(res);
+      for (const m of [
+        "select",
+        "eq",
+        "neq",
+        "in",
+        "or",
+        "order",
+        "limit",
+        "update",
+        "insert",
+        "upsert",
+      ]) {
+        b[m] = () => b;
+      }
+      return b;
+    });
+    vi.mocked(createServerSupabaseClient).mockResolvedValue({
+      from: mock.from,
+      auth: {
+        getUser: vi.fn().mockResolvedValue({
+          data: { user: { id: "player-uuid-1234" } },
+          error: null,
+        }),
+      },
+    } as never);
+    mockServiceClient.from = mock.from;
+
+    const result = await joinQueueAction(SESSION_ID);
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/unable to load your profile/i);
+    expect(mockServiceClient.rpc).not.toHaveBeenCalled();
   });
 });

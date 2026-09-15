@@ -4,6 +4,7 @@ import { Toaster } from "sonner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SerwistRegister } from "@/components/serwist-register";
 import { PwaNavBar } from "@/components/pwa-nav-bar";
+import { VercelAnalytics } from "@/components/analytics/vercel-analytics";
 import "./globals.css";
 
 // ── Root font stack (player, TV, wrapped, leaderboard views) ──
@@ -116,6 +117,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             escape hatch if a bad SW ships to production.
         */}
         <SerwistRegister />
+        <VercelAnalytics
+          enabled={
+            process.env.VERCEL_ENV === "production" &&
+            process.env.NEXT_PUBLIC_VERCEL_ANALYTICS === "true"
+          }
+        />
       </body>
     </html>
   );

@@ -20,6 +20,7 @@ import { VipTag } from "@/components/ui/vip-tag";
 import { GoogleLinkCard } from "@/components/notifications/google-link-card";
 import { ChangeDisplayName } from "@/components/player/change-display-name";
 import { Trophy } from "lucide-react";
+import { IdentityReadyBeacon } from "@/components/analytics/identity-ready-beacon";
 
 export default async function PlayPage() {
   const supabase = await createServerSupabaseClient();
@@ -74,6 +75,7 @@ export default async function PlayPage() {
 
   return (
     <main className="flex min-h-screen flex-col px-4 py-6">
+      <IdentityReadyBeacon />
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-start justify-between gap-3">

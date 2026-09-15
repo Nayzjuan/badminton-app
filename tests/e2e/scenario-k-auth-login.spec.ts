@@ -80,8 +80,8 @@ test.describe("Auth — [K-1] Anonymous login form visible", () => {
       // The name input must be present — confirms the join / login UI rendered.
       await expect(page.getByLabel(/your name/i)).toBeVisible({ timeout: 8_000 });
 
-      // The submit button should read "Join Queue" (no sessionId in URL).
-      await expect(page.getByRole("button", { name: /join queue/i })).toBeVisible({
+      // The submit button should read "Create Player Profile" (no sessionId in URL).
+      await expect(page.getByRole("button", { name: /create player profile/i })).toBeVisible({
         timeout: 5_000,
       });
     } finally {

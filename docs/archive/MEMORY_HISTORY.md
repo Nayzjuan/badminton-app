@@ -13,7 +13,15 @@
 
 ---
 
-## Part 0 — sessions 2026-09-11 and 2026-08-22 (archived 2026-09-13)
+## Part 0 — sessions 2026-09-15, 2026-09-13, 2026-09-11, and 2026-08-22
+
+## 2026-09-13 — Google name confirm + skill + identity merge (APPLIED)
+
+Archived from `MEMORY.md` after `list_migrations` showed prod stamp `20260913055840` / `oauth_name_confirm`. Behaviour lives in `APP_MANIFEST.md` §3.8c. Join L1 for QR is `completeRegistrationJoinAction` (rename before membership/queue).
+
+---
+
+## Part 0b — sessions 2026-09-11 and 2026-08-22 (archived 2026-09-13)
 
 Shipped notes moved out of `MEMORY.md` so the consecutive-partnership-ban heading could fit under the 40 KB cap. Behaviour lives in `APP_MANIFEST.md`.
 

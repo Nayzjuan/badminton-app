@@ -36,7 +36,7 @@
 // ============================================================
 
 import { describe, it, expect } from "vitest";
-import { isValidUUID } from "@/lib/validate";
+import { isValidUUID, isValidSlug } from "@/lib/validate";
 
 /** A real v4 id, used as the base for the mutations below. */
 const VALID = "3367d4c6-1f2a-4b8e-9c0d-5e6f7a8b9c0d";
@@ -202,5 +202,23 @@ describe("Suite VU — isValidUUID", () => {
       narrowed = raw.slice(0, 8);
     }
     expect(narrowed).toBe("3367d4c6");
+  });
+});
+
+describe("Suite VU — isValidSlug", () => {
+  it("VU-S1: accepts a simple club slug", () => {
+    expect(isValidSlug("chillax")).toBe(true);
+  });
+
+  it("VU-S2: accepts hyphenated slugs", () => {
+    expect(isValidSlug("north-club")).toBe(true);
+  });
+
+  it("VU-S3 (negative): rejects empty, spaces, and path traversal", () => {
+    expect(isValidSlug("")).toBe(false);
+    expect(isValidSlug("North Club")).toBe(false);
+    expect(isValidSlug("../x")).toBe(false);
+    expect(isValidSlug("a/b")).toBe(false);
+    expect(isValidSlug("-lead")).toBe(false);
   });
 });

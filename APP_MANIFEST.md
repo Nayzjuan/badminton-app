@@ -1058,6 +1058,7 @@ It reaches **three** awards over those two CTEs, because `prior_sessions_ranked`
 - Reconnect flow: new anon user signs in → enters PIN → `migrate_player_identity(oldId, newId)` RPC migrates all queue entries, match_players, and leaderboard data to the new UUID → old profile is replaced → audit row written to `identity_migrations`.
 - RPC returns `true` if the old user is the primary session organizer, preventing deletion of their auth record.
 - **Safety net**: After reconnect, the leaderboard auto-refreshes to reflect the merged identity. Organizer session is preserved if the reconnecting player is an organizer.
+- **QR reconnect**: a validated session on `LoginForm` takes precedence over historical `sessionId` / Wrapped routing — success (`requiresRename` first) returns to `/j/[sessionId]` so `JoinFinalizer` enrolls and queues.
 - **Sign-out guard**: `signInAnonymously` is always preceded by `signOut()` to prevent stale sessions from causing identity conflicts.
 - **Column parity (2026-06-08):** `migrate_player_identity` Step 2 now copies **all** profile columns (previously only `id, display_name, skill_level, pin` — which silently dropped `vip_tag`/`vip_theme` on every reconnect, and would drop the new duplicate-name flags). `created_at`/`updated_at` are intentionally left to defaults. Guarded by the schema-drift test `tests/unit/migrate-identity-columns.test.ts`.
 - **Reconnect rescues `left` (2026-08-15):** `reconnectPlayer`'s post-migration reconcile block used to lift only `playing/drafted/on_deck`→`waiting`. A player reconnecting to a **still-active** session (`targetSessionId` is only set from an active session) while their queue entry read `left` — from an earlier checkout, an organizer removal, or a mid-session re-registration — stayed invisible in Match Control (which renders only `waiting/drafted/on_deck/playing`). There is no organizer "re-add" control, so the reconcile now restores a `left` entry to `waiting` with a fresh `joined_at` (tail of queue, no line-jump). `migrate_player_identity` itself never sets `left` — it preserves status via a plain `UPDATE queue_entries SET player_id`.
@@ -1176,7 +1177,7 @@ It reaches **three** awards over those two CTEs, because `prior_sessions_ranked`
 
 | Surface | Component | Location | Prop |
 |---------|-----------|----------|------|
-| Login form (top) | `GoogleSignInButton` with `dividerPosition="below"` | `src/components/login-form.tsx` — above tab control, NEW PLAYER panel only | `next="/play"` or `"/play/[id]"` |
+| Login form (top) | `GoogleSignInButton` with `dividerPosition="below"` | `src/components/login-form.tsx` — above tab control | QR/club: `sessionShare` / `clubJoin` so Google returns to `JoinFinalizer`; direct: `/play` |
 | Overflow menu | `GoogleLinkButton` | `src/components/player/player-dashboard.tsx` | `next="/play/[sessionId]"` |
 | My Status card | `GoogleLinkCard` (dismissible) | `src/components/player/my-status-tab.tsx` | `next="/play/[sessionId]"` |
 | Session picker | `GoogleLinkCard` | `src/app/play/page.tsx` | `next="/play"` |
@@ -1252,8 +1253,9 @@ Rank-change flash animation: `data-flash="true"` triggers `leaderboard-flash` ke
 - Back-compat: `/play/join?session=` and `/c/[slug]/join?session=` 308 to the path form in middleware (`resolveJoinRedirect`) — not `next.config` `redirects()`, which always forwards the query and would re-print `?session=` on `/j/<id>`. The same helper repairs a pathname that still has `%3Fsession=` in it.
 - Join routes omit `X-Frame-Options: DENY` and set CSP `frame-ancestors *` so an in-app browser that iframes the page can still render it. Every other route stays locked.
 - `generateMetadata` on the join pages emits Open Graph / Twitter cards for unfurlers.
-- Pre-wires the new player registration to the target session.
-- Authed returning players go through `ClubJoinScreen`: enroll, then `enforceRenameGate`, then enqueue. Confirm-pending / flagged names never land in the queue from a share/QR scan.
+- Pre-wires the new player registration to the target session. Direct `/` registration creates a profile only (`Create Player Profile`) and lands on `/welcome` for QR guidance — it does not enqueue.
+- Anonymous / PIN / Google session-entry returns to `/j/[sessionId]` or `/c/[slug]/join` (not the play page). `ClubJoinScreen` renders `JoinFinalizer` for authenticated profiles; `completeRegistrationJoinAction` authenticates, binds the session to the club, fail-closes on a missing profile, rename-gates, then `ensureClubMembership` + `joinQueueAction`. Confirm-pending / flagged names never land in the queue from a share/QR scan.
+- `join_queue` locks the session row (`is_active` and `ended_at`), returns `inserted` / `reactivated` / `unchanged`, and treats waiting / drafted / on_deck / playing as successful no-ops. Pause clear and the engine run only on real transitions. Prod stamp `20260915150524` / `join_queue_session_lock_and_idempotent` (repo file `20260915120000_join_queue_session_lock_and_idempotent.sql`).
 
 ---
 

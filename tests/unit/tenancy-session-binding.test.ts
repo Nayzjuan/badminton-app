@@ -195,7 +195,11 @@ beforeEach(() => {
   // wrong reason.
   vi.mocked(isSessionOrganizer).mockResolvedValue(false);
   vi.mocked(resolveSessionClubSlug).mockResolvedValue(SLUG);
-  vi.mocked(ensureClubMembership).mockResolvedValue({ ok: true, joined: true });
+  vi.mocked(ensureClubMembership).mockResolvedValue({
+    ok: true,
+    joined: true,
+    action: "created",
+  });
 });
 
 // ── #4 the audit trail is bound to the authorized session ─────

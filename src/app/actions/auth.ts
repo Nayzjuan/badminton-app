@@ -14,9 +14,9 @@ import type { SkillLevel } from "@/types/database";
 import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 import { displayNameSchema, pinSchema, skillLevelSchema } from "@/lib/schemas/auth";
 import { isNameTaken } from "@/lib/dup-name";
-import { ensureClubMembership, getClubBySlug, resolveSessionClubSlug } from "@/lib/clubs";
+import { getClubBySlug, resolveSessionClubSlug } from "@/lib/clubs";
 import { getClientIp } from "@/lib/client-ip";
-import { clubPlay, clubBase, clubWrapped } from "@/lib/club-paths";
+import { clubWrapped, sessionShare, clubJoin } from "@/lib/club-paths";
 import { shouldRefreshLeaderboard } from "@/lib/leaderboard-refresh";
 
 // Shared message for a display name that already exists.
@@ -29,6 +29,22 @@ const NAME_TAKEN_MESSAGE =
   'That name is already registered. If it\'s you, use "Reconnect" below to pick up where ' +
   'you left off — otherwise add an initial (e.g. "Miggy L.").';
 
+export type AuthField = "name" | "pin" | "skill" | "form";
+export type AuthErrorCode =
+  | "invalid_name"
+  | "invalid_pin"
+  | "invalid_skill"
+  | "name_taken"
+  | "profile_write_failed"
+  | "auth_failed";
+
+export type SignInFailure = {
+  success: false;
+  error: string;
+  field: AuthField;
+  code: AuthErrorCode;
+};
+
 // Escape ILIKE special characters so a caller-supplied string is always
 // treated as a literal — never as a wildcard pattern.
 function escapeLike(s: string): string {
@@ -37,41 +53,51 @@ function escapeLike(s: string): string {
 
 // ── Registration ────────────────────────────────────────────
 
-export async function signInAnonymously(formData: FormData) {
+export async function signInAnonymously(formData: FormData): Promise<SignInFailure | void> {
   const rawName = formData.get("display_name") as string | null;
   const rawSkillLevel = formData.get("skill_level");
   const rawPin = formData.get("pin") as string | null;
-  // Optional: if joining via QR/link, redirect straight to that session.
+  // Optional: if joining via QR/link, bounce back to the canonical join
+  // route so JoinFinalizer enrolls + queues. Direct registration lands on
+  // /welcome (QR guidance) instead of claiming a queue join.
   const sessionId = (formData.get("session_id") as string)?.trim() || null;
-  // Optional: club context from a /c/[clubSlug]/join QR — enroll + route into the club.
   const clubSlug = (formData.get("club_slug") as string)?.trim() || null;
-  const destination = clubSlug
-    ? sessionId
-      ? clubPlay(clubSlug, sessionId)
-      : clubBase(clubSlug)
-    : sessionId
-      ? `/play/${sessionId}`
-      : "/play";
+  const destination = sessionId
+    ? sessionShare(sessionId)
+    : clubSlug
+      ? clubJoin(clubSlug)
+      : "/welcome";
 
-  // ── Zod validation ───────────────────────────────────────
   const nameResult = displayNameSchema.safeParse(rawName ?? "");
   if (!nameResult.success) {
-    return { success: false, error: nameResult.error.issues[0].message };
+    return {
+      success: false,
+      error: nameResult.error.issues[0].message,
+      field: "name",
+      code: "invalid_name",
+    };
   }
-  const displayName = nameResult.data; // trimmed + spaces collapsed
+  const displayName = nameResult.data;
 
-  // Validate skillLevel against the canonical SkillLevel enum at runtime —
-  // `as SkillLevel` is a compile-time cast only and would silently pass any
-  // arbitrary string from a crafted FormData payload.
   const skillLevelResult = skillLevelSchema.safeParse(rawSkillLevel);
   if (!skillLevelResult.success) {
-    return { success: false, error: skillLevelResult.error.issues[0].message };
+    return {
+      success: false,
+      error: skillLevelResult.error.issues[0].message,
+      field: "skill",
+      code: "invalid_skill",
+    };
   }
   const skillLevel: SkillLevel = skillLevelResult.data;
 
   const pinResult = pinSchema.safeParse(rawPin ?? "");
   if (!pinResult.success) {
-    return { success: false, error: pinResult.error.issues[0].message };
+    return {
+      success: false,
+      error: pinResult.error.issues[0].message,
+      field: "pin",
+      code: "invalid_pin",
+    };
   }
   const pin = pinResult.data;
 
@@ -103,18 +129,16 @@ export async function signInAnonymously(formData: FormData) {
 
     if (upsertError) {
       if (upsertError.code === "23505") {
-        return { success: false, error: NAME_TAKEN_MESSAGE };
+        return { success: false, error: NAME_TAKEN_MESSAGE, field: "name", code: "name_taken" };
       }
-      return { success: false, error: upsertError.message };
+      return {
+        success: false,
+        error: "Could not save your profile. Please try again.",
+        field: "form",
+        code: "profile_write_failed",
+      };
     }
 
-    if (clubSlug) {
-      const enroll = await ensureClubMembership(clubSlug, existingUser.id);
-      // Club vanished / membership write failed — send them to their own player
-      // context (/play resolves their club, or the join-via-QR screen), not a
-      // gated club route that would bounce them.
-      if (!enroll.ok) redirect("/play");
-    }
     redirect(destination);
   }
 
@@ -157,7 +181,7 @@ export async function signInAnonymously(formData: FormData) {
     .maybeSingle();
 
   if (nameHolder) {
-    return { success: false, error: NAME_TAKEN_MESSAGE };
+    return { success: false, error: NAME_TAKEN_MESSAGE, field: "name", code: "name_taken" };
   }
 
   // (2) Backstop for check (1), which ignores its own read error and so fails
@@ -179,7 +203,7 @@ export async function signInAnonymously(formData: FormData) {
   // this index, so the auth call itself fails and its own error is returned.
   // Divergent wording, but name-dependent and PIN-independent — not an oracle.
   if (await isNameTaken(service, displayName)) {
-    return { success: false, error: NAME_TAKEN_MESSAGE };
+    return { success: false, error: NAME_TAKEN_MESSAGE, field: "name", code: "name_taken" };
   }
 
   // Sign in anonymously. Supabase creates an auth.users row
@@ -194,7 +218,7 @@ export async function signInAnonymously(formData: FormData) {
   });
 
   if (error) {
-    return { success: false, error: error.message };
+    return { success: false, error: error.message, field: "form", code: "auth_failed" };
   }
 
   // The trigger should have created the profile, but if the metadata
@@ -213,24 +237,21 @@ export async function signInAnonymously(formData: FormData) {
     );
 
     if (upsertError) {
-      // PostgreSQL unique violation — display_name already registered
       if (upsertError.code === "23505") {
-        // Same wording as the pre-checks — this is the TOCTOU arm of the very
-        // same "name exists" answer and must not read differently.
-        return { success: false, error: NAME_TAKEN_MESSAGE };
+        await supabase.auth.signOut();
+        return { success: false, error: NAME_TAKEN_MESSAGE, field: "name", code: "name_taken" };
       }
       console.error("[auth] profile upsert safety-net failed:", upsertError);
+      await supabase.auth.signOut();
+      return {
+        success: false,
+        error: "Could not save your profile. Please try again.",
+        field: "form",
+        code: "profile_write_failed",
+      };
     }
   }
 
-  // QR-join enrollment: a brand-new scanner becomes an active member of the
-  // club, so the club route's membership gate lets them straight in.
-  if (clubSlug && data.user) {
-    const enroll = await ensureClubMembership(clubSlug, data.user.id);
-    // Enrollment failed — send them to their own player context (/play resolves
-    // their club or the join-via-QR screen), not the owner-only /clubs hub.
-    if (!enroll.ok) redirect("/play");
-  }
   redirect(destination);
 }
 
@@ -259,6 +280,8 @@ export interface ReconnectResult {
    * would lose the Google identity link.
    */
   useGoogleSignIn?: boolean;
+  field?: "name" | "pin" | "form";
+  code?: string;
 }
 
 // ── Reconnect rate limiting ───────────────────────────────────
@@ -293,13 +316,13 @@ export async function reconnectPlayer(
   // Validate via Zod — same rules as registration
   const nameResult = displayNameSchema.safeParse(playerName ?? "");
   if (!nameResult.success) {
-    return { success: false, error: nameResult.error.issues[0].message };
+    return { success: false, error: nameResult.error.issues[0].message, field: "name" };
   }
   const name = nameResult.data; // trimmed + normalized
 
   const pinResult = pinSchema.safeParse(pin ?? "");
   if (!pinResult.success) {
-    return { success: false, error: pinResult.error.issues[0].message };
+    return { success: false, error: pinResult.error.issues[0].message, field: "pin" };
   }
   const service = createServiceClient();
 

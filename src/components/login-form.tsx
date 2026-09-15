@@ -4,239 +4,259 @@
 // Login Form — Name + Skill Level + PIN entry for anonymous auth
 // ============================================================
 // Two modes toggled by a segmented control at the top:
-//   NEW PLAYER   — name + skill level + PIN → Join Queue
-//   RETURNING    — name + PIN → Reconnect (inline, no modal)
-//
-// The RETURNING path replaces the old buried "Already have a PIN?
-// Reconnect" underline link, giving equal visual hierarchy to both
-// journeys from the first interaction.
+//   NEW PLAYER   — name + skill level + PIN → contextual CTA
+//   RETURNING    — name + PIN → Reconnect (native form)
 // ============================================================
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, UserPlus, RotateCcw } from "lucide-react";
 import { signInAnonymously, reconnectPlayer } from "@/app/actions/auth";
-import { SKILL_LEVELS } from "@/types/database";
+import type { SkillLevel } from "@/types/database";
 import { Spinner } from "./reconnect-modal";
 import { GoogleSignInButton } from "@/components/auth/google-sign-in-button";
-import { clubPlay, clubBase } from "@/lib/club-paths";
-import { SKILL_COLORS } from "@/lib/skill-picker-styles";
+import { clubPlay, clubBase, sessionShare, clubJoin } from "@/lib/club-paths";
+import { SkillLevelPicker } from "@/components/player/skill-level-picker";
+import { displayNameSchema, pinSchema, skillLevelSchema } from "@/lib/schemas/auth";
+import { trackRegistration, type RegistrationEntry } from "@/lib/registration-analytics";
 
 interface LoginFormProps {
-  /** If provided, the user will be redirected to /play/[sessionId] after login. */
   sessionId?: string;
-  /** Club context (from a /c/[clubSlug]/join QR): the new player is auto-enrolled
-   *  in the club and routed to the club-scoped session. */
   clubSlug?: string;
 }
 
 type LoginMode = "new" | "returning";
+type FieldKey = "name" | "pin" | "skill" | "form";
 
-// ─────────────────────────────────────────────────────────────
-// Inline error banner — shared between both form modes
-// ─────────────────────────────────────────────────────────────
-function ErrorBanner({ error, onDismiss }: { error: string; onDismiss: () => void }) {
+function entryContext(sessionId?: string, clubSlug?: string): RegistrationEntry {
+  if (sessionId) return "qr_session";
+  if (clubSlug) return "qr_club";
+  return "direct";
+}
+
+function oauthNext(sessionId?: string, clubSlug?: string): string {
+  if (sessionId) return sessionShare(sessionId);
+  if (clubSlug) return clubJoin(clubSlug);
+  return "/play";
+}
+
+function submitLabel(entry: RegistrationEntry): string {
+  if (entry === "qr_session") return "Join Session";
+  if (entry === "qr_club") return "Join Club";
+  return "Create Player Profile";
+}
+
+function pendingLabel(entry: RegistrationEntry): string {
+  return entry === "direct" ? "Creating…" : "Joining…";
+}
+
+function FieldError({ id, message }: { id: string; message: string }) {
   return (
-    <div
-      role="alert"
-      className="flex items-center gap-2 rounded-lg border border-destructive/30
-                 bg-destructive/10 px-3 py-2.5 text-sm text-destructive
-                 dark:border-destructive/50 dark:bg-destructive/20"
-    >
-      <svg
-        className="h-4 w-4 shrink-0"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        strokeWidth={2}
-        aria-hidden="true"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-        />
-      </svg>
-      <span>{error}</span>
-      <button
-        type="button"
-        onClick={onDismiss}
-        aria-label="Dismiss error"
-        className="ml-auto cursor-pointer rounded-full p-0.5 transition-colors
-                   hover:bg-destructive/20"
-      >
-        <svg
-          className="h-3.5 w-3.5"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2.5}
-          aria-hidden="true"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
-    </div>
+    <p id={id} role="alert" className="text-sm text-destructive">
+      {message}
+    </p>
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// Main LoginForm
-// ─────────────────────────────────────────────────────────────
-
 export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
   const router = useRouter();
+  const entry = entryContext(sessionId, clubSlug);
 
-  // ── Mode toggle ───────────────────────────────────────────
   const [mode, setMode] = useState<LoginMode>("new");
 
-  // ── New Player state ──────────────────────────────────────
-  const [newError, setNewError] = useState<string | null>(null);
+  const [newErrors, setNewErrors] = useState<Partial<Record<FieldKey, string>>>({});
   const [newIsPending, startNewTransition] = useTransition();
   const [nameValue, setNameValue] = useState("");
-  const [skillLevel, setSkillLevel] = useState("beginner");
+  const [skillLevel, setSkillLevel] = useState<SkillLevel>("beginner");
+  const [pinValue, setPinValue] = useState("");
   const [showPin, setShowPin] = useState(false);
+  const newFocused = useRef(false);
 
-  // ── Returning Player state ────────────────────────────────
   const [reconnectName, setReconnectName] = useState("");
   const [reconnectPin, setReconnectPin] = useState("");
-  const [reconnectError, setReconnectError] = useState<string | null>(null);
+  const [reconnectErrors, setReconnectErrors] = useState<Partial<Record<FieldKey, string>>>({});
   const [reconnectIsPending, startReconnectTransition] = useTransition();
-  // Set when the reconnected account has Google linked — prompts the player
-  // to use "Continue with Google" above instead of the PIN form.
   const [googleHint, setGoogleHint] = useState(false);
+  const reconnectFocused = useRef(false);
+  const [pinFocusNonce, setPinFocusNonce] = useState(0);
 
-  // Prefetch /play so the redirect after login is instant.
   useEffect(() => {
-    router.prefetch(sessionId ? `/play/${sessionId}` : "/play");
-  }, [router, sessionId]);
+    trackRegistration({ step: "viewed", entry });
+  }, [entry]);
 
-  // Auto-dismiss error toasts after 8 s — courtside, player may be looking away.
+  useLayoutEffect(() => {
+    if (pinFocusNonce === 0) return;
+    document.getElementById("reconnect_pin")?.focus();
+  }, [pinFocusNonce]);
+
   useEffect(() => {
-    if (newError) {
-      const id = setTimeout(() => setNewError(null), 8000);
-      return () => clearTimeout(id);
+    router.prefetch(
+      sessionId ? sessionShare(sessionId) : clubSlug ? clubJoin(clubSlug) : "/welcome"
+    );
+  }, [router, sessionId, clubSlug]);
+
+  function focusFirstInvalid(ids: string[]) {
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el) {
+        el.focus();
+        return;
+      }
     }
-  }, [newError]);
+  }
 
-  useEffect(() => {
-    if (reconnectError) {
-      const id = setTimeout(() => setReconnectError(null), 8000);
-      return () => clearTimeout(id);
+  function handleNewPlayerSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const formData = new FormData(form);
+    setNewErrors({});
+    newFocused.current = false;
+
+    const nameParsed = displayNameSchema.safeParse(formData.get("display_name") ?? "");
+    const skillParsed = skillLevelSchema.safeParse(formData.get("skill_level"));
+    const pinParsed = pinSchema.safeParse(formData.get("pin") ?? "");
+    const next: Partial<Record<FieldKey, string>> = {};
+    if (!nameParsed.success) next.name = nameParsed.error.issues[0].message;
+    if (!skillParsed.success) next.skill = skillParsed.error.issues[0].message;
+    if (!pinParsed.success) next.pin = pinParsed.error.issues[0].message;
+    if (Object.keys(next).length > 0) {
+      setNewErrors(next);
+      const firstField = next.name ? "name" : next.skill ? "skill" : "pin";
+      trackRegistration({
+        step: "validation_error",
+        entry,
+        method: "anonymous",
+        field: firstField,
+      });
+      if (!newFocused.current) {
+        newFocused.current = true;
+        focusFirstInvalid(["display_name", "skill_level", "pin"]);
+      }
+      return;
     }
-  }, [reconnectError]);
 
-  // ── Handlers ──────────────────────────────────────────────
-
-  function handleNewPlayerSubmit(formData: FormData) {
-    setNewError(null);
+    trackRegistration({ step: "started", entry, method: "anonymous" });
     startNewTransition(async () => {
       const result = await signInAnonymously(formData);
       if (result?.error) {
-        setNewError(result.error);
-      }
-    });
-  }
-
-  function handleReconnect() {
-    setReconnectError(null);
-    setGoogleHint(false);
-    if (!reconnectName.trim() || reconnectPin.length !== 4) {
-      setReconnectError("Name and a 4-digit PIN are required.");
-      return;
-    }
-    startReconnectTransition(async () => {
-      const result = await reconnectPlayer(reconnectName.trim(), reconnectPin, clubSlug);
-      if (!result.success) {
-        setReconnectError(result.error ?? "Reconnect failed. Check your name and PIN.");
-        if (result.useGoogleSignIn) setGoogleHint(true);
-      } else {
-        if (result.wrappedUrl) {
-          router.push(result.wrappedUrl);
-        } else if (result.sessionId) {
-          router.push(
-            clubSlug ? clubPlay(clubSlug, result.sessionId) : `/play/${result.sessionId}`
+        const field = result.field ?? "form";
+        setNewErrors({ [field]: result.error });
+        if (result.code === "name_taken") {
+          setReconnectName(nameValue.trim());
+          handleModeSwitch("returning", { keepName: true });
+          setPinFocusNonce((n) => n + 1);
+          return;
+        }
+        trackRegistration({ step: "validation_error", entry, method: "anonymous", field });
+        if (!newFocused.current) {
+          newFocused.current = true;
+          focusFirstInvalid(
+            field === "name"
+              ? ["display_name"]
+              : field === "skill"
+                ? ["skill_level"]
+                : field === "pin"
+                  ? ["pin"]
+                  : []
           );
-        } else {
-          router.push(clubSlug ? clubBase(clubSlug) : "/play");
         }
       }
     });
   }
 
-  // ── Tab toggle ────────────────────────────────────────────
-
-  function handleModeSwitch(next: LoginMode) {
-    setMode(next);
-    // Clear errors when switching tabs so we don't carry stale state
-    setNewError(null);
-    setReconnectError(null);
+  function handleReconnectSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (reconnectIsPending) return;
+    setReconnectErrors({});
     setGoogleHint(false);
+    reconnectFocused.current = false;
+
+    const nameParsed = displayNameSchema.safeParse(reconnectName);
+    const pinParsed = pinSchema.safeParse(reconnectPin);
+    const next: Partial<Record<FieldKey, string>> = {};
+    if (!nameParsed.success) next.name = nameParsed.error.issues[0].message;
+    if (!pinParsed.success) next.pin = pinParsed.error.issues[0].message;
+    if (Object.keys(next).length > 0) {
+      setReconnectErrors(next);
+      trackRegistration({
+        step: "validation_error",
+        entry,
+        method: "pin",
+        field: next.name ? "name" : "pin",
+      });
+      if (!reconnectFocused.current) {
+        reconnectFocused.current = true;
+        focusFirstInvalid(["reconnect_name", "reconnect_pin"]);
+      }
+      return;
+    }
+
+    trackRegistration({ step: "started", entry, method: "pin" });
+    startReconnectTransition(async () => {
+      const result = await reconnectPlayer(reconnectName.trim(), reconnectPin, clubSlug);
+      if (!result.success) {
+        setReconnectErrors({ [result.field ?? "form"]: result.error ?? "Reconnect failed." });
+        if (result.useGoogleSignIn) setGoogleHint(true);
+        return;
+      }
+      if (result.requiresRename) {
+        const nextPath = sessionId
+          ? sessionShare(sessionId)
+          : clubSlug
+            ? clubJoin(clubSlug)
+            : "/play";
+        router.replace(`/rename?next=${encodeURIComponent(nextPath)}`);
+        return;
+      }
+      if (sessionId) {
+        router.replace(sessionShare(sessionId));
+        return;
+      }
+      if (result.wrappedUrl) {
+        router.push(result.wrappedUrl);
+      } else if (result.sessionId) {
+        router.push(clubSlug ? clubPlay(clubSlug, result.sessionId) : `/play/${result.sessionId}`);
+      } else {
+        router.push(clubSlug ? clubBase(clubSlug) : "/play");
+      }
+    });
   }
 
-  // Arrow-key navigation for the tablist (ARIA APG pattern).
-  // ArrowRight focuses RETURNING; ArrowLeft focuses NEW PLAYER.
+  function handleModeSwitch(next: LoginMode, opts?: { keepName?: boolean }) {
+    setMode(next);
+    setNewErrors({});
+    setReconnectErrors({});
+    setGoogleHint(false);
+    if (opts?.keepName) {
+      setReconnectName(nameValue.trim());
+    }
+  }
+
   function handleTabKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
     if (e.key === "ArrowRight") {
       e.preventDefault();
       handleModeSwitch("returning");
-      (document.getElementById("tab-returning") as HTMLButtonElement | null)?.focus();
+      document.getElementById("tab-returning")?.focus();
     } else if (e.key === "ArrowLeft") {
       e.preventDefault();
       handleModeSwitch("new");
-      (document.getElementById("tab-new") as HTMLButtonElement | null)?.focus();
+      document.getElementById("tab-new")?.focus();
     }
   }
 
-  // ─────────────────────────────────────────────────────────
-  // Render
-  // ─────────────────────────────────────────────────────────
+  const newNameErr = newErrors.name;
+  const newSkillErr = newErrors.skill;
+  const newPinErr = newErrors.pin;
+  const newFormErr = newErrors.form;
 
   return (
-    <div className="w-full max-w-sm sm:max-w-md space-y-5">
-      {/* ── Google sign-in — top of form, optional fast path ── */}
-      {/* Outlined (not filled) — signals convenient shortcut, not mandatory primary action */}
+    <div className="w-full max-w-sm sm:max-w-md space-y-3">
       <GoogleSignInButton
-        next={
-          clubSlug
-            ? sessionId
-              ? clubPlay(clubSlug, sessionId)
-              : clubBase(clubSlug)
-            : sessionId
-              ? `/play/${sessionId}`
-              : "/play"
-        }
+        next={oauthNext(sessionId, clubSlug)}
         clubSlug={clubSlug}
         dividerPosition="below"
       />
 
-      {/* ── PIN-holder note — bridges Google button & tab choice ── */}
-      {/* Shown only when OAuth is live. RotateCcw icon echoes the RETURNING
-          tab label, creating a visual link without needing an arrow. The mono
-          chip mirrors a keyboard-key aesthetic consistent with the sporty HUD
-          design language — not a generic help card. */}
-      {process.env.NEXT_PUBLIC_GOOGLE_OAUTH_ENABLED === "true" && (
-        <div className="flex items-start gap-2">
-          <RotateCcw
-            className="mt-px h-3 w-3 shrink-0 text-muted-foreground/50"
-            aria-hidden="true"
-          />
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Played here before? Sign back in using the{" "}
-            <span
-              className="inline-flex items-center rounded bg-muted px-1.5 py-0.5
-                         font-mono text-[10px] font-semibold text-foreground"
-            >
-              RETURNING
-            </span>{" "}
-            tab below — then link Google from inside the app.
-          </p>
-        </div>
-      )}
-
-      {/* ── Segmented toggle — NEW PLAYER / RETURNING ──────── */}
-      {/* This is the first element — returning players see their path
-          immediately without scrolling past the entire new-player form. */}
       <div
         role="tablist"
         aria-label="Login mode"
@@ -245,12 +265,13 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
         <button
           role="tab"
           aria-selected={mode === "new"}
+          aria-controls="panel-new"
           id="tab-new"
           type="button"
           tabIndex={mode === "new" ? 0 : -1}
           onClick={() => handleModeSwitch("new")}
           onKeyDown={handleTabKeyDown}
-          className={`flex cursor-pointer flex-col items-center gap-0.5 rounded-lg px-3 py-3
+          className={`flex min-h-11 cursor-pointer flex-col items-center gap-0.5 rounded-lg px-3 py-2
                       text-sm font-semibold transition-all duration-150
                       ${
                         mode === "new"
@@ -260,18 +281,18 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
         >
           <UserPlus className="h-4 w-4" aria-hidden="true" />
           <span>NEW PLAYER</span>
-          <span className="text-[10px] font-normal tracking-wide opacity-70">First time here</span>
         </button>
 
         <button
           role="tab"
           aria-selected={mode === "returning"}
+          aria-controls="panel-returning"
           id="tab-returning"
           type="button"
           tabIndex={mode === "returning" ? 0 : -1}
           onClick={() => handleModeSwitch("returning")}
           onKeyDown={handleTabKeyDown}
-          className={`flex cursor-pointer flex-col items-center gap-0.5 rounded-lg px-3 py-3
+          className={`flex min-h-11 cursor-pointer flex-col items-center gap-0.5 rounded-lg px-3 py-2
                       text-sm font-semibold transition-all duration-150
                       ${
                         mode === "returning"
@@ -281,42 +302,18 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
         >
           <RotateCcw className="h-4 w-4" aria-hidden="true" />
           <span>RETURNING</span>
-          <span className="text-[10px] font-normal tracking-wide opacity-70">I have a PIN</span>
         </button>
       </div>
 
-      {/* ── NEW PLAYER panel ───────────────────────────────── */}
       {mode === "new" && (
         <form
           id="panel-new"
           role="tabpanel"
           aria-labelledby="tab-new"
-          action={handleNewPlayerSubmit}
-          className="space-y-5 animate-in fade-in duration-150"
+          onSubmit={handleNewPlayerSubmit}
+          className="space-y-3"
         >
-          {/* ── Trust badge — anonymous-first framing ─────────── */}
-          {/* Answers "do I need an account?" before the form starts */}
-          <div className="flex items-center justify-center gap-4 py-0.5" aria-hidden="true">
-            {(["No email", "No password", "Just a PIN"] as const).map((label) => (
-              <span key={label} className="flex items-center gap-1 text-xs text-muted-foreground">
-                <svg
-                  className="h-3 w-3 shrink-0 text-emerald-500"
-                  viewBox="0 0 12 12"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M2 6l3 3 5-5" />
-                </svg>
-                {label}
-              </span>
-            ))}
-          </div>
-
-          {/* ── Name ─────────────────────────────────────────── */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <label htmlFor="display_name" className="block text-sm font-semibold text-foreground">
               Your Name
             </label>
@@ -324,7 +321,6 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
               id="display_name"
               name="display_name"
               type="text"
-              required
               autoFocus
               disabled={newIsPending}
               maxLength={30}
@@ -332,76 +328,32 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
               onChange={(e) => setNameValue(e.target.value)}
               placeholder="e.g. Miggy, Stelle, Carlo B"
               autoComplete="nickname"
-              className="w-full rounded-lg border border-input bg-background px-4 py-3 text-base
-                         placeholder:text-muted-foreground focus:outline-none focus:ring-2
+              aria-invalid={newNameErr ? true : undefined}
+              aria-describedby={newNameErr ? "display_name_error" : "display_name_hint"}
+              className="min-h-11 w-full rounded-lg border border-input bg-background px-4 py-2.5
+                         text-base placeholder:text-muted-foreground focus:outline-none focus:ring-2
                          focus:ring-ring focus:ring-offset-2 disabled:opacity-50"
             />
-            <div className="flex items-start justify-between gap-2">
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Pick a name you won&apos;t mind your friends shouting across the court!
+            {newNameErr ? (
+              <FieldError id="display_name_error" message={newNameErr} />
+            ) : (
+              <p id="display_name_hint" className="text-xs text-muted-foreground">
+                Letters, numbers, and spaces. 3–30 characters.
               </p>
-              {nameValue.length > 0 && (
-                <span
-                  className={`shrink-0 text-xs font-mono tabular-nums ${
-                    nameValue.length === 30
-                      ? "font-semibold text-red-500"
-                      : nameValue.length >= 25
-                        ? "text-amber-500"
-                        : "text-muted-foreground"
-                  }`}
-                >
-                  {nameValue.length}/30
-                </span>
-              )}
-            </div>
+            )}
           </div>
 
-          {/* ── Skill Level — radio card grid ─────────────────── */}
-          <fieldset className="space-y-2 border-0 p-0 m-0">
-            <legend className="block text-sm font-semibold text-foreground">Skill Level</legend>
-            <input type="hidden" name="skill_level" value={skillLevel} />
-            <div
-              className={`grid grid-cols-2 gap-2 ${
-                newIsPending ? "pointer-events-none opacity-50" : ""
-              }`}
-            >
-              {SKILL_LEVELS.map((level) => {
-                const colors = SKILL_COLORS[level.value];
-                const isSelected = skillLevel === level.value;
-                return (
-                  <label
-                    key={level.value}
-                    className={`relative flex min-h-[56px] cursor-pointer flex-col justify-center
-                                gap-0.5 rounded-lg border-2 px-3 py-2.5 transition-colors
-                                ${isSelected ? colors.active : colors.idle}`}
-                  >
-                    <input
-                      type="radio"
-                      name="skill_level_radio"
-                      value={level.value}
-                      checked={isSelected}
-                      onChange={() => setSkillLevel(level.value)}
-                      disabled={newIsPending}
-                      className="sr-only"
-                    />
-                    <span
-                      className={`absolute right-2.5 top-2.5 h-1.5 w-1.5 rounded-full ${colors.dot}`}
-                      aria-hidden="true"
-                    />
-                    <span className="text-sm font-semibold leading-tight text-foreground">
-                      {level.label}
-                    </span>
-                    <span className="text-xs leading-snug text-muted-foreground">
-                      {colors.descriptor}
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
-          </fieldset>
+          <SkillLevelPicker
+            compact
+            value={skillLevel}
+            onChange={setSkillLevel}
+            disabled={newIsPending}
+            invalid={Boolean(newSkillErr)}
+            describedBy={newSkillErr ? "skill_level_error" : undefined}
+          />
+          {newSkillErr && <FieldError id="skill_level_error" message={newSkillErr} />}
 
-          {/* ── 4-digit PIN ───────────────────────────────────── */}
-          <div className="space-y-2 pt-3">
+          <div className="space-y-1.5">
             <label htmlFor="pin" className="block text-sm font-semibold text-foreground">
               Choose a 4-Digit PIN
             </label>
@@ -411,13 +363,15 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
                 name="pin"
                 type={showPin ? "tel" : "password"}
                 inputMode="numeric"
-                pattern="\d{4}"
                 maxLength={4}
-                required
                 disabled={newIsPending}
+                value={pinValue}
+                onChange={(e) => setPinValue(e.target.value.replace(/\D/g, "").slice(0, 4))}
                 placeholder="1 2 3 4"
                 autoComplete="off"
-                className="w-full rounded-lg border border-input bg-background px-4 py-3 pr-12
+                aria-invalid={newPinErr ? true : undefined}
+                aria-describedby={newPinErr ? "pin_error" : "pin_hint"}
+                className="min-h-11 w-full rounded-lg border border-input bg-background px-4 py-2.5 pr-12
                            text-base tracking-[0.3em] text-center font-mono
                            placeholder:text-muted-foreground placeholder:tracking-normal
                            focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2
@@ -432,7 +386,7 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
                 disabled={newIsPending}
                 className="absolute right-0 top-0 flex h-full min-w-[44px] cursor-pointer
                            items-center justify-center px-3 text-muted-foreground
-                           transition-colors hover:text-foreground disabled:pointer-events-none"
+                           hover:text-foreground disabled:pointer-events-none"
               >
                 {showPin ? (
                   <EyeOff className="h-4 w-4" aria-hidden="true" />
@@ -441,53 +395,54 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
                 )}
               </button>
             </div>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              You&apos;ll use this PIN to rejoin if you lose your session. Pick something
-              you&apos;ll remember.
-            </p>
+            {newPinErr ? (
+              <FieldError id="pin_error" message={newPinErr} />
+            ) : (
+              <p id="pin_hint" className="text-xs text-muted-foreground">
+                You&apos;ll use this PIN to sign back in.
+              </p>
+            )}
           </div>
 
-          {/* Hidden session_id — routes redirect to /play/[id] after login */}
           {sessionId && <input type="hidden" name="session_id" value={sessionId} />}
-          {/* Hidden club_slug — QR join: enroll in the club + route to /c/[slug]/play/[id] */}
           {clubSlug && <input type="hidden" name="club_slug" value={clubSlug} />}
 
-          {/* ── Error ─────────────────────────────────────────── */}
-          {newError && <ErrorBanner error={newError} onDismiss={() => setNewError(null)} />}
+          {newFormErr && (
+            <p role="alert" className="text-sm text-destructive">
+              {newFormErr}
+            </p>
+          )}
 
-          {/* ── Submit ───────────────────────────────────────── */}
           <button
             type="submit"
             disabled={newIsPending}
-            className="flex min-h-[52px] w-full cursor-pointer items-center justify-center
-                       gap-2 rounded-lg bg-amber-500 px-4 py-4 text-base font-semibold
-                       text-[#0E1C3A] transition-colors hover:bg-amber-600
-                       disabled:cursor-not-allowed disabled:opacity-70"
+            className="flex min-h-[44px] w-full cursor-pointer items-center justify-center
+                       gap-2 rounded-lg bg-amber-500 px-4 py-3 text-base font-semibold
+                       text-[#0E1C3A] hover:bg-amber-600 disabled:cursor-not-allowed
+                       disabled:opacity-70"
           >
             {newIsPending && <Spinner />}
-            {newIsPending ? "Joining…" : sessionId ? "Join Session" : "Join Queue"}
+            {newIsPending ? pendingLabel(entry) : submitLabel(entry)}
           </button>
+          {entry === "direct" && (
+            <p className="text-center text-xs text-muted-foreground">
+              This creates your profile. Scan a session QR next to join the queue.
+            </p>
+          )}
         </form>
       )}
 
-      {/* ── RETURNING panel ────────────────────────────────── */}
       {mode === "returning" && (
-        <div
+        <form
           id="panel-returning"
           role="tabpanel"
           aria-labelledby="tab-returning"
-          className="space-y-5 animate-in fade-in duration-150"
+          onSubmit={handleReconnectSubmit}
+          className="space-y-3"
         >
-          {/* Heading copy — sets expectation for what happens next */}
-          <div className="space-y-1 pt-1">
-            <p className="text-base font-semibold text-foreground">Welcome back.</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              Enter the name and PIN you used when you first joined.
-            </p>
-          </div>
+          <p className="text-sm text-muted-foreground">Enter the name and PIN you used before.</p>
 
-          {/* ── Name ─────────────────────────────────────────── */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <label htmlFor="reconnect_name" className="block text-sm font-semibold text-foreground">
               Your Name
             </label>
@@ -497,18 +452,21 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
               value={reconnectName}
               onChange={(e) => setReconnectName(e.target.value)}
               disabled={reconnectIsPending}
-              autoFocus
               maxLength={30}
               placeholder="e.g. Miggy"
               autoComplete="nickname"
-              className="w-full rounded-lg border border-input bg-background px-4 py-3 text-base
-                         placeholder:text-muted-foreground focus:outline-none focus:ring-2
+              aria-invalid={reconnectErrors.name ? true : undefined}
+              aria-describedby={reconnectErrors.name ? "reconnect_name_error" : undefined}
+              className="min-h-11 w-full rounded-lg border border-input bg-background px-4 py-2.5
+                         text-base placeholder:text-muted-foreground focus:outline-none focus:ring-2
                          focus:ring-ring focus:ring-offset-2 disabled:opacity-50"
             />
+            {reconnectErrors.name && (
+              <FieldError id="reconnect_name_error" message={reconnectErrors.name} />
+            )}
           </div>
 
-          {/* ── PIN ──────────────────────────────────────────── */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <label htmlFor="reconnect_pin" className="block text-sm font-semibold text-foreground">
               Your PIN
             </label>
@@ -522,70 +480,43 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
               disabled={reconnectIsPending}
               placeholder="1 2 3 4"
               autoComplete="off"
-              className="w-full rounded-lg border border-input bg-background px-4 py-3 text-base
-                         tracking-[0.3em] text-center font-mono
+              aria-invalid={reconnectErrors.pin ? true : undefined}
+              aria-describedby={reconnectErrors.pin ? "reconnect_pin_error" : undefined}
+              className="min-h-11 w-full rounded-lg border border-input bg-background px-4 py-2.5
+                         text-base tracking-[0.3em] text-center font-mono
                          placeholder:text-muted-foreground placeholder:tracking-normal
                          focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2
                          disabled:opacity-50"
             />
+            {reconnectErrors.pin && (
+              <FieldError id="reconnect_pin_error" message={reconnectErrors.pin} />
+            )}
           </div>
 
-          {/* ── Google sign-in hint — shown when PIN reconnect detects a Google-linked account */}
           {googleHint && (
-            <div
-              role="status"
-              className="flex items-start gap-2.5 rounded-lg border border-sky-200 bg-sky-50/80
-                         px-3 py-2.5 text-sm dark:border-sky-800/40 dark:bg-sky-950/30"
-            >
-              <svg
-                className="mt-0.5 h-4 w-4 shrink-0 text-sky-500"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <path
-                  fill="#4285F4"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1Z"
-                />
-                <path
-                  fill="#34A853"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23Z"
-                />
-                <path
-                  fill="#FBBC05"
-                  d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84Z"
-                />
-                <path
-                  fill="#EA4335"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.3 9.14 5.38 12 5.38Z"
-                />
-              </svg>
-              <p className="text-sky-700 dark:text-sky-300 leading-snug">
-                This account uses Google sign-in.
-                <br />
-                Use <strong>Continue with Google</strong> above to sign back in.
-              </p>
-            </div>
+            <p role="status" className="text-sm text-sky-700 dark:text-sky-300">
+              This account uses Google sign-in. Use <strong>Continue with Google</strong> above.
+            </p>
           )}
 
-          {/* ── Error ─────────────────────────────────────────── */}
-          {reconnectError && !googleHint && (
-            <ErrorBanner error={reconnectError} onDismiss={() => setReconnectError(null)} />
+          {reconnectErrors.form && !googleHint && (
+            <p role="alert" className="text-sm text-destructive">
+              {reconnectErrors.form}
+            </p>
           )}
 
-          {/* ── RECONNECT CTA ─────────────────────────────────── */}
           <button
-            type="button"
-            onClick={handleReconnect}
-            disabled={reconnectIsPending || !reconnectName.trim() || reconnectPin.length !== 4}
-            className="flex min-h-[52px] w-full cursor-pointer items-center justify-center
-                       gap-2 rounded-lg bg-amber-500 px-4 py-4 text-base font-semibold
-                       text-[#0E1C3A] transition-colors hover:bg-amber-600
-                       disabled:cursor-not-allowed disabled:opacity-70"
+            type="submit"
+            disabled={reconnectIsPending}
+            className="flex min-h-[44px] w-full cursor-pointer items-center justify-center
+                       gap-2 rounded-lg bg-amber-500 px-4 py-3 text-base font-semibold
+                       text-[#0E1C3A] hover:bg-amber-600 disabled:cursor-not-allowed
+                       disabled:opacity-70"
           >
             {reconnectIsPending && <Spinner />}
             {reconnectIsPending ? "Reconnecting…" : "Reconnect"}
           </button>
-        </div>
+        </form>
       )}
     </div>
   );

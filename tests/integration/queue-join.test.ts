@@ -154,28 +154,29 @@ describe("joinQueueAction — Suite L", () => {
     }
   });
 
-  // ── L-4: drafted player rejoin rejected ───────────────────
-  it("L-4: rejects a re-join while the player is still 'drafted'", async () => {
+  // ── L-4: drafted player rejoin is an unchanged no-op ──────
+  it("L-4: drafted re-join succeeds without changing status or joined_at", async () => {
     const { session } = await seedSession();
     const player = await makeProfile({ faker });
     await makeQueueEntry({ sessionId: session.id, playerId: player.id, status: "drafted" });
+    const before = await readEntry(session.id, player.id);
 
     const restore = mockAuthAs(player.id);
     try {
       const result = await joinQueueAction(session.id);
-      expect(result.error).toBeDefined();
-      expect(result.error).toMatch(/currently in a match/i);
+      expect(result.success).toBe(true);
+      expect(result.action).toBe("unchanged");
 
-      // Status untouched
       const entry = await readEntry(session.id, player.id);
       expect(entry?.status).toBe("drafted");
+      expect(entry?.joined_at).toBe(before?.joined_at);
     } finally {
       restore();
     }
   });
 
-  // ── L-5: on_deck player rejoin rejected ───────────────────
-  it("L-5: rejects a re-join while the player is 'on_deck'", async () => {
+  // ── L-5: on_deck player rejoin is an unchanged no-op ──────
+  it("L-5: on_deck re-join succeeds without changing status", async () => {
     const { session } = await seedSession();
     const player = await makeProfile({ faker });
     await makeQueueEntry({ sessionId: session.id, playerId: player.id, status: "on_deck" });
@@ -183,7 +184,8 @@ describe("joinQueueAction — Suite L", () => {
     const restore = mockAuthAs(player.id);
     try {
       const result = await joinQueueAction(session.id);
-      expect(result.error).toBeDefined();
+      expect(result.success).toBe(true);
+      expect(result.action).toBe("unchanged");
 
       const entry = await readEntry(session.id, player.id);
       expect(entry?.status).toBe("on_deck");
@@ -192,8 +194,8 @@ describe("joinQueueAction — Suite L", () => {
     }
   });
 
-  // ── L-6: playing player rejoin rejected ───────────────────
-  it("L-6: rejects a re-join while the player is 'playing'", async () => {
+  // ── L-6: playing player rejoin is an unchanged no-op ──────
+  it("L-6: playing re-join succeeds without changing status", async () => {
     const { session } = await seedSession();
     const player = await makeProfile({ faker });
     await makeQueueEntry({ sessionId: session.id, playerId: player.id, status: "playing" });
@@ -201,7 +203,8 @@ describe("joinQueueAction — Suite L", () => {
     const restore = mockAuthAs(player.id);
     try {
       const result = await joinQueueAction(session.id);
-      expect(result.error).toBeDefined();
+      expect(result.success).toBe(true);
+      expect(result.action).toBe("unchanged");
 
       const entry = await readEntry(session.id, player.id);
       expect(entry?.status).toBe("playing");
