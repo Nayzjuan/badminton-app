@@ -339,19 +339,24 @@ export async function resolveSessionClubSlug(sessionId: string): Promise<string 
  * stray `{ ok: true, reason: "write_failed" }` would make them divert someone
  * whose enroll actually succeeded.
  */
+export type ClubMembershipAction = "created" | "reactivated" | "unchanged";
+
 export type EnsureClubMembershipResult =
-  | { ok: true; joined: boolean; reason?: never }
+  | { ok: true; joined: boolean; action: ClubMembershipAction; reason?: never }
   | {
       ok: false;
       joined: false;
       reason: "club_not_found" | "read_failed" | "write_failed";
     };
 
+const PG_UNIQUE_VIOLATION = "23505";
+
 /**
  * Auto-enroll a player as an active member of the club (QR-join path).
- * Insert if missing · re-activate if soft-removed · no-op if already active —
- * never downgrades an existing owner/admin. Service-role write (bypasses RLS).
- * ok=false only when the club can't be resolved or the membership write fails.
+ * Race-safe: conditional inactive→active update, then conflict-safe insert,
+ * then a final re-read. Never downgrades an existing owner/admin.
+ * Service-role write (bypasses RLS). ok=false only when the club can't be
+ * resolved or the membership write/re-read fails.
  */
 export async function ensureClubMembership(
   clubSlug: string,
@@ -360,33 +365,43 @@ export async function ensureClubMembership(
   const club = await getClubBySlug(clubSlug);
   if (!club) return { ok: false, joined: false, reason: "club_not_found" };
   const db = createServiceClient();
+
+  // Called fire-and-forget from redirect flows (route handlers / server
+  // actions), so report failure via ok=false rather than throwing — a throw
+  // would abort the enclosing redirect. The QR-join guard turns ok=false into
+  // a safe /clubs fallback.
+
+  // 1. Reactivate a soft-removed row without touching role.
+  const { data: reactivated, error: updErr } = await db
+    .from("club_members")
+    .update({ is_active: true })
+    .eq("club_id", club.id)
+    .eq("player_id", userId)
+    .eq("is_active", false)
+    .select("id")
+    .maybeSingle();
+  if (updErr) return { ok: false, joined: false, reason: "write_failed" };
+  if (reactivated) return { ok: true, joined: true, action: "reactivated" };
+
+  // 2. Insert. Unique (club_id, player_id) is the concurrency safety net.
+  const { data: inserted, error: insErr } = await db
+    .from("club_members")
+    .insert({ club_id: club.id, player_id: userId, role: "member" })
+    .select("id")
+    .maybeSingle();
+  if (!insErr && inserted) return { ok: true, joined: true, action: "created" };
+  if (insErr && insErr.code !== PG_UNIQUE_VIOLATION) {
+    return { ok: false, joined: false, reason: "write_failed" };
+  }
+
+  // 3. Conflict or a no-row insert: another writer won. Re-read.
   const { data: existing, error: readErr } = await db
     .from("club_members")
     .select("id, is_active")
     .eq("club_id", club.id)
     .eq("player_id", userId)
     .maybeSingle();
-  // Called fire-and-forget from redirect flows (route handlers / server
-  // actions), so report failure via ok=false rather than throwing — a throw
-  // would abort the enclosing redirect. The QR-join guard turns ok=false into
-  // a safe /clubs fallback.
   if (readErr) return { ok: false, joined: false, reason: "read_failed" };
-  if (!existing) {
-    const { error } = await db
-      .from("club_members")
-      .insert({ club_id: club.id, player_id: userId, role: "member" });
-    return error
-      ? { ok: false, joined: false, reason: "write_failed" }
-      : { ok: true, joined: true };
-  }
-  if (!existing.is_active) {
-    const { error } = await db
-      .from("club_members")
-      .update({ is_active: true })
-      .eq("id", existing.id);
-    return error
-      ? { ok: false, joined: false, reason: "write_failed" }
-      : { ok: true, joined: true };
-  }
-  return { ok: true, joined: false }; // already an active member — keep their role
+  if (existing?.is_active) return { ok: true, joined: false, action: "unchanged" };
+  return { ok: false, joined: false, reason: "write_failed" };
 }

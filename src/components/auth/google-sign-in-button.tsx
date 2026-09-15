@@ -13,7 +13,9 @@ import { signInWithGoogle } from "@/app/actions/oauth";
 import { Spinner } from "@/components/reconnect-modal";
 
 interface GoogleSignInButtonProps {
-  /** Internal path to return to after sign-in (defaults to /play). */
+  /** Internal path to return to after sign-in (defaults to /play).
+   *  QR/club callers pass sessionShare / clubJoin so Google returns to
+   *  JoinFinalizer instead of the play page. */
   next?: string;
   /** Club context (from a /c/[clubSlug]/join QR): threaded through so
    *  /auth/callback can enroll the user in the club, mirroring the

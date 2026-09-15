@@ -1,22 +1,17 @@
-// ============================================================
-// Club QR / join screen — shared by /c/[slug]/join[/session] and /j/[session]
-// ============================================================
-// PUBLIC (outside the (app)/(full) membership gate — a fresh scanner isn't a
-// member yet). Resolves the club + (optional) session, then:
-//   • authed + has profile → auto-enroll in the club, queue them for the
-//     session (if any), and route to the club-scoped destination.
-//   • fresh visitor → registration form pre-wired with the club + session, so
-//     signInAnonymously enrolls them and routes into the club in one step.
-// ============================================================
-
-import { redirect, notFound } from "next/navigation";
+import type { ReactNode } from "react";
+import { notFound } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
-import { getClubBySlug, ensureClubMembership } from "@/lib/clubs";
-import { lookupActiveJoinSession } from "@/lib/resolve-session-join";
-import { clubPlay, clubBase } from "@/lib/club-paths";
+import { getClubBySlug } from "@/lib/clubs";
+import { isValidUUID } from "@/lib/validate";
 import { LoginForm } from "@/components/login-form";
-import { enforceRenameGate } from "@/lib/rename-gate";
+import { JoinFinalizer } from "@/components/join/join-finalizer";
+import { lookupActiveJoinSession } from "@/lib/resolve-session-join";
 
+/**
+ * Shared join body for /c/[clubSlug]/join[/sessionId] and /j/[sessionId].
+ * Authenticated players with a profile render JoinFinalizer (client) rather
+ * than mutating membership/queue during this Server Component render.
+ */
 export async function ClubJoinScreen({
   clubSlug,
   sessionId,
@@ -27,19 +22,13 @@ export async function ClubJoinScreen({
   const club = await getClubBySlug(clubSlug);
   if (!club) notFound();
 
+  const validSessionId = sessionId && isValidUUID(sessionId) ? sessionId : undefined;
+  const sessionLookup = validSessionId ? await lookupActiveJoinSession(validSessionId) : null;
+  const bound = sessionLookup?.ok && sessionLookup.clubSlug === club.slug ? sessionLookup : null;
+  const sessionName = bound?.name;
+  const boundSessionId = bound?.sessionId;
+
   const supabase = await createServerSupabaseClient();
-
-  // Validate the session (if a QR/share carried one): must be active AND belong
-  // to THIS club. A bad / inactive / cross-club id degrades to a plain club join.
-  let sessionName: string | null = null;
-  if (sessionId) {
-    const found = await lookupActiveJoinSession(sessionId);
-    if (found.ok && found.clubSlug === clubSlug) {
-      sessionName = found.name;
-    }
-  }
-  const validSessionId = sessionName ? sessionId : undefined;
-
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -47,54 +36,52 @@ export async function ClubJoinScreen({
   if (user) {
     const { data: profile } = await supabase
       .from("profiles")
-      .select("id, needs_rename, needs_name_confirm")
+      .select("id")
       .eq("id", user.id)
-      .single();
+      .maybeSingle();
     if (profile) {
-      // Returning player — enroll in the club, queue for the session, route in.
-      const enroll = await ensureClubMembership(clubSlug, user.id);
-      if (!enroll.ok) {
-        // Enrollment write failed — don't strand them on a member-gated route
-        // they'd be bounced out of. Send them to their own player context
-        // (/play resolves their club or the join-via-QR screen), not /clubs.
-        redirect("/play");
-      }
-      const dest = validSessionId ? clubPlay(clubSlug, validSessionId) : clubBase(clubSlug);
-      await enforceRenameGate(profile, dest);
-      // Announce the join on the destination ONLY when this scan actually
-      // added them (first join / reactivation) — not when already a member.
-      const joinedQs = enroll.joined ? "?joined=1" : "";
-      if (validSessionId) {
-        await supabase
-          .from("queue_entries")
-          .upsert(
-            { session_id: validSessionId, player_id: user.id, status: "waiting" },
-            { onConflict: "session_id,player_id", ignoreDuplicates: true }
-          );
-        redirect(clubPlay(clubSlug, validSessionId) + joinedQs);
-      }
-      redirect(clubBase(clubSlug) + joinedQs);
+      return (
+        <JoinChrome sessionName={sessionName} clubName={club.name}>
+          <JoinFinalizer clubSlug={club.slug} sessionId={boundSessionId} />
+        </JoinChrome>
+      );
     }
   }
 
-  // Fresh visitor — registration enrolls + routes via the club_slug hidden field.
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-12">
-      <div className="mb-8 w-full max-w-sm sm:max-w-md">
+    <JoinChrome sessionName={sessionName} clubName={club.name}>
+      <LoginForm sessionId={boundSessionId} clubSlug={clubSlug} />
+    </JoinChrome>
+  );
+}
+
+function JoinChrome({
+  sessionName,
+  clubName,
+  children,
+}: {
+  sessionName?: string;
+  clubName: string;
+  children: ReactNode;
+}) {
+  return (
+    <main className="flex min-h-dvh flex-col items-center justify-center bg-background px-4 py-8">
+      <div className="mb-4 w-full max-w-sm sm:max-w-md">
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center dark:border-amber-800/50 dark:bg-amber-950/20">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-amber-700 dark:text-amber-400">
+          <p className="mb-1 truncate text-xs font-semibold uppercase tracking-widest text-amber-700 dark:text-amber-400">
             {sessionName ? "Joining Session" : "Joining Club"}
           </p>
-          <h1 className="text-xl font-black tracking-tight text-foreground">
-            {sessionName ?? club.name}
+          <h1 className="truncate text-xl font-black tracking-tight text-foreground">
+            {sessionName ?? clubName}
           </h1>
           {sessionName && (
-            <p className="mt-0.5 text-xs text-slate-500 dark:text-muted-foreground">{club.name}</p>
+            <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-muted-foreground">
+              {clubName}
+            </p>
           )}
         </div>
       </div>
-
-      <LoginForm sessionId={validSessionId} clubSlug={clubSlug} />
+      {children}
     </main>
   );
 }

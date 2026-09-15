@@ -20,6 +20,7 @@ import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { getPrimaryClubSlug } from "@/lib/clubs";
 import { SignOutButton } from "@/components/sign-out-button";
 import { enforceRenameGate } from "@/lib/rename-gate";
+import { IdentityReadyBeacon } from "@/components/analytics/identity-ready-beacon";
 
 export default async function WelcomePage() {
   const supabase = await createServerSupabaseClient();
@@ -44,6 +45,7 @@ export default async function WelcomePage() {
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center bg-cc-bg px-6 py-12">
+      <IdentityReadyBeacon entry="direct" completeOutcome="profile_only" />
       <div className="w-full max-w-sm space-y-6 text-center">
         <div className="clip-cut-sm mx-auto flex h-14 w-14 items-center justify-center bg-cc-bg-3">
           <QrCode className="h-7 w-7 text-cc-accent" aria-hidden="true" />

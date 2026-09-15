@@ -1,30 +1,25 @@
 // ============================================================
 // ensureClubMembership — unit suite (mocked service client, no DB)
 // ============================================================
-// Covers the QR-join auto-enroll branches + the { ok, joined, reason } contract
-// that drives the "Welcome to <club>" first-join toast AND the legacy shims'
-// divert-or-forward decision. Negative paths included: club not found,
-// membership read failure, insert failure, reactivation failure.
+// Race-safe write order: conditional inactive→active update, conflict-safe
+// insert, final re-read. `action` drives toast + funnel transitions.
 //
-// The `reason` discriminator is load-bearing, not decoration: the /play and
-// /organizer shims divert to /play on `club_not_found` / `write_failed` (we know
-// there is no row) but FORWARD on `read_failed` (we could not find out). Each
-// negative case below asserts its exact reason so a collapsed or mislabelled
-// branch fails here rather than silently bouncing real members out of a club.
+//   EC-1  unknown club → club_not_found, no writes
+//   EC-2  first-time join inserts and reports created
+//   EC-3  insert fails (non-unique) → write_failed
+//   EC-4  inactive row reactivates
+//   EC-5  reactivation update fails → write_failed
+//   EC-6  already active → unchanged after conflict re-read
+//   EC-7  conflict re-read fails → read_failed
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// getClubBySlug is wrapped in React `cache()` at module load — make it a no-op
-// identity wrapper so it just calls through under Vitest.
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual, cache: (fn: unknown) => fn };
 });
 
-// clubs.ts imports these at module scope; ensureClubMembership only touches the
-// service client, but stub the rest so importing the module is side-effect-free.
-// vi.hoisted so the fn exists before the (hoisted) vi.mock factory references it.
 const { createServiceClient } = vi.hoisted(() => ({ createServiceClient: vi.fn() }));
 vi.mock("@/utils/supabase/service", () => ({ createServiceClient }));
 vi.mock("@/utils/supabase/server", () => ({ createServerSupabaseClient: vi.fn() }));
@@ -34,16 +29,28 @@ import { ensureClubMembership } from "@/lib/clubs";
 
 type Cfg = {
   club?: { id: string; slug: string } | null;
+  updateRow?: { id: string } | null;
+  updateError?: { message: string } | null;
+  insertRow?: { id: string } | null;
+  insertError?: { message: string; code?: string } | null;
   existing?: { id: string; is_active: boolean } | null;
   readError?: { message: string } | null;
-  insertError?: { message: string } | null;
-  updateError?: { message: string } | null;
 };
 
 const insertSpy = vi.fn();
 const updateSpy = vi.fn();
 
-/** Minimal chainable stub mirroring the exact call shapes in ensureClubMembership. */
+function chain(result: { data: unknown; error: unknown }) {
+  const b: Record<string, unknown> = {};
+  const self = () => b;
+  b["eq"] = self;
+  b["select"] = self;
+  b["maybeSingle"] = async () => result;
+  b["then"] = (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) =>
+    Promise.resolve(result).then(res, rej);
+  return b;
+}
+
 function makeClient(cfg: Cfg) {
   const clubs = {
     select: () => ({
@@ -51,27 +58,19 @@ function makeClient(cfg: Cfg) {
     }),
   };
   const members = {
-    select: () => ({
-      eq: () => ({
-        eq: () => ({
-          maybeSingle: async () => ({
-            // A real PostgREST error comes back with data: null — mirror that so
-            // the read-failure case cannot accidentally exercise the "no row"
-            // path instead.
-            data: cfg.readError ? null : (cfg.existing ?? null),
-            error: cfg.readError ?? null,
-          }),
-        }),
-      }),
-    }),
-    insert: async (row: unknown) => {
-      insertSpy(row);
-      return { error: cfg.insertError ?? null };
-    },
     update: (patch: unknown) => {
       updateSpy(patch);
-      return { eq: async () => ({ error: cfg.updateError ?? null }) };
+      return chain({ data: cfg.updateRow ?? null, error: cfg.updateError ?? null });
     },
+    insert: (row: unknown) => {
+      insertSpy(row);
+      return chain({ data: cfg.insertRow ?? null, error: cfg.insertError ?? null });
+    },
+    select: () =>
+      chain({
+        data: cfg.readError ? null : (cfg.existing ?? null),
+        error: cfg.readError ?? null,
+      }),
   };
   return { from: (table: string) => (table === "clubs" ? clubs : members) };
 }
@@ -95,10 +94,10 @@ describe("ensureClubMembership", () => {
     expect(updateSpy).not.toHaveBeenCalled();
   });
 
-  it("EC-2: first-time join (no row) inserts and reports joined", async () => {
-    withCfg({ club: CLUB, existing: null, insertError: null });
+  it("EC-2: first-time join inserts and reports created", async () => {
+    withCfg({ club: CLUB, insertRow: { id: "m-new" } });
     const res = await ensureClubMembership("chillax", "user-1");
-    expect(res).toEqual({ ok: true, joined: true });
+    expect(res).toEqual({ ok: true, joined: true, action: "created" });
     expect(insertSpy).toHaveBeenCalledWith({
       club_id: "club-1",
       player_id: "user-1",
@@ -107,49 +106,43 @@ describe("ensureClubMembership", () => {
   });
 
   it("EC-3 (negative): insert fails → write_failed", async () => {
-    withCfg({ club: CLUB, existing: null, insertError: { message: "insert denied" } });
+    withCfg({ club: CLUB, insertError: { message: "insert denied" } });
     const res = await ensureClubMembership("chillax", "user-1");
     expect(res).toEqual({ ok: false, joined: false, reason: "write_failed" });
   });
 
   it("EC-4: soft-removed member is reactivated and reports joined", async () => {
-    withCfg({ club: CLUB, existing: { id: "m-1", is_active: false }, updateError: null });
+    withCfg({ club: CLUB, updateRow: { id: "m-1" } });
     const res = await ensureClubMembership("chillax", "user-1");
-    expect(res).toEqual({ ok: true, joined: true });
+    expect(res).toEqual({ ok: true, joined: true, action: "reactivated" });
     expect(updateSpy).toHaveBeenCalledWith({ is_active: true });
     expect(insertSpy).not.toHaveBeenCalled();
   });
 
   it("EC-5 (negative): reactivation update fails → write_failed", async () => {
-    withCfg({
-      club: CLUB,
-      existing: { id: "m-1", is_active: false },
-      updateError: { message: "update denied" },
-    });
+    withCfg({ club: CLUB, updateError: { message: "update denied" } });
     const res = await ensureClubMembership("chillax", "user-1");
     expect(res).toEqual({ ok: false, joined: false, reason: "write_failed" });
-  });
-
-  it("EC-6: already an active member → ok but joined:false (no toast, no writes)", async () => {
-    withCfg({ club: CLUB, existing: { id: "m-1", is_active: true } });
-    const res = await ensureClubMembership("chillax", "user-1");
-    expect(res).toEqual({ ok: true, joined: false });
     expect(insertSpy).not.toHaveBeenCalled();
-    expect(updateSpy).not.toHaveBeenCalled();
   });
 
-  it("EC-7 (negative): membership read fails → read_failed, and never guesses a write", async () => {
-    withCfg({ club: CLUB, readError: { message: "could not connect" } });
+  it("EC-6: already an active member → unchanged after unique conflict", async () => {
+    withCfg({
+      club: CLUB,
+      insertError: { message: "duplicate", code: "23505" },
+      existing: { id: "m-1", is_active: true },
+    });
     const res = await ensureClubMembership("chillax", "user-1");
-    // The distinct reason is the whole point: an errored SELECT says nothing
-    // about whether a row exists, so callers must NOT read this as "not a
-    // member". Collapsing it into write_failed would make the legacy shims
-    // bounce genuine owners/admins to /play on a transient blip.
+    expect(res).toEqual({ ok: true, joined: false, action: "unchanged" });
+  });
+
+  it("EC-7 (negative): conflict re-read fails → read_failed", async () => {
+    withCfg({
+      club: CLUB,
+      insertError: { message: "duplicate", code: "23505" },
+      readError: { message: "could not connect" },
+    });
+    const res = await ensureClubMembership("chillax", "user-1");
     expect(res).toEqual({ ok: false, joined: false, reason: "read_failed" });
-    // And it must not "helpfully" insert on an unknown state — a blind insert
-    // would either collide with the existing row or hand out a fresh `member`
-    // role to someone who is an owner.
-    expect(insertSpy).not.toHaveBeenCalled();
-    expect(updateSpy).not.toHaveBeenCalled();
   });
 });

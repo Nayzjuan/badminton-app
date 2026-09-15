@@ -51,7 +51,7 @@ const SECURITY_HEADERS = [
   },
   {
     key: "Referrer-Policy",
-    value: "strict-origin-when-cross-origin",
+    value: "origin",
   },
   {
     key: "Permissions-Policy",
@@ -62,12 +62,12 @@ const SECURITY_HEADERS = [
     value: [
       "default-src 'self'",
       // Next.js injects inline scripts for hydration — unsafe-inline required
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "font-src 'self'",
-      // Supabase REST + Realtime WebSocket
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+      // Supabase REST + Realtime WebSocket; Vercel Analytics ingest
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vitals.vercel-insights.com https://va.vercel-scripts.com",
       // Service worker scope
       "worker-src 'self' blob:",
       "frame-ancestors 'none'",
