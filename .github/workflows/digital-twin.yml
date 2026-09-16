@@ -1,0 +1,99 @@
+# ============================================================
+# CI: Digital Twin extract freshness + typecheck + build
+# ============================================================
+# Runs when host extractor inputs change OR anything under digital-twin/
+# changes. A schema/action/migration commit with no twin edit is exactly
+# the case that used to go stale silently.
+#
+# KEEP the `on.paths` list in sync with digital-twin/scripts/extract-inputs.ts
+# EXTRACT_INPUT_GREP.
+#
+# This job RUNS. It does not BLOCK a merge on the current GitHub plan —
+# same caveat as unit-tests.yml (no branch protection on a private free repo).
+# Enforcement that exists: `.husky/pre-push` runs `extract --check`.
+# ============================================================
+
+name: Digital Twin
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "src/types/database.ts"
+      - "src/lib/constants.ts"
+      - "src/lib/broadcast.ts"
+      - "src/lib/realtime.ts"
+      - "src/lib/matchmaking-core.ts"
+      - "src/app/**"
+      - "src/hooks/**"
+      - "src/components/**"
+      - "src/middleware.ts"
+      - "supabase/migrations/**"
+      - "APP_MANIFEST.md"
+      - "digital-twin/**"
+      - ".github/workflows/digital-twin.yml"
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "src/types/database.ts"
+      - "src/lib/constants.ts"
+      - "src/lib/broadcast.ts"
+      - "src/lib/realtime.ts"
+      - "src/lib/matchmaking-core.ts"
+      - "src/app/**"
+      - "src/hooks/**"
+      - "src/components/**"
+      - "src/middleware.ts"
+      - "supabase/migrations/**"
+      - "APP_MANIFEST.md"
+      - "digital-twin/**"
+      - ".github/workflows/digital-twin.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  twin:
+    name: Twin extract, types, build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install host dependencies
+        run: npm ci
+
+      - name: Install twin dependencies
+        run: npm ci
+        working-directory: digital-twin
+
+      - name: Host unit coverage (feeds lcov.info into extract)
+        run: npm run test:unit:coverage
+
+      - name: Extract --check
+        run: npm run extract -- --check
+        working-directory: digital-twin
+
+      - name: Astro check
+        run: npm run check
+        working-directory: digital-twin
+
+      - name: Twin typecheck
+        run: npx tsc --noEmit -p tsconfig.json
+        working-directory: digital-twin
+
+      - name: Twin tests
+        run: npm test
+        working-directory: digital-twin
+
+      - name: Twin build
+        run: npm run build
+        working-directory: digital-twin

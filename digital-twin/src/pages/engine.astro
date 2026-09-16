@@ -510,8 +510,6 @@ const constants = manifest.constants;
     container.innerHTML = PAIRS.map(p => {
       const count   = counts[p.id];
       const capped  = count >= MAX_REPEATS;
-      const pA = PLAYERS[p.a];
-      const pB = PLAYERS[p.b];
       return `
         <div class="flex items-center gap-2 bg-overlay rounded-lg px-3 py-2 border ${capped ? 'border-err/30 bg-err-wash' : 'border-edge-dim'}">
           <div class="flex items-center gap-1">

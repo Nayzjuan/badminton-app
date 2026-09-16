@@ -57,4 +57,8 @@ npm run lint || { echo "[pre-push] ✗ lint errors — push aborted (override: g
 echo "[pre-push] unit tests…"
 npm run test:unit || { echo "[pre-push] ✗ unit tests failed — push aborted (override: git push --no-verify)"; exit 1; }
 
-echo "[pre-push] ✓ types, lint, unit all clean"
+echo "[pre-push] digital-twin extract --check…"
+(cd digital-twin && npm run extract -- --check) \
+  || { echo "[pre-push] ✗ twin manifest stale — run: cd digital-twin && npm run extract (override: git push --no-verify)"; exit 1; }
+
+echo "[pre-push] ✓ types, lint, unit, twin extract all clean"

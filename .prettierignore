@@ -9,3 +9,6 @@ playwright-report/
 test-results/
 *.sql
 *.md
+# Extractor output. extract.ts writes JSON.stringify(…, null, 2); prettier disagrees,
+# and lint-staged would reformat it after pre-commit stages it, making --check fail forever.
+digital-twin/src/data/

@@ -17,6 +17,10 @@
 
 ---
 
+## 2026-09-16 — digital-twin sync (in flight, feat/digital-twin-sync)
+
+Stage 0 landed: extract `--check`, D8 input union (`digital-twin/scripts/extract-inputs.ts`), pre-commit stages `manifest.json`, pre-push `--check`, `.github/workflows/digital-twin.yml`, `digital-twin/src/data/` prettier-ignored, `@astrojs/check` + `@types/d3` so `npm run check` exits 0. Plan: `docs/DIGITAL_TWIN_SYNC_PLAN.md` (delete at Stage 6). Stage 1.7 drop of `_prerebuild_20260812` tables still needs explicit DDL approval — leftover backups are whitelisted until then. `elevate_to_organizer` stays (still granted; integration tests call it); type it, do not drop.
+
 ## 2026-09-15 — registration usability / one-submit QR join
 
 QR/club authenticated join is `JoinFinalizer` → `completeRegistrationJoinAction` (auth, bind, rename, membership, `join_queue`). Direct `/` CTA is `Create Player Profile` then `/welcome`. Reconnect in a QR context returns to `/j/[id]`. Google `next` is `sessionShare` / `clubJoin`. Compact native 6-level skill `<select>`. Funnel: `@vercel/analytics` behind `NEXT_PUBLIC_VERCEL_ANALYTICS`, `Referrer-Policy: origin`.
@@ -216,52 +220,16 @@ two were **strictly ordered** for a reason worth keeping: the repair leaves the 
 RPC agrees with on every subsequent recompute, but running the repair while the OLD function is still
 installed means the next session close re-adds duplicates for everyone who plays.
 
-### 🔧 How the two `20260811*` were actually applied — read before re-running either
+How the two `20260811*` were actually applied (MCP reconstruction / single `DO $repair$` block, not a verbatim `psql` of the files) is in `docs/archive/MEMORY_HISTORY.md` under `## How the 20260811* migrations were applied`. The repo files remain the `psql` artifacts.
 
-There is no `psql`, no Supabase CLI and no DB URL on this host; the **only** channel is the Supabase
-MCP. That forced two deliberate deviations from the repo files. Both are safe, but they are not
-what the files say:
-
-1. **`20260811000000` was applied by server-side reconstruction, not by shipping the body.**
-   `python3 scripts/gen-one-time-milestone-awards-migration.py --apply-sql <path>` emits the
-   mutating twin of `--verify-sql`: it reads prod's own `pg_proc.prosrc`, replays the 10 anchored
-   `replace()` calls **on the server**, asserts each anchor matched exactly once, asserts the rebuilt
-   `md5` equals `e3689008fe20a015421a0c69afc49375`, and only then issues the `CREATE OR REPLACE`.
-   Any failed check raises *before* the DDL, so a bad run applies nothing. It short-circuits if the
-   body is already at the target md5, so it is idempotent. **Why:** the alternative was reproducing
-   49 KB of plpgsql character-perfect by hand, where a silent slip still compiles. This makes
-   byte-correctness a *proven precondition* instead of a hope.
-2. **`20260811000001` was applied as ONE `DO $repair$` block**, not as the file's
-   `begin;…commit;` + `_emptied_wraps` temp table. Same logic, same ordering, same fallback payload;
-   the temp table became a `uuid[]` local and the post-conditions moved *inside* the block so a bad
-   result rolls the whole repair back. **Why:** it makes atomicity independent of how the runner
-   batches statements, which the file's form does not guarantee through an MCP.
-
-⚠️ **The repo files are still the reviewed, human-readable artifacts and are what a `psql` apply
-should use.** The applied forms are equivalent, not identical — if you ever diff prod against the
-files, expect the function body to match exactly and the repair to have left no trace beyond its data.
-
-✅ **The `20260810000001` post-apply checks were run and passed.** Its 4-check `DO $$` block passed at
-apply time, and the helper was then verified *functionally* — not just structurally — inside a
-rolled-back transaction against prod, reading `match_players` back through real `authenticated` and
-`anon` roles with real JWT claims:
-
-| actor | pending+unpublished | pending+published | completed | in_progress | orphan `match_id` |
-|---|---|---|---|---|---|
-| plain member | **false** ← the only change | true | true | true | NULL → deny |
-| organizer | true | true | true | true | NULL → deny |
-| anon | false | false | false | false | NULL → deny |
-
-End-to-end `SELECT`: member 6 of 8 roster rows, organizer 8, anon 0. Rolled back clean.
+✅ **The `20260810000001` post-apply checks passed** (member / organizer / anon visibility table is in that archive note).
 
 **The `use-player-match.ts` `queue_entries` subscription is now load-bearing — do not remove it.**
 Once the firewall hides a draft's `match_players` rows from the very player it reserves, the
 `queue_entries` flip to `'drafted'` is the *only* event that still reaches them.
 
 > 🔒 ~~**ORDER LOCK: deploy the code BEFORE applying `20260810000001`.**~~ **Satisfied 2026-08-10** —
-> the code deploy (merge `23ced21`) reached Vercel READY before the migration ran. Kept here because
-> the same lock applies to any future revert: you must revert the *migration* first, never the code
-> first, or a drafted player loses every signal.
+> revert the *migration* first, never the code first, or a drafted player loses every signal.
 
 > ⚠️ Prod migration stamps drift from repo filenames. **Never compare by version number — compare
 > by name suffix, and ultimately by querying the catalog.**

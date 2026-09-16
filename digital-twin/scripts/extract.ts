@@ -13,7 +13,9 @@
 import * as ts from "typescript";
 import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { resolve, dirname, join } from "path";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
+
+const CHECK_MODE = process.argv.includes("--check");
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOST_ROOT = resolve(__dirname, "../../"); // badminton-app/
@@ -1125,6 +1127,19 @@ function extractCoverage(lcovPath: string): CoverageData | null {
   try {
     raw = readFileSync(lcovPath, "utf8");
   } catch {
+    // Preserve the last committed coverage block so a machine that has never
+    // run `npm run test:unit:coverage` cannot wipe it by re-extracting.
+    try {
+      const existing = JSON.parse(readFileSync(OUT_PATH, "utf8")) as Manifest;
+      if (existing.coverage) {
+        console.log(
+          `[extract] coverage/lcov.info missing — preserving committed coverage (${existing.coverage.totals.pct}% lines)`
+        );
+        return existing.coverage;
+      }
+    } catch {
+      // first extract, no prior manifest
+    }
     return null;
   }
 
@@ -1378,10 +1393,30 @@ const STATE_MACHINES: StateMachine[] = [
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 
-function run(): void {
-  const t0 = Date.now();
-  console.log("[extract] starting…");
+/** Keys that vary by environment / clock and must not fail `--check`. */
+const CHECK_IGNORE_KEYS = new Set(["_lastExtracted", "coverage"]);
 
+function canonicalForCheck(manifest: Manifest): string {
+  const copy = { ...(manifest as unknown as Record<string, unknown>) };
+  for (const key of CHECK_IGNORE_KEYS) delete copy[key];
+  return JSON.stringify(copy);
+}
+
+function differingKeys(a: Manifest, b: Manifest): string[] {
+  const aRec = a as unknown as Record<string, unknown>;
+  const bRec = b as unknown as Record<string, unknown>;
+  const keys = new Set([...Object.keys(aRec), ...Object.keys(bRec)]);
+  const out: string[] = [];
+  for (const key of keys) {
+    if (CHECK_IGNORE_KEYS.has(key)) continue;
+    if (JSON.stringify(aRec[key]) !== JSON.stringify(bRec[key])) {
+      out.push(key);
+    }
+  }
+  return out.sort();
+}
+
+export function buildManifest(): Manifest {
   const { tables, views, enums, rpcs } = extractDatabase(
     resolve(HOST_ROOT, "src/types/database.ts")
   );
@@ -1392,7 +1427,6 @@ function run(): void {
     resolve(HOST_ROOT, "src/app/layout.tsx")
   );
 
-  // ── Feature-page data ──
   const migrations = extractMigrations(resolve(HOST_ROOT, "supabase/migrations"));
   const broadcasts = extractBroadcasts(resolve(HOST_ROOT, "src/lib/broadcast.ts"));
   const actionDetails = extractActionDetails(resolve(HOST_ROOT, "src/app/actions"));
@@ -1400,7 +1434,7 @@ function run(): void {
   const snapshot = readSnapshot(resolve(__dirname, "../src/data/live-schema-snapshot.json"));
   const schemaDrift = snapshot ? computeDrift(snapshot, tables, views, rpcs) : null;
 
-  const manifest: Manifest = {
+  return {
     _version: 2,
     _lastExtracted: new Date().toISOString(),
     tables,
@@ -1423,23 +1457,71 @@ function run(): void {
     actionDetails,
     stateMachines: STATE_MACHINES,
   };
+}
 
-  writeFileSync(OUT_PATH, JSON.stringify(manifest, null, 2) + "\n");
-
-  const ms = Date.now() - t0;
+function logSummary(manifest: Manifest, ms: number): void {
   console.log(`[extract] ✓ done in ${ms}ms`);
-  console.log(`  tables:       ${tables.length}`);
-  console.log(`  views:        ${views.length}`);
-  console.log(`  enums:        ${enums.length}`);
-  console.log(`  rpcs:         ${rpcs.length}`);
-  console.log(`  constants:    ${constants.length}`);
-  console.log(`  actions:      ${actions.length} files (${actionDetails.length} fns)`);
-  console.log(`  migrations:   ${migrations.length}`);
-  console.log(`  broadcasts:   ${broadcasts.length}`);
+  console.log(`  tables:       ${manifest.tables.length}`);
+  console.log(`  views:        ${manifest.views.length}`);
+  console.log(`  enums:        ${manifest.enums.length}`);
+  console.log(`  rpcs:         ${manifest.rpcs.length}`);
+  console.log(`  constants:    ${manifest.constants.length}`);
+  console.log(
+    `  actions:      ${manifest.actions.length} files (${manifest.actionDetails.length} fns)`
+  );
+  console.log(`  migrations:   ${manifest.migrations.length}`);
+  console.log(`  broadcasts:   ${manifest.broadcasts.length}`);
   console.log(`  rlsPolicies:  ${manifest.rlsPolicies.length}`);
-  console.log(`  coverage:     ${coverage ? coverage.totals.pct + "% lines" : "n/a"}`);
-  console.log(`  schemaDrift:  ${schemaDrift ? (schemaDrift.ok ? "clean" : "DRIFT") : "n/a"}`);
+  console.log(
+    `  coverage:     ${manifest.coverage ? manifest.coverage.totals.pct + "% lines" : "n/a"}`
+  );
+  console.log(
+    `  schemaDrift:  ${manifest.schemaDrift ? (manifest.schemaDrift.ok ? "clean" : "DRIFT") : "n/a"}`
+  );
+}
+
+export function run(): void {
+  const t0 = Date.now();
+  console.log(`[extract] starting${CHECK_MODE ? " (--check)" : ""}…`);
+
+  const manifest = buildManifest();
+  const nextBody = JSON.stringify(manifest, null, 2) + "\n";
+
+  if (CHECK_MODE) {
+    let disk: Manifest;
+    try {
+      disk = JSON.parse(readFileSync(OUT_PATH, "utf8")) as Manifest;
+    } catch {
+      console.error(
+        "[extract] ✗ no committed manifest at digital-twin/src/data/manifest.json.\n" +
+          "       Run `cd digital-twin && npm run extract`, then stage the result."
+      );
+      process.exit(1);
+    }
+    if (canonicalForCheck(manifest) !== canonicalForCheck(disk)) {
+      const keys = differingKeys(manifest, disk);
+      console.error(
+        "[extract] ✗ committed manifest.json is stale.\n" +
+          `       Differing keys: ${keys.join(", ") || "(unknown)"}\n` +
+          "       Run `cd digital-twin && npm run extract`, then stage digital-twin/src/data/manifest.json."
+      );
+      process.exit(1);
+    }
+    console.log(
+      "[extract] ✓ committed manifest matches host source (ignoring _lastExtracted, coverage)"
+    );
+    return;
+  }
+
+  writeFileSync(OUT_PATH, nextBody);
+  logSummary(manifest, Date.now() - t0);
   console.log(`  → ${OUT_PATH}`);
 }
 
-run();
+function isMainModule(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return import.meta.url === pathToFileURL(resolve(entry)).href;
+}
+
+if (isMainModule()) run();
