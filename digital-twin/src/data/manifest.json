@@ -1,6 +1,6 @@
 {
   "_version": 2,
-  "_lastExtracted": "2026-09-16T03:01:39.859Z",
+  "_lastExtracted": "2026-09-16T03:27:41.245Z",
   "tables": [
     {
       "name": "profiles",
@@ -1355,6 +1355,25 @@
           "note": ""
         }
       ]
+    },
+    {
+      "name": "leaderboard_refresh_state",
+      "typeName": "LeaderboardRefreshState",
+      "desc": "leaderboard_refresh_state — singleton gate for refresh_alltime_leaderboard() (migration 20260717171328). One row (`id boolean PRIMARY KEY DEFAULT true`). RLS enabled, zero policies (deny-all); the RPC is SECURITY DEFINER. The app never reads this table directly.",
+      "columns": [
+        {
+          "name": "id",
+          "type": "boolean",
+          "nullable": false,
+          "note": ""
+        },
+        {
+          "name": "last_refreshed_at",
+          "type": "string",
+          "nullable": false,
+          "note": ""
+        }
+      ]
     }
   ],
   "views": [
@@ -1922,6 +1941,23 @@
         }
       ],
       "note": ""
+    },
+    {
+      "name": "elevate_to_organizer",
+      "returns": "boolean",
+      "args": [
+        {
+          "name": "p_session_id",
+          "type": "string",
+          "optional": false
+        },
+        {
+          "name": "p_passcode",
+          "type": "string",
+          "optional": false
+        }
+      ],
+      "note": "Passcode-gated co-organizer promotion. Still granted (authenticated + service_role); joinAsCoOrganizer now inserts session_organizers itself after cojoin_record_and_check, but integration tests and the RPC remain. Returns true on match / already-organizer, false otherwise."
     },
     {
       "name": "skill_level_to_int",
@@ -6212,399 +6248,383 @@
   ],
   "rlsPolicies": [
     {
-      "table": "courts",
+      "cmd": "SELECT",
+      "name": "club_members_select",
+      "roles": "public",
+      "table": "club_members",
+      "using": "((player_id = ( SELECT auth.uid() AS uid)) OR is_club_member(club_id))",
+      "withCheck": null
+    },
+    {
+      "cmd": "DELETE",
       "name": "courts_delete",
-      "cmd": "DELETE",
       "roles": "authenticated",
-      "using": "session_id IN (SELECT session_id FROM session_organizers WHERE user_id = auth.uid())",
+      "table": "courts",
+      "using": "(session_id IN ( SELECT session_organizers.session_id\n   FROM session_organizers\n  WHERE (session_organizers.user_id = ( SELECT auth.uid() AS uid))))",
       "withCheck": null
     },
     {
-      "table": "courts",
+      "cmd": "INSERT",
       "name": "courts_insert",
-      "cmd": "INSERT",
       "roles": "authenticated",
+      "table": "courts",
       "using": null,
-      "withCheck": "session_id IN (SELECT session_id FROM session_organizers WHERE user_id = auth.uid())"
+      "withCheck": "(session_id IN ( SELECT session_organizers.session_id\n   FROM session_organizers\n  WHERE (session_organizers.user_id = ( SELECT auth.uid() AS uid))))"
     },
     {
-      "table": "courts",
+      "cmd": "SELECT",
       "name": "courts_select",
-      "cmd": "SELECT",
       "roles": "authenticated",
-      "using": "true",
-      "withCheck": null
-    },
-    {
       "table": "courts",
+      "using": "(session_access_level(session_id) IS NOT NULL)",
+      "withCheck": null
+    },
+    {
+      "cmd": "UPDATE",
       "name": "courts_update",
-      "cmd": "UPDATE",
       "roles": "authenticated",
-      "using": "session_id IN (SELECT session_id FROM session_organizers WHERE user_id = auth.uid())",
+      "table": "courts",
+      "using": "(session_id IN ( SELECT session_organizers.session_id\n   FROM session_organizers\n  WHERE (session_organizers.user_id = ( SELECT auth.uid() AS uid))))",
       "withCheck": null
     },
     {
-      "table": "identity_migrations",
+      "cmd": "SELECT",
       "name": "identity_migrations_select_own",
-      "cmd": "SELECT",
       "roles": "public",
-      "using": "auth.uid() = old_id OR auth.uid() = new_id",
+      "table": "identity_migrations",
+      "using": "((( SELECT auth.uid() AS uid) = old_id) OR (( SELECT auth.uid() AS uid) = new_id))",
       "withCheck": null
     },
     {
-      "table": "match_games",
+      "cmd": "SELECT",
+      "name": "match_events_select_organizer",
+      "roles": "authenticated",
+      "table": "match_events",
+      "using": "((EXISTS ( SELECT 1\n   FROM session_organizers so\n  WHERE ((so.session_id = match_events.session_id) AND (so.user_id = ( SELECT auth.uid() AS uid))))) OR (EXISTS ( SELECT 1\n   FROM sessions s\n  WHERE ((s.id = match_events.session_id) AND (s.created_by = ( SELECT auth.uid() AS uid))))))",
+      "withCheck": null
+    },
+    {
+      "cmd": "DELETE",
       "name": "match_games_delete",
-      "cmd": "DELETE",
       "roles": "public",
-      "using": "EXISTS (SELECT 1 FROM matches m WHERE m.id = match_games.match_id AND is_session_organizer(m.session_id))",
+      "table": "match_games",
+      "using": "(EXISTS ( SELECT 1\n   FROM matches m\n  WHERE ((m.id = match_games.match_id) AND is_session_organizer(m.session_id))))",
       "withCheck": null
     },
     {
-      "table": "match_games",
+      "cmd": "INSERT",
       "name": "match_games_insert",
-      "cmd": "INSERT",
       "roles": "public",
+      "table": "match_games",
       "using": null,
-      "withCheck": "EXISTS (SELECT 1 FROM matches m WHERE m.id = match_games.match_id AND is_session_organizer(m.session_id))"
+      "withCheck": "(EXISTS ( SELECT 1\n   FROM matches m\n  WHERE ((m.id = match_games.match_id) AND is_session_organizer(m.session_id))))"
     },
     {
-      "table": "match_games",
+      "cmd": "SELECT",
       "name": "match_games_select",
-      "cmd": "SELECT",
       "roles": "public",
-      "using": "true",
-      "withCheck": null
-    },
-    {
       "table": "match_games",
+      "using": "has_match_access(match_id)",
+      "withCheck": null
+    },
+    {
+      "cmd": "UPDATE",
       "name": "match_games_update",
-      "cmd": "UPDATE",
       "roles": "public",
-      "using": "EXISTS (SELECT 1 FROM matches m WHERE m.id = match_games.match_id AND is_session_organizer(m.session_id))",
+      "table": "match_games",
+      "using": "(EXISTS ( SELECT 1\n   FROM matches m\n  WHERE ((m.id = match_games.match_id) AND is_session_organizer(m.session_id))))",
       "withCheck": null
     },
     {
-      "table": "match_players",
+      "cmd": "DELETE",
       "name": "match_players_delete",
-      "cmd": "DELETE",
       "roles": "public",
-      "using": "EXISTS (SELECT 1 FROM matches m WHERE m.id = match_players.match_id AND is_session_organizer(m.session_id))",
+      "table": "match_players",
+      "using": "(EXISTS ( SELECT 1\n   FROM matches m\n  WHERE ((m.id = match_players.match_id) AND is_session_organizer(m.session_id))))",
       "withCheck": null
     },
     {
-      "table": "match_players",
+      "cmd": "INSERT",
       "name": "match_players_insert",
-      "cmd": "INSERT",
-      "roles": "authenticated",
+      "roles": "public",
+      "table": "match_players",
       "using": null,
-      "withCheck": "true"
+      "withCheck": "(EXISTS ( SELECT 1\n   FROM matches m\n  WHERE ((m.id = match_players.match_id) AND is_session_organizer(m.session_id))))"
     },
     {
-      "table": "match_players",
+      "cmd": "SELECT",
       "name": "match_players_select",
-      "cmd": "SELECT",
       "roles": "authenticated",
-      "using": "true",
-      "withCheck": null
-    },
-    {
       "table": "match_players",
+      "using": "has_match_access(match_id)",
+      "withCheck": null
+    },
+    {
+      "cmd": "UPDATE",
       "name": "match_players_update",
-      "cmd": "UPDATE",
       "roles": "public",
-      "using": "EXISTS (SELECT 1 FROM matches m WHERE m.id = match_players.match_id AND is_session_organizer(m.session_id))",
+      "table": "match_players",
+      "using": "(EXISTS ( SELECT 1\n   FROM matches m\n  WHERE ((m.id = match_players.match_id) AND is_session_organizer(m.session_id))))",
       "withCheck": null
     },
     {
-      "table": "matches",
+      "cmd": "DELETE",
       "name": "matches_delete",
-      "cmd": "DELETE",
       "roles": "public",
+      "table": "matches",
       "using": "is_session_organizer(session_id)",
       "withCheck": null
     },
     {
-      "table": "matches",
+      "cmd": "INSERT",
       "name": "matches_insert",
-      "cmd": "INSERT",
       "roles": "authenticated",
+      "table": "matches",
       "using": null,
-      "withCheck": "session_id IN (SELECT session_id FROM session_organizers WHERE user_id = auth.uid())"
+      "withCheck": "(session_id IN ( SELECT session_organizers.session_id\n   FROM session_organizers\n  WHERE (session_organizers.user_id = ( SELECT auth.uid() AS uid))))"
     },
     {
-      "table": "matches",
+      "cmd": "SELECT",
       "name": "matches_select",
-      "cmd": "SELECT",
       "roles": "public",
-      "using": "status <> 'pending' OR is_published = true OR is_session_organizer(session_id)",
+      "table": "matches",
+      "using": "\nCASE session_access_level(session_id)\n    WHEN 'organizer'::text THEN true\n    WHEN 'member'::text THEN ((status <> 'pending'::match_status) OR (is_published = true))\n    ELSE false\nEND",
       "withCheck": null
     },
     {
-      "table": "matches",
+      "cmd": "SELECT",
       "name": "matches_select_draft_firewall",
-      "cmd": "SELECT",
       "roles": "public",
-      "using": "status::text <> 'pending' OR is_published = true OR is_session_organizer(session_id)",
-      "withCheck": null
-    },
-    {
       "table": "matches",
+      "using": "\nCASE session_access_level(session_id)\n    WHEN 'organizer'::text THEN true\n    WHEN 'member'::text THEN ((status <> 'pending'::match_status) OR (is_published = true))\n    ELSE false\nEND",
+      "withCheck": null
+    },
+    {
+      "cmd": "UPDATE",
       "name": "matches_update",
-      "cmd": "UPDATE",
       "roles": "authenticated",
-      "using": "session_id IN (SELECT session_id FROM session_organizers WHERE user_id = auth.uid())",
+      "table": "matches",
+      "using": "(session_id IN ( SELECT session_organizers.session_id\n   FROM session_organizers\n  WHERE (session_organizers.user_id = ( SELECT auth.uid() AS uid))))",
       "withCheck": null
     },
     {
-      "table": "player_partnerships",
+      "cmd": "SELECT",
       "name": "Players can read own partnership data",
-      "cmd": "SELECT",
       "roles": "public",
-      "using": "player_id = auth.uid()",
+      "table": "player_partnerships",
+      "using": "(player_id = ( SELECT auth.uid() AS uid))",
       "withCheck": null
     },
     {
-      "table": "player_rivalries",
+      "cmd": "SELECT",
       "name": "Players can read own rivalry data",
-      "cmd": "SELECT",
       "roles": "public",
-      "using": "player_id = auth.uid()",
+      "table": "player_rivalries",
+      "using": "(player_id = ( SELECT auth.uid() AS uid))",
       "withCheck": null
     },
     {
-      "table": "profiles",
+      "cmd": "INSERT",
       "name": "profiles_insert",
-      "cmd": "INSERT",
       "roles": "authenticated",
+      "table": "profiles",
       "using": null,
-      "withCheck": "id = auth.uid()"
+      "withCheck": "(id = ( SELECT auth.uid() AS uid))"
     },
     {
-      "table": "profiles",
+      "cmd": "SELECT",
       "name": "profiles_select",
-      "cmd": "SELECT",
       "roles": "authenticated",
-      "using": "true",
+      "table": "profiles",
+      "using": "((id = ( SELECT auth.uid() AS uid)) OR can_read_profile(id))",
       "withCheck": null
     },
     {
-      "table": "profiles",
-      "name": "profiles_update",
       "cmd": "UPDATE",
-      "roles": "authenticated",
-      "using": "id = auth.uid()",
-      "withCheck": "id = auth.uid()"
-    },
-    {
-      "table": "profiles",
-      "name": "profiles_update_organizer",
-      "cmd": "UPDATE",
-      "roles": "public",
-      "using": "is_any_session_organizer()",
-      "withCheck": null
-    },
-    {
-      "table": "profiles",
       "name": "profiles_update_own",
-      "cmd": "UPDATE",
       "roles": "public",
-      "using": "id = auth.uid()",
-      "withCheck": "id = auth.uid()"
+      "table": "profiles",
+      "using": "(id = ( SELECT auth.uid() AS uid))",
+      "withCheck": "(id = ( SELECT auth.uid() AS uid))"
     },
     {
-      "table": "push_subscriptions",
+      "cmd": "DELETE",
       "name": "push_subscriptions_delete_own",
-      "cmd": "DELETE",
       "roles": "authenticated",
-      "using": "user_id = auth.uid()",
+      "table": "push_subscriptions",
+      "using": "(user_id = ( SELECT auth.uid() AS uid))",
       "withCheck": null
     },
     {
-      "table": "push_subscriptions",
+      "cmd": "INSERT",
       "name": "push_subscriptions_insert_own",
-      "cmd": "INSERT",
       "roles": "authenticated",
+      "table": "push_subscriptions",
       "using": null,
-      "withCheck": "user_id = auth.uid()"
+      "withCheck": "(user_id = ( SELECT auth.uid() AS uid))"
     },
     {
-      "table": "push_subscriptions",
+      "cmd": "SELECT",
       "name": "push_subscriptions_select_own",
-      "cmd": "SELECT",
       "roles": "authenticated",
-      "using": "user_id = auth.uid()",
-      "withCheck": null
-    },
-    {
       "table": "push_subscriptions",
+      "using": "(user_id = ( SELECT auth.uid() AS uid))",
+      "withCheck": null
+    },
+    {
+      "cmd": "UPDATE",
       "name": "push_subscriptions_update_own",
-      "cmd": "UPDATE",
       "roles": "authenticated",
-      "using": "user_id = auth.uid()",
-      "withCheck": "user_id = auth.uid()"
+      "table": "push_subscriptions",
+      "using": "(user_id = ( SELECT auth.uid() AS uid))",
+      "withCheck": "(user_id = ( SELECT auth.uid() AS uid))"
     },
     {
-      "table": "queue_entries",
+      "cmd": "DELETE",
       "name": "queue_delete_organizer",
-      "cmd": "DELETE",
       "roles": "public",
+      "table": "queue_entries",
       "using": "is_session_organizer(session_id)",
       "withCheck": null
     },
     {
-      "table": "queue_entries",
+      "cmd": "DELETE",
       "name": "queue_delete_own",
-      "cmd": "DELETE",
       "roles": "public",
-      "using": "player_id = auth.uid()",
+      "table": "queue_entries",
+      "using": "(player_id = ( SELECT auth.uid() AS uid))",
       "withCheck": null
     },
     {
-      "table": "queue_entries",
-      "name": "queue_entries_insert",
       "cmd": "INSERT",
-      "roles": "authenticated",
-      "using": null,
-      "withCheck": "player_id = auth.uid()"
-    },
-    {
-      "table": "queue_entries",
-      "name": "queue_entries_select",
-      "cmd": "SELECT",
-      "roles": "authenticated",
-      "using": "true",
-      "withCheck": null
-    },
-    {
-      "table": "queue_entries",
-      "name": "queue_entries_update",
-      "cmd": "UPDATE",
-      "roles": "authenticated",
-      "using": "player_id = auth.uid() OR session_id IN (SELECT session_id FROM session_organizers WHERE user_id = auth.uid())",
-      "withCheck": null
-    },
-    {
-      "table": "queue_entries",
       "name": "queue_insert",
-      "cmd": "INSERT",
       "roles": "public",
+      "table": "queue_entries",
       "using": null,
-      "withCheck": "player_id = auth.uid()"
+      "withCheck": "(player_id = ( SELECT auth.uid() AS uid))"
     },
     {
-      "table": "queue_entries",
-      "name": "queue_select",
       "cmd": "SELECT",
+      "name": "queue_select",
       "roles": "public",
-      "using": "true",
+      "table": "queue_entries",
+      "using": "(session_access_level(session_id) IS NOT NULL)",
       "withCheck": null
     },
     {
-      "table": "queue_entries",
+      "cmd": "UPDATE",
       "name": "queue_update_organizer",
-      "cmd": "UPDATE",
       "roles": "public",
-      "using": "is_session_organizer(session_id)",
-      "withCheck": null
-    },
-    {
       "table": "queue_entries",
-      "name": "queue_update_own",
-      "cmd": "UPDATE",
-      "roles": "public",
-      "using": "player_id = auth.uid()",
-      "withCheck": null
-    },
-    {
-      "table": "session_organizers",
-      "name": "session_organizers_delete",
-      "cmd": "DELETE",
-      "roles": "public",
       "using": "is_session_organizer(session_id)",
       "withCheck": null
     },
     {
-      "table": "session_organizers",
-      "name": "session_organizers_insert",
-      "cmd": "INSERT",
+      "cmd": "UPDATE",
+      "name": "queue_update_own",
       "roles": "public",
+      "table": "queue_entries",
+      "using": "(player_id = ( SELECT auth.uid() AS uid))",
+      "withCheck": null
+    },
+    {
+      "cmd": "SELECT",
+      "name": "session_notifications_player_select_own",
+      "roles": "authenticated",
+      "table": "session_notifications",
+      "using": "((kind = 'score_correction'::text) AND (subject_player_id = auth.uid()))",
+      "withCheck": null
+    },
+    {
+      "cmd": "DELETE",
+      "name": "session_organizers_delete",
+      "roles": "public",
+      "table": "session_organizers",
+      "using": "is_session_organizer(session_id)",
+      "withCheck": null
+    },
+    {
+      "cmd": "INSERT",
+      "name": "session_organizers_insert",
+      "roles": "public",
+      "table": "session_organizers",
       "using": null,
       "withCheck": "is_session_organizer(session_id)"
     },
     {
-      "table": "session_organizers",
+      "cmd": "SELECT",
       "name": "session_organizers_select",
-      "cmd": "SELECT",
       "roles": "authenticated",
-      "using": "true",
+      "table": "session_organizers",
+      "using": "(session_access_level(session_id) IS NOT NULL)",
       "withCheck": null
     },
     {
-      "table": "session_wrapped_stats",
+      "cmd": "SELECT",
       "name": "Organizers can read wrapped stats for their sessions",
-      "cmd": "SELECT",
       "roles": "public",
-      "using": "EXISTS (SELECT 1 FROM session_organizers so WHERE so.session_id = session_wrapped_stats.session_id AND so.user_id = auth.uid())",
+      "table": "session_wrapped_stats",
+      "using": "(EXISTS ( SELECT 1\n   FROM session_organizers so\n  WHERE ((so.session_id = session_wrapped_stats.session_id) AND (so.user_id = ( SELECT auth.uid() AS uid)))))",
       "withCheck": null
     },
     {
-      "table": "session_wrapped_stats",
+      "cmd": "UPDATE",
       "name": "Players can dismiss their own wrapped intro",
-      "cmd": "UPDATE",
       "roles": "public",
-      "using": "player_id = auth.uid()",
-      "withCheck": "player_id = auth.uid()"
+      "table": "session_wrapped_stats",
+      "using": "(player_id = ( SELECT auth.uid() AS uid))",
+      "withCheck": "(player_id = ( SELECT auth.uid() AS uid))"
     },
     {
-      "table": "session_wrapped_stats",
+      "cmd": "SELECT",
       "name": "Players can read own wrapped stats",
-      "cmd": "SELECT",
       "roles": "public",
-      "using": "player_id = auth.uid()",
+      "table": "session_wrapped_stats",
+      "using": "(player_id = ( SELECT auth.uid() AS uid))",
       "withCheck": null
     },
     {
-      "table": "session_wrapped_stats",
+      "cmd": "INSERT",
       "name": "Service role insert",
-      "cmd": "INSERT",
       "roles": "public",
-      "using": null,
-      "withCheck": "auth.role() = 'service_role'"
-    },
-    {
       "table": "session_wrapped_stats",
-      "name": "Service role update",
-      "cmd": "UPDATE",
-      "roles": "public",
-      "using": "auth.role() = 'service_role'",
-      "withCheck": null
-    },
-    {
-      "table": "sessions",
-      "name": "sessions_insert",
-      "cmd": "INSERT",
-      "roles": "public",
       "using": null,
-      "withCheck": "created_by = auth.uid()"
+      "withCheck": "(( SELECT auth.role() AS role) = 'service_role'::text)"
     },
     {
-      "table": "sessions",
-      "name": "sessions_select",
-      "cmd": "SELECT",
-      "roles": "authenticated",
-      "using": "true",
+      "cmd": "UPDATE",
+      "name": "Service role update",
+      "roles": "public",
+      "table": "session_wrapped_stats",
+      "using": "(( SELECT auth.role() AS role) = 'service_role'::text)",
       "withCheck": null
     },
     {
-      "table": "sessions",
-      "name": "sessions_update",
-      "cmd": "UPDATE",
+      "cmd": "INSERT",
+      "name": "sessions_insert",
       "roles": "public",
+      "table": "sessions",
+      "using": null,
+      "withCheck": "(created_by = ( SELECT auth.uid() AS uid))"
+    },
+    {
+      "cmd": "SELECT",
+      "name": "sessions_select",
+      "roles": "authenticated",
+      "table": "sessions",
+      "using": "(is_session_organizer(id) OR is_club_member(club_id))",
+      "withCheck": null
+    },
+    {
+      "cmd": "UPDATE",
+      "name": "sessions_update",
+      "roles": "public",
+      "table": "sessions",
       "using": "is_session_organizer(id)",
       "withCheck": "is_session_organizer(id)"
     }
   ],
-  "rlsCapturedAt": "2026-06-05",
+  "rlsCapturedAt": "2026-09-16",
   "coverage": {
     "totals": {
       "lines": 2413,
@@ -6961,68 +6981,25 @@
     ]
   },
   "schemaDrift": {
-    "capturedAt": "2026-06-05",
-    "ok": false,
-    "tableColumnDrift": [
-      {
-        "table": "matches",
-        "dbOnly": [
-          "origin"
-        ],
-        "codeOnly": [
-          "created_method",
-          "modification_count",
-          "final_classification",
-          "provenance_backfilled",
-          "pulled_player_ids",
-          "pulled_from_match_id",
-          "held_ready_at",
-          "is_held"
-        ]
-      },
-      {
-        "table": "player_partnerships",
-        "dbOnly": [],
-        "codeOnly": [
-          "club_id"
-        ]
-      },
-      {
-        "table": "player_rivalries",
-        "dbOnly": [],
-        "codeOnly": [
-          "club_id"
-        ]
-      },
-      {
-        "table": "profiles",
-        "dbOnly": [],
-        "codeOnly": [
-          "needs_rename",
-          "collided_name",
-          "flagged_at",
-          "needs_name_confirm"
-        ]
-      },
-      {
-        "table": "queue_entries",
-        "dbOnly": [],
-        "codeOnly": [
-          "paused_at"
-        ]
-      },
-      {
-        "table": "sessions",
-        "dbOnly": [],
-        "codeOnly": [
-          "club_id",
-          "auto_publish",
-          "is_hidden"
-        ]
-      }
-    ],
+    "capturedAt": "2026-09-16",
+    "ok": true,
+    "tableColumnDrift": [],
     "columnNullabilityDrift": [],
     "columnNullabilityExpected": [
+      {
+        "table": "matches",
+        "column": "is_held",
+        "db": "NULL",
+        "code": "non-null",
+        "reason": "GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0). Postgres marks generated columns nullable; the TS type is `boolean`."
+      },
+      {
+        "table": "matches",
+        "column": "final_classification",
+        "db": "NULL",
+        "code": "non-null",
+        "reason": "GENERATED column (created_method × modified). Postgres marks generated columns nullable; the TS type is MatchClassification."
+      },
       {
         "table": "session_wrapped_stats",
         "column": "point_diff",
@@ -7032,40 +7009,24 @@
       }
     ],
     "functions": {
-      "dbOnly": [
-        "elevate_to_organizer"
-      ],
+      "dbOnly": [],
       "dbOnlyExpected": [
         "_fix_record_partnership_delta",
+        "_player_name",
         "handle_new_session",
         "handle_new_user",
-        "is_any_session_organizer",
+        "has_match_access",
+        "is_club_member",
+        "is_match_club_member",
+        "is_session_club_member",
         "is_session_organizer",
+        "log_queue_status_change",
+        "realtime_topic_session_id",
+        "session_access_level",
         "set_updated_at",
         "touch_push_subscription_updated_at"
       ],
-      "codeOnly": [
-        "auth_attempt_mark_succeeded",
-        "auto_publish_match",
-        "can_read_profile",
-        "club_member_deactivate",
-        "club_member_set_role",
-        "cojoin_record_and_check",
-        "count_completed_matches_by_session",
-        "create_held_cross_court_match",
-        "get_leaderboard_months",
-        "get_monthly_leaderboard",
-        "get_primary_club_slug",
-        "get_session_leaderboard_public",
-        "get_session_player_streaks",
-        "merge_guest_play_into_profile",
-        "reconnect_record_and_check",
-        "record_match_event",
-        "rename_player_identity",
-        "reorder_on_deck_matches",
-        "requeue_finished_players",
-        "resolve_score_correction"
-      ]
+      "codeOnly": []
     },
     "views": {
       "dbOnly": [],
@@ -7073,17 +7034,11 @@
     },
     "tables": {
       "dbOnly": [],
-      "codeOnly": [
-        "club_invites",
-        "club_members",
-        "club_milestones",
-        "clubs",
-        "co_organizer_join_attempts",
-        "match_events",
-        "player_renames",
-        "queue_status_events",
-        "session_notifications"
-      ]
+      "dbOnlyExpected": [
+        "player_partnerships_prerebuild_20260812",
+        "player_rivalries_prerebuild_20260812"
+      ],
+      "codeOnly": []
     }
   },
   "actionDetails": [

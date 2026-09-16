@@ -995,7 +995,7 @@ interface SchemaDrift {
    *  that are intentionally NOT exposed as PostgREST RPCs. */
   functions: { dbOnly: string[]; dbOnlyExpected: string[]; codeOnly: string[] };
   views: { dbOnly: string[]; codeOnly: string[] };
-  tables: { dbOnly: string[]; codeOnly: string[] };
+  tables: { dbOnly: string[]; dbOnlyExpected: string[]; codeOnly: string[] };
 }
 
 /** DB functions intentionally absent from the TS RPC type: trigger functions,
@@ -1006,7 +1006,23 @@ const EXPECTED_DB_ONLY_FNS = new Set([
   "set_updated_at",
   "touch_push_subscription_updated_at",
   "is_session_organizer",
-  "is_any_session_organizer",
+  "has_match_access",
+  "is_club_member",
+  "is_match_club_member",
+  "is_session_club_member",
+  "session_access_level",
+  "log_queue_status_change",
+  "realtime_topic_session_id",
+]);
+
+/**
+ * Live tables the TypeScript schema will not declare. Rebuild backups from
+ * 20260812 — drop is gated on explicit DDL approval. Until then they must
+ * not fail schemaDrift.ok.
+ */
+const EXPECTED_DB_ONLY_TABLES = new Set([
+  "player_partnerships_prerebuild_20260812",
+  "player_rivalries_prerebuild_20260812",
 ]);
 
 /** Known-benign column nullability differences, keyed `table.column`. */
@@ -1014,6 +1030,14 @@ const EXPECTED_NULLABILITY = new Map<string, string>([
   [
     "session_wrapped_stats.point_diff",
     "GENERATED column (points_for − points_against). Postgres marks generated columns nullable, but it is never null in practice, so the TS type is `number`.",
+  ],
+  [
+    "matches.is_held",
+    "GENERATED ALWAYS AS (cardinality(pulled_player_ids) > 0). Postgres marks generated columns nullable; the TS type is `boolean`.",
+  ],
+  [
+    "matches.final_classification",
+    "GENERATED column (created_method × modified). Postgres marks generated columns nullable; the TS type is MatchClassification.",
   ],
 ]);
 
@@ -1075,7 +1099,9 @@ function computeDrift(
 
   const dbTables = new Set(Object.keys(snap.tables));
   const codeTables = new Set(tables.map((t) => t.name));
-  const tblDbOnly = [...dbTables].filter((t) => !codeTables.has(t)).sort();
+  const tblDbOnlyAll = [...dbTables].filter((t) => !codeTables.has(t));
+  const tblDbOnlyExpected = tblDbOnlyAll.filter((t) => EXPECTED_DB_ONLY_TABLES.has(t)).sort();
+  const tblDbOnly = tblDbOnlyAll.filter((t) => !EXPECTED_DB_ONLY_TABLES.has(t)).sort();
   const tblCodeOnly = [...codeTables].filter((t) => !dbTables.has(t)).sort();
 
   const ok =
@@ -1096,7 +1122,7 @@ function computeDrift(
     columnNullabilityExpected,
     functions: { dbOnly: fnDbOnly, dbOnlyExpected: fnDbOnlyExpected, codeOnly: fnCodeOnly },
     views: { dbOnly: viewDbOnly, codeOnly: viewCodeOnly },
-    tables: { dbOnly: tblDbOnly, codeOnly: tblCodeOnly },
+    tables: { dbOnly: tblDbOnly, dbOnlyExpected: tblDbOnlyExpected, codeOnly: tblCodeOnly },
   };
 }
 

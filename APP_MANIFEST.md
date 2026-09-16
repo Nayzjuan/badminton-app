@@ -316,6 +316,15 @@ One-time club-wide "firsts" ledger (migration `20260704000001`). Append-only; RL
 | `session_id`  | `uuid → sessions.id \| null` | ON DELETE SET NULL — milestone survives session pruning |
 | `achieved_at` | `timestamptz`                |                                                         |
 
+#### `leaderboard_refresh_state`
+
+Singleton gate for `refresh_alltime_leaderboard()` (migration `20260717171328`). One row; RLS enabled with **zero policies** (deny-all). The RPC is `SECURITY DEFINER` and is the only writer. The app never reads this table directly.
+
+| Column              | Type          | Notes                                      |
+| ------------------- | ------------- | ------------------------------------------ |
+| `id`                | `boolean` PK  | Default `true` — the table is a singleton. |
+| `last_refreshed_at` | `timestamptz` | Updated by the refresh RPC.                |
+
 ---
 
 ### Enums
