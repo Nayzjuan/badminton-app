@@ -279,8 +279,9 @@ export function useOrganizerSession(
           },
           (payload) => {
             // Apply all session field changes EXCEPT is_auto_matchmaking_on and
-            // auto_publish. Those are synced via Broadcast so co-organizers (who
-            // are blocked by the sessions RLS SELECT policy) also receive them.
+            // auto_publish. Those stay on Broadcast — faster, prefix-namespaced —
+            // even though co-organizers now receive the sessions UPDATE
+            // (`is_session_organizer` / `is_club_member`).
             const next = payload.new as Partial<Session>;
             const { is_auto_matchmaking_on: _a, auto_publish: _p, ...rest } = next;
             setSession((prev) => ({ ...prev, ...rest }));

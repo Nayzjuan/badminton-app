@@ -8,10 +8,12 @@
     "preview": "astro preview",
     "check": "astro check",
     "extract": "tsx scripts/extract.ts",
+    "capture-snapshot": "tsx ../scripts/capture-schema-snapshot.ts",
     "sync-tokens": "tsx scripts/sync-design-tokens.ts",
     "sync-tokens:check": "tsx scripts/sync-design-tokens.ts --check",
     "watch:extract": "tsx scripts/watch.ts",
-    "dev:full": "concurrently \"npm run watch:extract\" \"npm run dev\""
+    "dev:full": "concurrently \"npm run watch:extract\" \"npm run dev\"",
+    "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
     "@astrojs/mdx": "^4.2.0",
@@ -31,9 +33,12 @@
     "tailwindcss": "^4.1.0"
   },
   "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@types/d3": "^7.4.3",
     "chokidar": "^4.0.3",
     "concurrently": "^9.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.11"
   }
 }

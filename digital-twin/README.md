@@ -46,10 +46,22 @@ emits `src/data/manifest.json`:
 ### The live-schema snapshot
 
 `src/data/live-schema-snapshot.json` is a **point-in-time** capture of the live
-Supabase `public` schema (columns, views, functions, `pg_policies`), taken via
-introspection. It feeds the **Schema Drift** detector (compared against the TS
-types) and the **RLS Policies** explorer. Re-capture it when the database
-schema changes, then re-run `npm run extract`.
+Supabase `public` schema (columns, views, functions, `pg_policies`). It feeds the
+**Schema Drift** detector (compared against the TS types) and the **RLS Policies**
+explorer.
+
+Re-capture after DDL:
+
+```bash
+# DATABASE_URL from .env.local / .env.test (same convention as withTx).
+# Local shape: tests/integration/env.example
+npx tsx scripts/capture-schema-snapshot.ts
+# or: cd digital-twin && npm run capture-snapshot
+cd digital-twin && npm run extract
+```
+
+`/schema-drift` and `/rls` show days since capture and warn (they do not fail the
+build) when `capturedAt` predates the newest `supabase/migrations/` filename.
 
 ## Pages
 

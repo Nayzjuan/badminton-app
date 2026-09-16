@@ -1,0 +1,52 @@
+{
+  "1": { "id": "nextjs-16-breaking", "severity": "info", "category": "Framework" },
+  "2": { "id": "type-not-interface", "severity": "warn", "category": "TypeScript", "link": "/database" },
+  "3": { "id": "build-overlap-map-async", "severity": "warn", "category": "Engine", "link": "/engine" },
+  "4": { "id": "recent-rosters-hoisted", "severity": "warn", "category": "Engine", "link": "/engine" },
+  "5": { "id": "vercel-bypass-header", "severity": "info", "category": "CI / Testing" },
+  "6": { "id": "dnd-kit-two-attrs", "severity": "info", "category": "UI", "link": "/components" },
+  "7": { "id": "service-client-mutations", "severity": "critical", "category": "Auth / RLS", "link": "/actions" },
+  "8": { "id": "cancel-match-auto-promotes", "severity": "warn", "category": "Match", "link": "/actions" },
+  "9": { "id": "cookie-chunking", "severity": "info", "category": "Auth / RLS", "link": "/actions" },
+  "10": { "id": "draft-mode-blocks-call-next", "severity": "warn", "category": "Engine", "link": "/engine" },
+  "11": { "id": "session-organizers-append-only", "severity": "critical", "category": "Schema", "link": "/database" },
+  "12": { "id": "auth-users-trigger", "severity": "critical", "category": "Schema", "link": "/database" },
+  "13": { "id": "sessions-trigger", "severity": "critical", "category": "Schema", "link": "/database" },
+  "14": { "id": "snake-draft-null-guard", "severity": "warn", "category": "Engine", "link": "/engine" },
+  "15": { "id": "ghost-requeue-prevention", "severity": "warn", "category": "Match", "link": "/engine" },
+  "16": { "id": "active-match-rejoin-guard", "severity": "warn", "category": "Match", "link": "/actions" },
+  "17": { "id": "uuid-validation-all-actions", "severity": "critical", "category": "Actions", "link": "/actions" },
+  "18": { "id": "sign-out-before-anonymous", "severity": "critical", "category": "Auth / RLS", "link": "/flows" },
+  "19": { "id": "fix-record-skips-rivalries", "severity": "warn", "category": "Schema", "link": "/database" },
+  "20": { "id": "skill-level-6-values", "severity": "warn", "category": "Schema", "link": "/database" },
+  "21": { "id": "sessions-ts-plural", "severity": "warn", "category": "Actions", "link": "/actions" },
+  "22": { "id": "auto-matchmaking-no-postgres-changes", "severity": "critical", "category": "Realtime", "link": "/realtime" },
+  "23": { "id": "on-deck-actions-in-match-not-matchmaking", "severity": "warn", "category": "Actions", "link": "/actions" },
+  "24": { "id": "max-auto-drafts-replaces-formula", "severity": "warn", "category": "Engine", "link": "/engine" },
+  "25": { "id": "create-match-null-on-toctou", "severity": "critical", "category": "Engine", "link": "/engine" },
+  "26": { "id": "engine-running-for-process-local", "severity": "critical", "category": "Engine", "link": "/engine" },
+  "27": { "id": "player-status-two-hooks", "severity": "warn", "category": "Realtime", "link": "/realtime" },
+  "28": { "id": "sub-quantum-cannot-overturn-tier", "severity": "warn", "category": "Engine", "link": "/engine" },
+  "29": { "id": "green-helper-suite-not-reachability", "severity": "warn", "category": "Engine", "link": "/engine" },
+  "30": { "id": "eslint-ignores-not-gitignore", "severity": "info", "category": "Framework" },
+  "31": { "id": "draft-chip-detects-in-render", "severity": "warn", "category": "UI", "link": "/components" },
+  "32": { "id": "red-zone-score-floor-is-addend", "severity": "critical", "category": "Engine", "link": "/engine" },
+  "extras": [
+    {
+      "id": "postgrest-update-empty-array",
+      "title": "PostgREST `UPDATE` matching 0 rows returns empty array",
+      "body": "An UPDATE matching 0 rows returns an empty array — not null and not an error. Using .single() on such a response throws. Use array + length check for atomic CAS guards.",
+      "severity": "warn",
+      "category": "Database",
+      "link": "/database"
+    },
+    {
+      "id": "postgrest-insert-single-safe",
+      "title": "PostgREST INSERT + `.select().single()` is safe",
+      "body": "Unlike UPDATE (which may match 0 rows), INSERT with .select().single() always returns exactly one row or throws. Safe to use .single() on INSERT — it will never return an empty array.",
+      "severity": "info",
+      "category": "Database",
+      "link": "/database"
+    }
+  ]
+}

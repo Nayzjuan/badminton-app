@@ -731,6 +731,17 @@ export type ClubMilestone = {
   achieved_at: string;
 };
 
+/**
+ * leaderboard_refresh_state — singleton gate for refresh_alltime_leaderboard()
+ * (migration 20260717171328). One row (`id boolean PRIMARY KEY DEFAULT true`).
+ * RLS enabled, zero policies (deny-all); the RPC is SECURITY DEFINER. The app
+ * never reads this table directly.
+ */
+export type LeaderboardRefreshState = {
+  id: boolean;
+  last_refreshed_at: string;
+};
+
 // ------------------------------------------------------------
 // Supabase Database Type
 // (Required shape for createClient<Database>)
@@ -892,6 +903,12 @@ export type Database = {
         Update: Record<string, never>; // append-only ledger, no updates
         Relationships: [];
       };
+      leaderboard_refresh_state: {
+        Row: LeaderboardRefreshState;
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
     };
     Views: {
       v_queue_with_wait_time: {
@@ -1019,6 +1036,16 @@ export type Database = {
       rejoin_queue: {
         Args: { p_session_id: string };
         Returns: void;
+      };
+      /**
+       * Passcode-gated co-organizer promotion. Still granted (authenticated +
+       * service_role); joinAsCoOrganizer now inserts session_organizers itself
+       * after cojoin_record_and_check, but integration tests and the RPC
+       * remain. Returns true on match / already-organizer, false otherwise.
+       */
+      elevate_to_organizer: {
+        Args: { p_session_id: string; p_passcode: string };
+        Returns: boolean;
       };
       skill_level_to_int: {
         Args: { lvl: SkillLevel };

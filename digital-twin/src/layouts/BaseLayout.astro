@@ -125,7 +125,11 @@ const extractedLabel = isNaN(extracted.getTime())
         const nav = document.getElementById('side-nav');
         if (!nav || !nav.classList.contains('mobile-open')) return;
         const toggle = document.getElementById('mobile-nav-toggle');
-        if (nav.contains(e.target) || (toggle && toggle.contains(e.target))) return;
+        if (
+          nav.contains(e.target as Node) ||
+          (toggle && toggle.contains(e.target as Node))
+        )
+          return;
         nav.classList.remove('mobile-open');
       });
     </script>

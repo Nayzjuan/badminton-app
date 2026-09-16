@@ -1,7 +1,5 @@
 /**
- * Phase 2 — File watcher.
- *
- * Runs extract.ts whenever watched host app source files change.
+ * File watcher. Re-runs extract.ts whenever host-app extractor inputs change.
  * Used by `npm run dev:full` (concurrently with `astro dev`).
  *
  * Debounce: 200ms — prevents storms on multi-file saves.
@@ -11,23 +9,13 @@ import chokidar from "chokidar";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
+import { DESIGN_TOKEN_INPUTS, HOST_EXTRACT_INPUTS } from "./extract-inputs.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "../../");
 
-const watchPaths = [
-  resolve(root, "src/types/database.ts"),
-  resolve(root, "src/lib/constants.ts"),
-  resolve(root, "src/lib/broadcast.ts"),
-  resolve(root, "src/app/actions"),
-  resolve(root, "src/hooks/use-organizer-data.ts"),
-  // Design-token sources — trigger both extract + sync when changed
-  resolve(root, "src/app/globals.css"),
-  resolve(root, "src/app/layout.tsx"),
-  resolve(root, "src/app/organizer/layout.tsx"),
-  resolve(root, "APP_MANIFEST.md"),
-  resolve(root, "MEMORY.md"),
-];
+const watchPaths = HOST_EXTRACT_INPUTS.map((p) => resolve(root, p));
+const designTokenPaths = new Set(DESIGN_TOKEN_INPUTS.map((p) => resolve(root, p)));
 
 let debounce: ReturnType<typeof setTimeout> | null = null;
 
@@ -56,21 +44,15 @@ function runSyncTokens() {
 console.log("[watch] starting — watching host app source for changes…");
 console.log("[watch] Watching:", watchPaths.map((p) => p.replace(root, "…")).join(", "));
 
-// Design-token paths that need the extra sync step
-const designTokenPaths = new Set([
-  resolve(root, "src/app/globals.css"),
-  resolve(root, "src/app/layout.tsx"),
-  resolve(root, "src/app/organizer/layout.tsx"),
-]);
-
-// Run once on start — extract manifest then sync APP_MANIFEST tokens
 runExtract();
 runSyncTokens();
 
-chokidar.watch(watchPaths, { ignoreInitial: true }).on("all", (event, changedPath) => {
+chokidar.watch(watchPaths, { ignoreInitial: true }).on("all", (_event, changedPath) => {
   if (debounce) clearTimeout(debounce);
   debounce = setTimeout(() => {
-    const isDesignToken = designTokenPaths.has(changedPath);
+    const isDesignToken = [...designTokenPaths].some(
+      (tokenPath) => changedPath === tokenPath || changedPath.startsWith(tokenPath + "/")
+    );
     console.log(
       `[watch] change detected in ${changedPath.replace(root, "…")} → re-extracting${isDesignToken ? " + syncing tokens" : ""}…`
     );

@@ -13,6 +13,38 @@
 
 ---
 
+## How the 20260811* migrations were applied
+
+Moved out of `MEMORY.md` on 2026-09-16 to make room under the 40 KB cap. The bind that remains
+in `MEMORY.md`: `use-player-match.ts`'s `queue_entries` subscription is load-bearing; revert
+`20260810000001` before reverting the code.
+
+There is no `psql` / Supabase CLI / DB URL on the host that applied these; the only channel was
+the Supabase MCP. Two deliberate deviations from the repo files:
+
+1. **`20260811000000` was applied by server-side reconstruction, not by shipping the body.**
+   `python3 scripts/gen-one-time-milestone-awards-migration.py --apply-sql <path>` reads prod's
+   own `pg_proc.prosrc`, replays 10 anchored `replace()` calls on the server, asserts each
+   matched exactly once, asserts the rebuilt md5 equals `e3689008fe20a015421a0c69afc49375`,
+   then `CREATE OR REPLACE`. Idempotent if the body is already at the target md5.
+2. **`20260811000001` was applied as ONE `DO $repair$` block**, not as the file's
+   `begin;…commit;` + `_emptied_wraps` temp table. Same logic; the temp table became a `uuid[]`
+   local so a bad result rolls the whole repair back.
+
+The repo files remain the reviewed `psql` artifacts. Applied forms are equivalent, not identical.
+
+`20260810000001` post-apply checks passed inside a rolled-back transaction against prod:
+
+| actor | pending+unpublished | pending+published | completed | in_progress | orphan `match_id` |
+|---|---|---|---|---|---|
+| plain member | **false** ← the only change | true | true | true | NULL → deny |
+| organizer | true | true | true | true | NULL → deny |
+| anon | false | false | false | false | NULL → deny |
+
+End-to-end `SELECT`: member 6 of 8 roster rows, organizer 8, anon 0.
+
+---
+
 ## Part 0 — sessions 2026-09-15, 2026-09-13, 2026-09-11, and 2026-08-22
 
 ## 2026-09-13 — Google name confirm + skill + identity merge (APPLIED)
