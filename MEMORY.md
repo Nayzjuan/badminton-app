@@ -21,7 +21,9 @@
 
 Stage 0 landed: extract `--check`, D8 input union (`digital-twin/scripts/extract-inputs.ts`), pre-commit stages `manifest.json`, pre-push `--check`, `.github/workflows/digital-twin.yml`, `digital-twin/src/data/` prettier-ignored, `@astrojs/check` + `@types/d3` so `npm run check` exits 0.
 
-Stage 1 landed: live snapshot recaptured 2026-09-16 (`scripts/capture-schema-snapshot.ts`), `leaderboard_refresh_state` typed, `elevate_to_organizer` typed (still granted; do not drop), GENERATED nullability for `matches.is_held` / `matches.final_classification`, `_prerebuild_20260812` tables whitelisted until explicit DDL approval. `schemaDrift.ok` is true. Plan: `docs/DIGITAL_TWIN_SYNC_PLAN.md` (delete at Stage 6).
+Stage 1 landed: live snapshot recaptured 2026-09-16 (`scripts/capture-schema-snapshot.ts`), `leaderboard_refresh_state` typed, `elevate_to_organizer` typed (still granted; do not drop), GENERATED nullability for `matches.is_held` / `matches.final_classification`, `_prerebuild_20260812` tables whitelisted until explicit DDL approval. `schemaDrift.ok` is true.
+
+Stage 2 landed: channels/routes/components/gotchas (§9 + sidecar extras) extracted; `scenarios` deleted; held-draft state machine; `digital-twin/src/lib/invariants.ts`; twin vitest. §9 item 22 rewritten (co-organizers have SELECT; toggles still broadcast). Plan: `docs/DIGITAL_TWIN_SYNC_PLAN.md` (delete at Stage 6).
 
 ## 2026-09-15 — registration usability / one-submit QR join
 

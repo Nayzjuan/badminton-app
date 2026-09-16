@@ -13,7 +13,7 @@
     "sync-tokens:check": "tsx scripts/sync-design-tokens.ts --check",
     "watch:extract": "tsx scripts/watch.ts",
     "dev:full": "concurrently \"npm run watch:extract\" \"npm run dev\"",
-    "test": "node -e \"console.log('[twin] no tests yet')\""
+    "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
     "@astrojs/mdx": "^4.2.0",
@@ -38,6 +38,7 @@
     "chokidar": "^4.0.3",
     "concurrently": "^9.0.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.11"
   }
 }

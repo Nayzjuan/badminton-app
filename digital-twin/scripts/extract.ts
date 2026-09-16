@@ -14,243 +14,24 @@ import * as ts from "typescript";
 import { readFileSync, writeFileSync, readdirSync } from "fs";
 import { resolve, dirname, join } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
+import {
+  extractBroadcasts,
+  extractChannels,
+  extractComponents,
+  extractGotchas,
+  extractRoutes,
+  type BroadcastEntry,
+  type ChannelEntry,
+  type ComponentNode,
+  type GotchaEntry,
+  type RouteEntry,
+} from "./extract-host.ts";
 
 const CHECK_MODE = process.argv.includes("--check");
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const HOST_ROOT = resolve(__dirname, "../../"); // badminton-app/
 const OUT_PATH = resolve(__dirname, "../src/data/manifest.json");
-
-// ── Curated gotchas (sourced from APP_MANIFEST.md §9 + PostgREST notes) ───────
-// severity: 'critical' | 'warn' | 'info'
-// category: grouping label shown in the badge
-// link: optional deep-link into a Digital Twin view
-
-interface GotchaEntry {
-  id: string;
-  title: string;
-  body: string;
-  severity: "critical" | "warn" | "info";
-  category: string;
-  link?: string;
-}
-
-const CURATED_GOTCHAS: GotchaEntry[] = [
-  {
-    id: "type-not-interface",
-    title: "`type` not `interface` for DB rows",
-    body: "All DB row types in src/types/database.ts must be `type` aliases, never `interface`. Supabase's generic system requires sealed types — interfaces are open and cause silent type widening.",
-    severity: "warn",
-    category: "TypeScript",
-    link: "/database",
-  },
-  {
-    id: "service-client-mutations",
-    title: "Service client for all cross-user mutations",
-    body: "Any write that touches another user's row must use createServiceClient(). Using the RLS client silently returns 0 rows for the primary organizer — no error, no write.",
-    severity: "critical",
-    category: "Auth / RLS",
-    link: "/actions",
-  },
-  {
-    id: "sign-out-before-anonymous",
-    title: "`signOut()` before `signInAnonymously()`",
-    body: "reconnectPlayer always calls signOut() first. Skipping this causes a stale session conflict that silently fails the entire identity migration — the player loses their history.",
-    severity: "critical",
-    category: "Auth / RLS",
-    link: "/flows",
-  },
-  {
-    id: "auto-matchmaking-no-postgres-changes",
-    title: "`is_auto_matchmaking_on` excluded from postgres_changes",
-    body: "sessions RLS SELECT only grants access to the row creator. A co-organizer's postgres_changes subscription for this field is silently dropped. It must sync exclusively via the `auto_matchmaking_toggled` broadcast.",
-    severity: "critical",
-    category: "Realtime",
-    link: "/realtime",
-  },
-  {
-    id: "create-match-null-on-toctou",
-    title: "`create_match_with_players` returns NULL on TOCTOU conflict",
-    body: "{ data: null, error: null } means a DB guard fired — not a hard error. Always check rpcError and !matchId separately. !matchId with no error = graceful slot-skip (log + continue).",
-    severity: "critical",
-    category: "Engine",
-    link: "/engine",
-  },
-  {
-    id: "engine-running-for-process-local",
-    title: "`engineRunningFor` Set is process-local only",
-    body: "Prevents double-runs within one Node.js process but is useless on Vercel serverless (each request = new worker). Cross-process serialization is handled exclusively by the DB-level TOCTOU guard in create_match_with_players.",
-    severity: "critical",
-    category: "Engine",
-    link: "/engine",
-  },
-  {
-    id: "session-organizers-append-only",
-    title: "`session_organizers` is append-only",
-    body: "Never DELETE or UPDATE rows in session_organizers. Presence of a row = permission granted. Deleting a row removes organizer access with no undo.",
-    severity: "critical",
-    category: "Schema",
-    link: "/database",
-  },
-  {
-    id: "auth-users-trigger",
-    title: "`auth.users` trigger auto-creates profile",
-    body: "Inserting into auth.users auto-creates a profiles row via handle_new_user(). Do not also insert a profile manually — you will hit a PK conflict.",
-    severity: "critical",
-    category: "Schema",
-    link: "/database",
-  },
-  {
-    id: "sessions-trigger",
-    title: "`sessions` trigger auto-inserts organizer row",
-    body: "Inserting into sessions auto-inserts a session_organizers row for created_by via handle_new_session(). Do not also insert an organizer row manually.",
-    severity: "critical",
-    category: "Schema",
-    link: "/database",
-  },
-  {
-    id: "build-overlap-map-async",
-    title: "Diversity derivations are pure but live in matchmaking-db",
-    body: "deriveRecentRosters / derivePairCounts / deriveOverlapMap take no client and hit no DB, yet they sit in matchmaking-db.ts next to fetchSessionMatchSnapshot rather than in the pure matchmaking-core.ts — the snapshot shape is theirs. The one async helper, fetchSessionMatchSnapshot, FAILS CLOSED: on { ok: false } the engine breaks the burst. Never substitute an empty snapshot, or every repeat reads as a fresh pairing.",
-    severity: "warn",
-    category: "Engine",
-    link: "/engine",
-  },
-  {
-    id: "recent-rosters-hoisted",
-    title: "Snapshot re-read per slot; `overlapMap` per-anchor",
-    body: "One fetchSessionMatchSnapshot per engine slot feeds all three diversity inputs at zero extra DB cost. It is re-read per slot on purpose, so sibling drafts committed by earlier slots of the same burst are visible. overlapMap is anchor-specific and must be derived inside the per-anchor tick.",
-    severity: "warn",
-    category: "Engine",
-    link: "/engine",
-  },
-  {
-    id: "cancel-match-auto-promotes",
-    title: "`cancelMatchAction` auto-promotes oldest on-deck match",
-    body: "Cancelling a match does not leave the court idle. It auto-promotes the oldest published on-deck match and re-runs the engine. Handle the cascade in the UI — don't assume cancellation is a no-op.",
-    severity: "warn",
-    category: "Match",
-    link: "/actions",
-  },
-  {
-    id: "draft-mode-blocks-call-next",
-    title: "Draft mode blocks `callNextMatch`",
-    body: "If all pending matches are drafts (is_published = false), callNextMatch returns hasDraftsBlocking: true instead of promoting a match. The organizer must publish drafts first.",
-    severity: "warn",
-    category: "Engine",
-    link: "/engine",
-  },
-  {
-    id: "snake-draft-null-guard",
-    title: "`snakeDraft` / `rotatedDraft` return `null` on cap block",
-    body: "Both draft functions return null when MAX_PARTNERSHIP_REPEATS blocks every valid team split. null = slot failure, not an error. All callers must null-guard — an unguarded null propagates as a phantom match.",
-    severity: "warn",
-    category: "Engine",
-    link: "/engine",
-  },
-  {
-    id: "ghost-requeue-prevention",
-    title: "Ghost re-queue prevention on match end/cancel",
-    body: "match end/cancel checks queue_entries.status before re-queuing. A player with status 'left' is NOT re-queued even if they appear in match_players. Prevents ghost players re-appearing after checkout.",
-    severity: "warn",
-    category: "Queue",
-    link: "/actions",
-  },
-  {
-    id: "active-match-rejoin-guard",
-    title: "Active-match re-join guard in `joinQueueAction`",
-    body: "joinQueueAction rejects if the player's current queue status is 'playing'. Guards against double-queue on rapid re-tap (e.g. network retry). Returns a clean error — not a silent no-op.",
-    severity: "warn",
-    category: "Queue",
-    link: "/actions",
-  },
-  {
-    id: "uuid-validation-all-actions",
-    title: "UUID validation required before every DB call",
-    body: "Every server action must call isValidUUID() on every UUID parameter. Malformed IDs return early with a clean error — they never reach PostgREST. Missing this guard exposes the action to injection via crafted UUIDs.",
-    severity: "warn",
-    category: "Actions",
-    link: "/actions",
-  },
-  {
-    id: "on-deck-actions-in-match-not-matchmaking",
-    title: "On-deck actions live in `match.ts`, not `matchmaking.ts`",
-    body: "clearOnDeckMatch, reorderOnDeckMatches, publishMatchAction, and publishAllDraftMatchesAction all live in match.ts. Only engine entry points (callNextMatch, runEngineForSession) live in matchmaking.ts.",
-    severity: "warn",
-    category: "Actions",
-    link: "/actions",
-  },
-  {
-    id: "max-auto-drafts-replaces-formula",
-    title: "`MAX_AUTO_DRAFTS` replaces the old capacity formula",
-    body: "MAX_ON_DECK_MATCHES and ON_DECK_LOOKAHEAD are no longer used by the live engine (kept in constants.ts for simulate-engine.ts only). The live engine uses slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending) with a single atomic count — never split into published/draft counts.",
-    severity: "warn",
-    category: "Engine",
-    link: "/engine",
-  },
-  {
-    id: "skill-level-6-values",
-    title: "Skill level has exactly 6 values — `upper_beginner` removed",
-    body: "The skill_level enum is: beginner, lower_intermediate, intermediate, upper_intermediate, lower_advanced, advanced. upper_beginner was removed. Never reference it in code or migrations.",
-    severity: "warn",
-    category: "Schema",
-    link: "/database",
-  },
-  {
-    id: "sessions-ts-plural",
-    title: "`sessions.ts` not `session.ts`",
-    body: "The actions file is sessions.ts (plural). Creating a session.ts duplicate will silently shadow the original file and cause all session actions to 404 in production.",
-    severity: "warn",
-    category: "Actions",
-    link: "/actions",
-  },
-  {
-    id: "postgrest-update-empty-array",
-    title: "PostgREST `UPDATE` matching 0 rows returns empty array",
-    body: "An UPDATE matching 0 rows returns an empty array — not null and not an error. Using .single() on such a response throws. Use array + length check for atomic CAS guards.",
-    severity: "warn",
-    category: "Database",
-    link: "/database",
-  },
-  {
-    id: "dnd-kit-two-attrs",
-    title: "dnd-kit: two attributes required on interactive children",
-    body: "Both data-no-dnd attribute AND onPointerDown stopPropagation are required on interactive children (buttons, inputs) inside draggable containers. Missing either causes drag events to fire on button clicks.",
-    severity: "info",
-    category: "UI",
-    link: "/components",
-  },
-  {
-    id: "cookie-chunking",
-    title: "@supabase/ssr chunks auth tokens",
-    body: "@supabase/ssr splits auth tokens at 3180 encoded chars into .0, .1, .2 suffixed cookies. Any custom cookie handling must join these chunks before passing to the Supabase client.",
-    severity: "info",
-    category: "Auth / RLS",
-    link: "/actions",
-  },
-  {
-    id: "nextjs-16-breaking",
-    title: "Next.js 16 breaking changes",
-    body: "Do NOT assume Next.js 13/14/15 APIs. Key changes in 16: params and searchParams are now async Promises. Always await params in Server Components and use React.use() in Client Components.",
-    severity: "info",
-    category: "Framework",
-  },
-  {
-    id: "vercel-bypass-header",
-    title: "Vercel protection bypass for Playwright",
-    body: "_vercel_share tokens do NOT work for Playwright E2E tests. The only working approach is the x-vercel-protection-bypass header in playwright.config.ts extraHTTPHeaders.",
-    severity: "info",
-    category: "CI / Testing",
-  },
-  {
-    id: "postgrest-insert-single-safe",
-    title: "PostgREST INSERT + `.select().single()` is safe",
-    body: "Unlike UPDATE (which may match 0 rows), INSERT with .select().single() always returns exactly one row or throws. Safe to use .single() on INSERT — it will never return an empty array.",
-    severity: "info",
-    category: "Database",
-    link: "/database",
-  },
-];
 
 // ── Manifest schema ────────────────────────────────────────────────────────────
 
@@ -338,11 +119,11 @@ interface Manifest {
   rpcs: RPCEntry[];
   constants: ConstEntry[];
   actions: ActionEntry[];
-  channels: unknown[];
+  channels: ChannelEntry[];
   broadcasts: BroadcastEntry[];
-  gotchas: unknown[];
-  components: unknown[];
-  scenarios: unknown[];
+  gotchas: GotchaEntry[];
+  components: ComponentNode[];
+  routes: RouteEntry[];
   /** Extracted from globals.css + layout.tsx — consumed by sync-design-tokens.ts */
   designTokens: DesignTokens;
   // ── Feature pages (added 2026-06) ──
@@ -959,7 +740,7 @@ interface SnapshotPolicy {
   using: string | null;
   withCheck: string | null;
 }
-interface LiveSnapshot {
+export interface LiveSnapshot {
   capturedAt: string;
   tables: Record<string, [string, string, boolean][]>; // [col, type, nullable]
   views: string[];
@@ -1042,7 +823,7 @@ const EXPECTED_NULLABILITY = new Map<string, string>([
 ]);
 
 /** Strip Supabase RPC arg conventions so we compare on the bare function name. */
-function computeDrift(
+export function computeDrift(
   snap: LiveSnapshot,
   tables: TableEntry[],
   views: ViewEntry[],
@@ -1142,13 +923,13 @@ interface CoverageDir {
   pct: number;
   files: number;
 }
-interface CoverageData {
+export interface CoverageData {
   totals: { lines: number; hit: number; pct: number; files: number };
   dirs: CoverageDir[];
   files: CoverageFile[];
 }
 
-function extractCoverage(lcovPath: string): CoverageData | null {
+export function extractCoverage(lcovPath: string, preserveFrom = OUT_PATH): CoverageData | null {
   let raw: string;
   try {
     raw = readFileSync(lcovPath, "utf8");
@@ -1156,7 +937,7 @@ function extractCoverage(lcovPath: string): CoverageData | null {
     // Preserve the last committed coverage block so a machine that has never
     // run `npm run test:unit:coverage` cannot wipe it by re-extracting.
     try {
-      const existing = JSON.parse(readFileSync(OUT_PATH, "utf8")) as Manifest;
+      const existing = JSON.parse(readFileSync(preserveFrom, "utf8")) as Manifest;
       if (existing.coverage) {
         console.log(
           `[extract] coverage/lcov.info missing — preserving committed coverage (${existing.coverage.totals.pct}% lines)`
@@ -1335,43 +1116,7 @@ function extractActionDetails(actionsDir: string): ActionDetail[] {
   return out;
 }
 
-// ── Broadcast event catalog (extracted from broadcast.ts) ───────────────────────
-
-interface BroadcastEntry {
-  event: string; // realtime event name
-  payloadType: string; // TS payload interface name
-  types?: string[]; // union members for organizer_intervention
-}
-
-function extractBroadcasts(path: string): BroadcastEntry[] {
-  let src: string;
-  try {
-    src = readFileSync(path, "utf8");
-  } catch {
-    return [];
-  }
-  const out: BroadcastEntry[] = [];
-  // event names come from postBroadcast(`...`, "event_name", payload)
-  const re = /postBroadcast\([^,]+,\s*["'`](\w+)["'`]/g;
-  let m: RegExpExecArray | null;
-  const seen = new Set<string>();
-  while ((m = re.exec(src))) {
-    const event = m[1];
-    if (seen.has(event)) continue;
-    seen.add(event);
-    out.push({ event, payloadType: "" });
-  }
-  // organizer_intervention union members
-  const unionMatch = src.match(/OrganizerInterventionType\s*=\s*([\s\S]*?);/);
-  if (unionMatch) {
-    const members = [...unionMatch[1].matchAll(/["'`](\w+)["'`]/g)].map((x) => x[1]);
-    const oi = out.find((b) => b.event === "organizer_intervention");
-    if (oi) oi.types = members;
-  }
-  return out;
-}
-
-// ── State machines (queue_status + match_status) — curated ───────────────────────
+// ── State machines (queue_status + match_status + held drafts) — curated ───────
 
 interface StateEdge {
   from: string;
@@ -1415,14 +1160,36 @@ const STATE_MACHINES: StateMachine[] = [
       { from: "completed", to: "in_progress", label: "score reverted (revert_match_to_active)" },
     ],
   },
+  {
+    name: "Held-draft lifecycle",
+    field: "deriveHeldState",
+    states: ["HOLDING", "RESTING", "READY"],
+    edges: [
+      {
+        from: "HOLDING",
+        to: "RESTING",
+        label: "source match ends; held_ready_at still null",
+      },
+      {
+        from: "RESTING",
+        to: "READY",
+        label: "held_ready_at stamped (promotable)",
+      },
+      {
+        from: "HOLDING",
+        to: "READY",
+        label: "held_ready_at stamped while source still in_progress",
+      },
+    ],
+  },
 ];
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 /** Keys that vary by environment / clock and must not fail `--check`. */
-const CHECK_IGNORE_KEYS = new Set(["_lastExtracted", "coverage"]);
+export const CHECK_IGNORE_KEYS = new Set(["_lastExtracted", "coverage"]);
 
-function canonicalForCheck(manifest: Manifest): string {
+export function canonicalForCheck(manifest: Manifest): string {
   const copy = { ...(manifest as unknown as Record<string, unknown>) };
   for (const key of CHECK_IGNORE_KEYS) delete copy[key];
   return JSON.stringify(copy);
@@ -1459,6 +1226,17 @@ export function buildManifest(): Manifest {
   const coverage = extractCoverage(resolve(HOST_ROOT, "coverage/lcov.info"));
   const snapshot = readSnapshot(resolve(__dirname, "../src/data/live-schema-snapshot.json"));
   const schemaDrift = snapshot ? computeDrift(snapshot, tables, views, rpcs) : null;
+  const channels = extractChannels(HOST_ROOT);
+  const components = extractComponents(HOST_ROOT, {
+    components: resolve(HOST_ROOT, "src/components"),
+    hooks: resolve(HOST_ROOT, "src/hooks"),
+    actions: resolve(HOST_ROOT, "src/app/actions"),
+  });
+  const routes = extractRoutes(resolve(HOST_ROOT, "src/app"), HOST_ROOT);
+  const gotchas = extractGotchas(
+    resolve(HOST_ROOT, "APP_MANIFEST.md"),
+    resolve(__dirname, "../src/data/gotcha-sidecar.json")
+  );
 
   return {
     _version: 2,
@@ -1469,11 +1247,11 @@ export function buildManifest(): Manifest {
     rpcs,
     constants,
     actions,
-    channels: [],
+    channels,
     broadcasts,
-    gotchas: CURATED_GOTCHAS,
-    components: [],
-    scenarios: [],
+    gotchas,
+    components,
+    routes,
     designTokens,
     migrations,
     rlsPolicies: snapshot?.policies ?? [],
@@ -1497,6 +1275,10 @@ function logSummary(manifest: Manifest, ms: number): void {
   );
   console.log(`  migrations:   ${manifest.migrations.length}`);
   console.log(`  broadcasts:   ${manifest.broadcasts.length}`);
+  console.log(`  channels:     ${manifest.channels.length}`);
+  console.log(`  gotchas:      ${manifest.gotchas.length}`);
+  console.log(`  components:   ${manifest.components.length}`);
+  console.log(`  routes:       ${manifest.routes.length}`);
   console.log(`  rlsPolicies:  ${manifest.rlsPolicies.length}`);
   console.log(
     `  coverage:     ${manifest.coverage ? manifest.coverage.totals.pct + "% lines" : "n/a"}`

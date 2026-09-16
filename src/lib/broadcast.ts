@@ -253,10 +253,11 @@ export interface AutoMatchmakingToggledPayload {
  * Notify all organizers in a session that the auto-matchmaking
  * toggle has changed.
  *
- * This uses Broadcast (not postgres_changes) so it bypasses the
- * RLS SELECT check on the sessions table. Co-organizers who are
- * not the session creator would otherwise never receive the UPDATE
- * event because their JWT fails the RLS SELECT policy.
+ * This uses Broadcast (not postgres_changes apply) so the toggle UI stays on
+ * the faster, prefix-namespaced `session-events` path. Co-organizers now have
+ * SELECT on `sessions` via `is_session_organizer` / `is_club_member` — the
+ * UPDATE event does arrive — but the session-settings handler strips
+ * `is_auto_matchmaking_on` and `auto_publish` before applying the row.
  *
  * Channel: session-events:{sessionId}
  * Event:   auto_matchmaking_toggled

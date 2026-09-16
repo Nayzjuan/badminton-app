@@ -1,6 +1,6 @@
 {
   "_version": 2,
-  "_lastExtracted": "2026-09-16T03:27:41.245Z",
+  "_lastExtracted": "2026-09-16T03:32:29.354Z",
   "tables": [
     {
       "name": "profiles",
@@ -3489,39 +3489,176 @@
       ]
     }
   ],
-  "channels": [],
+  "channels": [
+    {
+      "template": "{prefix}:{table}:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": "subscribeToTable",
+      "sources": [
+        "src/lib/realtime.ts"
+      ]
+    },
+    {
+      "template": "{prefix}:profiles:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": "subscribeToProfiles",
+      "sources": [
+        "src/lib/realtime.ts"
+      ]
+    },
+    {
+      "template": "{prefix}:session-row:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": "subscribeToSessionRow",
+      "sources": [
+        "src/lib/realtime.ts"
+      ]
+    },
+    {
+      "template": "{table}:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": "subscribeToTable",
+      "sources": [
+        "src/lib/realtime.ts"
+      ]
+    },
+    {
+      "template": "alerts-match-players:{table}:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": null,
+      "sources": [
+        "src/hooks/use-match-alerts.ts"
+      ]
+    },
+    {
+      "template": "alerts-matches:{table}:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": null,
+      "sources": [
+        "src/hooks/use-match-alerts.ts"
+      ]
+    },
+    {
+      "template": "alerts-queue:{table}:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": null,
+      "sources": [
+        "src/hooks/use-match-alerts.ts"
+      ]
+    },
+    {
+      "template": "clearing :{table}:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": null,
+      "sources": [
+        "src/hooks/use-organizer-session.ts"
+      ]
+    },
+    {
+      "template": "leaderboard:{table}:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": null,
+      "sources": [
+        "src/hooks/use-leaderboard.ts"
+      ]
+    },
+    {
+      "template": "match_players_select",
+      "kind": "postgres_changes",
+      "helper": "subscribeToMatchPlayers",
+      "sources": [
+        "src/lib/realtime.ts"
+      ]
+    },
+    {
+      "template": "org-history:{table}:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": null,
+      "sources": [
+        "src/hooks/use-match-history.ts"
+      ]
+    },
+    {
+      "template": "player-history:{table}:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": null,
+      "sources": [
+        "src/components/player/match-history.tsx"
+      ]
+    },
+    {
+      "template": "player-match:{table}:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": null,
+      "sources": [
+        "src/hooks/use-player-match.ts"
+      ]
+    },
+    {
+      "template": "session-events:{sessionId}",
+      "kind": "broadcast",
+      "helper": "subscribeToOrganizerBroadcast",
+      "sources": [
+        "src/lib/realtime.ts"
+      ]
+    },
+    {
+      "template": "session-settings:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": null,
+      "sources": [
+        "src/hooks/use-organizer-session.ts"
+      ]
+    },
+    {
+      "template": "tv:{table}:{sessionId}",
+      "kind": "postgres_changes",
+      "helper": null,
+      "sources": [
+        "src/hooks/use-tv-board.ts"
+      ]
+    }
+  ],
   "broadcasts": [
     {
       "event": "session_closed",
-      "payloadType": ""
+      "payloadType": "SessionClosedPayload",
+      "emitter": "broadcastSessionClosed"
     },
     {
       "event": "auto_matchmaking_toggled",
-      "payloadType": ""
+      "payloadType": "AutoMatchmakingToggledPayload",
+      "emitter": "broadcastAutoMatchmakingToggled"
     },
     {
       "event": "drafts_published",
-      "payloadType": ""
+      "payloadType": "DraftsPublishedPayload",
+      "emitter": "broadcastDraftsPublished"
     },
     {
       "event": "auto_publish_toggled",
-      "payloadType": ""
+      "payloadType": "AutoPublishToggledPayload",
+      "emitter": "broadcastAutoPublishToggled"
     },
     {
       "event": "cap_saturation",
-      "payloadType": ""
+      "payloadType": "CapSaturationPayload",
+      "emitter": "broadcastCapSaturation"
     },
     {
       "event": "draft_cap_phase",
-      "payloadType": ""
+      "payloadType": "DraftCapPhasePayload",
+      "emitter": "broadcastDraftCapPhase"
     },
     {
       "event": "queue_notice",
-      "payloadType": ""
+      "payloadType": "QueueNoticePayload",
+      "emitter": "broadcastQueueNotice"
     },
     {
       "event": "organizer_intervention",
-      "payloadType": "",
+      "payloadType": "OrganizerInterventionPayload",
+      "emitter": "broadcastOrganizerIntervention",
       "types": [
         "on_deck_cleared",
         "match_cancelled",
@@ -3531,175 +3668,293 @@
   ],
   "gotchas": [
     {
+      "id": "nextjs-16-breaking",
+      "number": 1,
+      "title": "Next.js 16 breaking changes",
+      "body": "Do NOT assume Next.js 13/14/15 APIs. Always check `node_modules/next/dist/docs/` first.",
+      "severity": "info",
+      "category": "Framework"
+    },
+    {
       "id": "type-not-interface",
-      "title": "`type` not `interface` for DB rows",
-      "body": "All DB row types in src/types/database.ts must be `type` aliases, never `interface`. Supabase's generic system requires sealed types — interfaces are open and cause silent type widening.",
+      "number": 2,
+      "title": "`type` not `interface` for all DB row types",
+      "body": "Supabase generics require `type` aliases.",
       "severity": "warn",
       "category": "TypeScript",
       "link": "/database"
     },
     {
-      "id": "service-client-mutations",
-      "title": "Service client for all cross-user mutations",
-      "body": "Any write that touches another user's row must use createServiceClient(). Using the RLS client silently returns 0 rows for the primary organizer — no error, no write.",
-      "severity": "critical",
-      "category": "Auth / RLS",
-      "link": "/actions"
-    },
-    {
-      "id": "sign-out-before-anonymous",
-      "title": "`signOut()` before `signInAnonymously()`",
-      "body": "reconnectPlayer always calls signOut() first. Skipping this causes a stale session conflict that silently fails the entire identity migration — the player loses their history.",
-      "severity": "critical",
-      "category": "Auth / RLS",
-      "link": "/flows"
-    },
-    {
-      "id": "auto-matchmaking-no-postgres-changes",
-      "title": "`is_auto_matchmaking_on` excluded from postgres_changes",
-      "body": "sessions RLS SELECT only grants access to the row creator. A co-organizer's postgres_changes subscription for this field is silently dropped. It must sync exclusively via the `auto_matchmaking_toggled` broadcast.",
-      "severity": "critical",
-      "category": "Realtime",
-      "link": "/realtime"
-    },
-    {
-      "id": "create-match-null-on-toctou",
-      "title": "`create_match_with_players` returns NULL on TOCTOU conflict",
-      "body": "{ data: null, error: null } means a DB guard fired — not a hard error. Always check rpcError and !matchId separately. !matchId with no error = graceful slot-skip (log + continue).",
-      "severity": "critical",
-      "category": "Engine",
-      "link": "/engine"
-    },
-    {
-      "id": "engine-running-for-process-local",
-      "title": "`engineRunningFor` Set is process-local only",
-      "body": "Prevents double-runs within one Node.js process but is useless on Vercel serverless (each request = new worker). Cross-process serialization is handled exclusively by the DB-level TOCTOU guard in create_match_with_players.",
-      "severity": "critical",
-      "category": "Engine",
-      "link": "/engine"
-    },
-    {
-      "id": "session-organizers-append-only",
-      "title": "`session_organizers` is append-only",
-      "body": "Never DELETE or UPDATE rows in session_organizers. Presence of a row = permission granted. Deleting a row removes organizer access with no undo.",
-      "severity": "critical",
-      "category": "Schema",
-      "link": "/database"
-    },
-    {
-      "id": "auth-users-trigger",
-      "title": "`auth.users` trigger auto-creates profile",
-      "body": "Inserting into auth.users auto-creates a profiles row via handle_new_user(). Do not also insert a profile manually — you will hit a PK conflict.",
-      "severity": "critical",
-      "category": "Schema",
-      "link": "/database"
-    },
-    {
-      "id": "sessions-trigger",
-      "title": "`sessions` trigger auto-inserts organizer row",
-      "body": "Inserting into sessions auto-inserts a session_organizers row for created_by via handle_new_session(). Do not also insert an organizer row manually.",
-      "severity": "critical",
-      "category": "Schema",
-      "link": "/database"
-    },
-    {
       "id": "build-overlap-map-async",
-      "title": "Diversity derivations are pure but live in matchmaking-db",
-      "body": "deriveRecentRosters / derivePairCounts / deriveOverlapMap take no client and hit no DB, yet they sit in matchmaking-db.ts next to fetchSessionMatchSnapshot rather than in the pure matchmaking-core.ts — the snapshot shape is theirs. The one async helper, fetchSessionMatchSnapshot, FAILS CLOSED: on { ok: false } the engine breaks the burst. Never substitute an empty snapshot, or every repeat reads as a fresh pairing.",
+      "number": 3,
+      "title": "The diversity derivations are pure, but live in `matchmaking-db.ts`",
+      "body": "`deriveRecentRosters` / `derivePairCounts` / `deriveOverlapMap` take no client and hit no DB, yet they sit next to `fetchSessionMatchSnapshot` rather than in `matchmaking-core.ts`, because the snapshot shape is theirs. The one async helper left, `fetchSessionMatchSnapshot`, **fails closed** — never paper over `{ ok: false }` with an empty snapshot.",
       "severity": "warn",
       "category": "Engine",
       "link": "/engine"
     },
     {
       "id": "recent-rosters-hoisted",
-      "title": "Snapshot re-read per slot; `overlapMap` per-anchor",
-      "body": "One fetchSessionMatchSnapshot per engine slot feeds all three diversity inputs at zero extra DB cost. It is re-read per slot on purpose, so sibling drafts committed by earlier slots of the same burst are visible. overlapMap is anchor-specific and must be derived inside the per-anchor tick.",
+      "number": 4,
+      "title": "`recentRosters` derived per slot; `overlapMap` per anchor",
+      "body": "both come off the same snapshot at no extra DB cost. The snapshot is re-read per slot so sibling drafts from earlier slots of the same burst are visible; `overlapMap` is anchor-specific and must be derived per-tick.",
       "severity": "warn",
       "category": "Engine",
       "link": "/engine"
     },
     {
+      "id": "vercel-bypass-header",
+      "number": 5,
+      "title": "Vercel bypass",
+      "body": "`_vercel_share` tokens do NOT work for Playwright. Only `x-vercel-protection-bypass` header works.",
+      "severity": "info",
+      "category": "CI / Testing"
+    },
+    {
+      "id": "dnd-kit-two-attrs",
+      "number": 6,
+      "title": "dnd-kit",
+      "body": "`data-no-dnd` attribute + `onPointerDown stopPropagation` BOTH required on interactive children of draggable containers.",
+      "severity": "info",
+      "category": "UI",
+      "link": "/components"
+    },
+    {
+      "id": "service-client-mutations",
+      "number": 7,
+      "title": "Service client for all mutations",
+      "body": "any cross-user write must use `createServiceClient()`. RLS silently returns 0 rows for the primary organizer if you use the RLS client.",
+      "severity": "critical",
+      "category": "Auth / RLS",
+      "link": "/actions"
+    },
+    {
       "id": "cancel-match-auto-promotes",
-      "title": "`cancelMatchAction` auto-promotes oldest on-deck match",
-      "body": "Cancelling a match does not leave the court idle. It auto-promotes the oldest published on-deck match and re-runs the engine. Handle the cascade in the UI — don't assume cancellation is a no-op.",
+      "number": 8,
+      "title": "`cancelMatchAction` auto-promotes",
+      "body": "cancelling a match auto-promotes the oldest on-deck match and runs the engine. It does not leave the court idle.",
       "severity": "warn",
       "category": "Match",
       "link": "/actions"
     },
     {
+      "id": "cookie-chunking",
+      "number": 9,
+      "title": "Cookie chunking",
+      "body": "`@supabase/ssr` chunks auth tokens at 3180 encoded chars — handle `.0`, `.1` suffixes.",
+      "severity": "info",
+      "category": "Auth / RLS",
+      "link": "/actions"
+    },
+    {
       "id": "draft-mode-blocks-call-next",
+      "number": 10,
       "title": "Draft mode blocks `callNextMatch`",
-      "body": "If all pending matches are drafts (is_published = false), callNextMatch returns hasDraftsBlocking: true instead of promoting a match. The organizer must publish drafts first.",
+      "body": "if all pending matches are drafts (`is_published = false`), `callNextMatch` returns `hasDraftsBlocking: true` instead of promoting. Organizer must publish first.",
       "severity": "warn",
       "category": "Engine",
       "link": "/engine"
     },
     {
+      "id": "session-organizers-append-only",
+      "number": 11,
+      "title": "`session_organizers` is append-only",
+      "body": "never DELETE or UPDATE rows. Presence = permission.",
+      "severity": "critical",
+      "category": "Schema",
+      "link": "/database"
+    },
+    {
+      "id": "auth-users-trigger",
+      "number": 12,
+      "title": "`auth.users` trigger",
+      "body": "inserting into `auth.users` auto-creates a `profiles` row via `handle_new_user()`. Do not also insert a profile manually or you'll hit a PK conflict.",
+      "severity": "critical",
+      "category": "Schema",
+      "link": "/database"
+    },
+    {
+      "id": "sessions-trigger",
+      "number": 13,
+      "title": "`sessions` trigger",
+      "body": "inserting into `sessions` auto-inserts a `session_organizers` row for `created_by` via `handle_new_session()`. Do not also insert an organizer row manually.",
+      "severity": "critical",
+      "category": "Schema",
+      "link": "/database"
+    },
+    {
       "id": "snake-draft-null-guard",
-      "title": "`snakeDraft` / `rotatedDraft` return `null` on cap block",
-      "body": "Both draft functions return null when MAX_PARTNERSHIP_REPEATS blocks every valid team split. null = slot failure, not an error. All callers must null-guard — an unguarded null propagates as a phantom match.",
+      "number": 14,
+      "title": "`snakeDraft` / `rotatedDraft` return `null`",
+      "body": "when `MAX_PARTNERSHIP_REPEATS` cap blocks every team split. All callers must null-guard; `null` = slot failure, not an error.",
       "severity": "warn",
       "category": "Engine",
       "link": "/engine"
     },
     {
       "id": "ghost-requeue-prevention",
-      "title": "Ghost re-queue prevention on match end/cancel",
-      "body": "match end/cancel checks queue_entries.status before re-queuing. A player with status 'left' is NOT re-queued even if they appear in match_players. Prevents ghost players re-appearing after checkout.",
+      "number": 15,
+      "title": "Ghost re-queue prevention",
+      "body": "match end/cancel checks `queue_entries.status` before re-queuing. A player with status `left` is NOT re-queued even if they appear in `match_players`.",
       "severity": "warn",
-      "category": "Queue",
-      "link": "/actions"
+      "category": "Match",
+      "link": "/engine"
     },
     {
       "id": "active-match-rejoin-guard",
-      "title": "Active-match re-join guard in `joinQueueAction`",
-      "body": "joinQueueAction rejects if the player's current queue status is 'playing'. Guards against double-queue on rapid re-tap (e.g. network retry). Returns a clean error — not a silent no-op.",
+      "number": 16,
+      "title": "Active-match re-join guard",
+      "body": "`joinQueueAction` rejects if the player's current queue status is `playing`. Guards against double-queue on rapid re-tap.",
       "severity": "warn",
-      "category": "Queue",
+      "category": "Match",
       "link": "/actions"
     },
     {
       "id": "uuid-validation-all-actions",
-      "title": "UUID validation required before every DB call",
-      "body": "Every server action must call isValidUUID() on every UUID parameter. Malformed IDs return early with a clean error — they never reach PostgREST. Missing this guard exposes the action to injection via crafted UUIDs.",
-      "severity": "warn",
+      "number": 17,
+      "title": "UUID validation before all DB calls",
+      "body": "Every server action must call `isValidUUID()` on every UUID parameter before touching Supabase. Malformed UUIDs return early with a clean error.",
+      "severity": "critical",
       "category": "Actions",
       "link": "/actions"
     },
     {
-      "id": "on-deck-actions-in-match-not-matchmaking",
-      "title": "On-deck actions live in `match.ts`, not `matchmaking.ts`",
-      "body": "clearOnDeckMatch, reorderOnDeckMatches, publishMatchAction, and publishAllDraftMatchesAction all live in match.ts. Only engine entry points (callNextMatch, runEngineForSession) live in matchmaking.ts.",
-      "severity": "warn",
-      "category": "Actions",
-      "link": "/actions"
+      "id": "sign-out-before-anonymous",
+      "number": 18,
+      "title": "`signOut()` before `signInAnonymously()`",
+      "body": "reconnectPlayer always signs out first. Skipping this causes a stale session conflict that silently fails the identity migration.",
+      "severity": "critical",
+      "category": "Auth / RLS",
+      "link": "/flows"
     },
     {
-      "id": "max-auto-drafts-replaces-formula",
-      "title": "`MAX_AUTO_DRAFTS` replaces the old capacity formula",
-      "body": "MAX_ON_DECK_MATCHES and ON_DECK_LOOKAHEAD are no longer used by the live engine (kept in constants.ts for simulate-engine.ts only). The live engine uses slotsAvailable = max(0, MAX_AUTO_DRAFTS − totalPending) with a single atomic count — never split into published/draft counts.",
+      "id": "fix-record-skips-rivalries",
+      "number": 19,
+      "title": "`fix_record_swap_player` does NOT update `player_rivalries`",
+      "body": "The Fix Player Record RPC corrects `match_players`, `player_partnerships`, `queue_entries.games_played`, `matches.is_mixed_level`, and `matches.origin`, but intentionally skips `player_rivalries` (all-time H2H). Rivalries are only used for Session Wrapped awards display, not matchmaking. A correction will show slightly stale H2H data in wrapped awards (e.g. `nemesis_slayer`, `the_dynasty`) for affected players. A future migration can add opponent-delta logic mirroring `_fix_record_partnership_delta`.",
       "severity": "warn",
-      "category": "Engine",
-      "link": "/engine"
+      "category": "Schema",
+      "link": "/database"
     },
     {
       "id": "skill-level-6-values",
-      "title": "Skill level has exactly 6 values — `upper_beginner` removed",
-      "body": "The skill_level enum is: beginner, lower_intermediate, intermediate, upper_intermediate, lower_advanced, advanced. upper_beginner was removed. Never reference it in code or migrations.",
+      "number": 20,
+      "title": "Skill level has 6 values",
+      "body": "`upper_beginner` was removed. The enum is: `beginner`, `lower_intermediate`, `intermediate`, `upper_intermediate`, `lower_advanced`, `advanced`. Never reference `upper_beginner` in code or migrations.",
       "severity": "warn",
       "category": "Schema",
       "link": "/database"
     },
     {
       "id": "sessions-ts-plural",
+      "number": 21,
       "title": "`sessions.ts` not `session.ts`",
-      "body": "The actions file is sessions.ts (plural). Creating a session.ts duplicate will silently shadow the original file and cause all session actions to 404 in production.",
+      "body": "the actions file is `sessions.ts` (plural). Don't create a `session.ts` duplicate.",
       "severity": "warn",
       "category": "Actions",
       "link": "/actions"
     },
     {
+      "id": "auto-matchmaking-no-postgres-changes",
+      "number": 22,
+      "title": "`is_auto_matchmaking_on` (and `auto_publish`) stay off the session-settings postgres_changes apply",
+      "body": "co-organizers now have `SELECT` on `sessions` via `is_session_organizer` / `is_club_member`, so the UPDATE event does arrive. The toggle UI still syncs exclusively via `auto_matchmaking_toggled` / `auto_publish_toggled` because broadcast is the faster, prefix-namespaced path, and the handler strips those two columns before applying the rest. Never re-sync them through the sessions postgres_changes channel.",
+      "severity": "critical",
+      "category": "Realtime",
+      "link": "/realtime"
+    },
+    {
+      "id": "on-deck-actions-in-match-not-matchmaking",
+      "number": 23,
+      "title": "On-deck match actions are in `match-drafts.ts`, not `matchmaking.ts`",
+      "body": "`clearOnDeckMatch`, `reorderOnDeckMatches`, `publishMatchAction`, and `publishAllDraftMatchesAction` all live in `src/app/actions/match-drafts.ts`. Match lifecycle actions (`submitMatchScore`, `endMatchAction`, `cancelMatchAction`, `updateMatchDetails`, `createManualMatchAction`) live in `src/app/actions/match-lifecycle.ts`. Only the engine logic (`callNextMatch`, `runEngineForSession`) lives in `matchmaking.ts`. The original `match.ts` was split into `match-lifecycle.ts` + `match-drafts.ts` during the Chunks A–D refactoring.",
+      "severity": "warn",
+      "category": "Actions",
+      "link": "/actions"
+    },
+    {
+      "id": "max-auto-drafts-replaces-formula",
+      "number": 24,
+      "title": "Draft capacity is a DYNAMIC cap, not the flat `MAX_AUTO_DRAFTS`",
+      "body": "`MAX_ON_DECK_MATCHES` / `ON_DECK_LOOKAHEAD` are no longer imported by `matchmaking.ts`. The live engine uses `slotsAvailable = max(0, getDynamicDraftCap(waitingCount) − draftCount)` where the cap is 3 / 5 / 6 by waiting-pool size (organizer `max_auto_drafts_override` is a ceiling), and `draftCount` counts **only `is_published=false`** pending rows in draft mode (published on-deck matches never block fresh drafts). Auto-publish mode instead counts `is_published=true OR is_held=true` pending rows (§3.5). Keep it a single atomic count per mode — do not reintroduce a second racing query.",
+      "severity": "warn",
+      "category": "Engine",
+      "link": "/engine"
+    },
+    {
+      "id": "create-match-null-on-toctou",
+      "number": 25,
+      "title": "`create_match_with_players` returns `NULL` on TOCTOU conflict",
+      "body": "`{ data: null, error: null }` from the Supabase JS client means a DB guard fired, not a hard error. Always check `rpcError` and `!matchId` **separately**: `rpcError` = DB error (fail loudly); `!matchId` with no error = graceful slot-skip (log warning, continue). If the RPC is ever changed from `RETURNS uuid` to `RETURNS SETOF uuid`, the `!matchId` detection breaks silently.",
+      "severity": "critical",
+      "category": "Engine",
+      "link": "/engine"
+    },
+    {
+      "id": "engine-running-for-process-local",
+      "number": 26,
+      "title": "`engineRunningFor` Set is process-local only",
+      "body": "it prevents double-runs within a single Node.js process (e.g. two simultaneous queue joins), but is completely ineffective in Vercel serverless where each request may land on a different worker. Cross-process serialization is enforced exclusively by the DB-level TOCTOU guards inside `create_match_with_players` (migration `20260507000000`).",
+      "severity": "critical",
+      "category": "Engine",
+      "link": "/engine"
+    },
+    {
+      "id": "player-status-two-hooks",
+      "number": 27,
+      "title": "Player \"My Status\" is driven by two independent realtime hooks that flip on different beats",
+      "body": "`useQueue` (queue_entries → `myEntry.status`) and `usePlayerMatch` (matches/match_players → `hasActiveMatch`). `QueueSubTab` (`my-status-tab.tsx`) bridges both transient windows: `drafted` / `on_deck` → \"Match Forming\" holding card (assignment: the queue row flips before the match loads — prevents the \"kicked out\" join-screen flash, PR #20); `playing` with `hasActiveMatch = false` → neutral \"Wrapping up…\" card (match end: `currentMatch` clears a beat before the row flips back to `waiting`, PR #26). Never re-broaden to \"any non-waiting → Match Forming\": that made a just-finished player briefly see \"you've been selected\". A genuinely-playing player never sees either card — the MatchAlert overlay takes over.",
+      "severity": "warn",
+      "category": "Realtime",
+      "link": "/realtime"
+    },
+    {
+      "id": "sub-quantum-cannot-overturn-tier",
+      "number": 28,
+      "title": "A sub-quantum penalty cannot overturn a fairness _tier_",
+      "body": "`CONSECUTIVE_OPPONENT_PENALTY` is bounded at `4 × 3 = 12` for a real split (`5 × 3 = 15` once `buildCombinationGroup`'s unsplittable sentinel is included — quote 15 when reasoning about that argmin), below the games-ahead quantum (10 000) and below one anchor-overlap unit (10 000), so it cannot reorder across either. It is *not* smaller than every fairness gap: inside one tier the remaining separator is wait time, and 12 summed priority-minutes reorders waiters ~4 min apart routinely — which is the term's whole purpose. See the scoped proof on the constant itself (`constants.ts`), not a paraphrase of it. The consequence for feature design: any feature that tries to win a *selection* on freshness by pricing a term into the score is fragile. Cross-court drafting appended pulled bodies at `priorityScore:-1` and asked `runAlgorithm` to prefer them. The arithmetic — \"trails by a lot\" is the wrong intuition, and so is \"always loses\": `scoreCandidates` exempts a pulled body from the games-ahead term **only**, so it scores `+1 + overlap×10 000` while a waiter scores `-priorityScore + overlap×10 000 + gamesAhead×10 000`. Both exempted-vs-not terms favour the **body** (its games-ahead is forced to 0; its overlap is usually 0 where a recently-co-courted waiter pays 20 000). And the selection is not even a per-candidate comparison: `buildCombinationGroup` argmins over whole **triples** on `fairness + 3 × repeats`, so what wins depends on the assembled four, not on any candidate's score. On the pool this feature targets the margin comes out a **dead tie**, not a chasm, and the argmin's strict `<` keeps the incumbent. The general lesson: if a candidate must be chosen for a sub-quantum reason, **force it into the group and judge the result** (`buildCrossCourtProposal`) — do not price it into the sort, because a score cannot express a property of the group. Full derivation on `buildCrossCourtProposal`; it has been mis-stated three times, so read it rather than paraphrasing.",
+      "severity": "warn",
+      "category": "Engine",
+      "link": "/engine"
+    },
+    {
+      "id": "green-helper-suite-not-reachability",
+      "number": 29,
+      "title": "A green helper suite proves nothing about reachability",
+      "body": "every cross-court helper had coverage while the feature produced 0 held drafts, because no test asserted the engine ever took the branch. When a trigger lives inside a server action, extract the predicate so it can be tested (`wantsFresherFour`), and assert the branch is taken end-to-end (`CC-REACH-1`). Related trap: `getEffectiveLookback` scales with pool size, so calling `runAlgorithm` with a hand-built 4-player pool silently collapses the diversity window to 2 — re-check diversity against the caller's real pool.",
+      "severity": "warn",
+      "category": "Engine",
+      "link": "/engine"
+    },
+    {
+      "id": "eslint-ignores-not-gitignore",
+      "number": 30,
+      "title": "ESLint flat config does NOT read `.gitignore`",
+      "body": "anything generated must be listed in `globalIgnores` in `eslint.config.mjs` or eslint lints it. Left unlisted, build output + `.astro` type caches + `coverage/` + a stale `.claude/worktrees` checkout produced 47 of 62 errors and ~2,700 of 2,744 warnings — noise that hid the real findings. The test for adding a path: **if git does not track it, a fix there cannot survive the next build.** `.agents/**` is the one entry that breaks that rule and is justified separately (vendored third-party skill, 0 errors / 95 warnings). Keep the globs anchored per sub-project (`digital-twin/dist/**`, not `**/dist/**`) so a future hand-written `dist` is not silently skipped. **Related:** the root `tsconfig.json` `exclude`s `digital-twin` and `marketing-site`, so `npx tsc --noEmit` does **not** typecheck them — run `npx tsc --noEmit -p tsconfig.json` inside the sub-project separately.",
+      "severity": "info",
+      "category": "Framework"
+    },
+    {
+      "id": "draft-chip-detects-in-render",
+      "number": 31,
+      "title": "The organizer's \"New\" draft chip detects its edge during RENDER, not in an effect",
+      "body": "`organizer-dashboard.tsx` compares `prevDraftCount` to `draftMatches.length` in the render body (React's sanctioned adjust-state-on-changed-value pattern) and sets a `draftNotice` object; the toast effect keys on **that object's identity**, not on the count. This is deliberate and load-bearing in two ways. (a) The previous version keyed the effect on `[draftMatches.length]`, so its cleanup ran before *every* re-run and cleared the 3 s reset timer without resetting the flag — two drafts arriving as two realtime INSERTs stranded the chip lit permanently. (b) A fresh object per edge is what re-arms the toast on a rapid 0→n→0→n, which a count comparison would miss when both edges have the same count. Do not \"simplify\" this to a memoized value or a count check.",
+      "severity": "warn",
+      "category": "UI",
+      "link": "/components"
+    },
+    {
+      "id": "red-zone-score-floor-is-addend",
+      "number": 32,
+      "title": "`RED_ZONE_SCORE_FLOOR` is an ADDEND, not a floor",
+      "body": "never test `priorityScore >= RED_ZONE_SCORE_FLOOR`** — Tier 2 returns `1000 + wait − games × 8`, so any Red-Zone player with `games × 8 > wait` scores *below* 1000 (wait 22 / 3 games → 998; and wait 30 / 5 games → 990, because `HARD_CAP_GAMES_CEILING` drops them out of Tier 3 into Tier 2). Call **`isRedZonePlayer()`**. This one is a repeat offender: five separate call sites believed the equivalence, the constant's own doc comment asserted it, and it under-reported the Red Zone on 20 of 318 sampled production matches (§3.34). The same trap generalises — a score that *encodes* a tier is not a test *for* that tier the moment any other term can move it.\n\n---",
+      "severity": "critical",
+      "category": "Engine",
+      "link": "/engine"
+    },
+    {
       "id": "postgrest-update-empty-array",
+      "number": null,
       "title": "PostgREST `UPDATE` matching 0 rows returns empty array",
       "body": "An UPDATE matching 0 rows returns an empty array — not null and not an error. Using .single() on such a response throws. Use array + length check for atomic CAS guards.",
       "severity": "warn",
@@ -3707,37 +3962,8 @@
       "link": "/database"
     },
     {
-      "id": "dnd-kit-two-attrs",
-      "title": "dnd-kit: two attributes required on interactive children",
-      "body": "Both data-no-dnd attribute AND onPointerDown stopPropagation are required on interactive children (buttons, inputs) inside draggable containers. Missing either causes drag events to fire on button clicks.",
-      "severity": "info",
-      "category": "UI",
-      "link": "/components"
-    },
-    {
-      "id": "cookie-chunking",
-      "title": "@supabase/ssr chunks auth tokens",
-      "body": "@supabase/ssr splits auth tokens at 3180 encoded chars into .0, .1, .2 suffixed cookies. Any custom cookie handling must join these chunks before passing to the Supabase client.",
-      "severity": "info",
-      "category": "Auth / RLS",
-      "link": "/actions"
-    },
-    {
-      "id": "nextjs-16-breaking",
-      "title": "Next.js 16 breaking changes",
-      "body": "Do NOT assume Next.js 13/14/15 APIs. Key changes in 16: params and searchParams are now async Promises. Always await params in Server Components and use React.use() in Client Components.",
-      "severity": "info",
-      "category": "Framework"
-    },
-    {
-      "id": "vercel-bypass-header",
-      "title": "Vercel protection bypass for Playwright",
-      "body": "_vercel_share tokens do NOT work for Playwright E2E tests. The only working approach is the x-vercel-protection-bypass header in playwright.config.ts extraHTTPHeaders.",
-      "severity": "info",
-      "category": "CI / Testing"
-    },
-    {
       "id": "postgrest-insert-single-safe",
+      "number": null,
       "title": "PostgREST INSERT + `.select().single()` is safe",
       "body": "Unlike UPDATE (which may match 0 rows), INSERT with .select().single() always returns exactly one row or throws. Safe to use .single() on INSERT — it will never return an empty array.",
       "severity": "info",
@@ -3745,8 +3971,1528 @@
       "link": "/database"
     }
   ],
-  "components": [],
-  "scenarios": [],
+  "components": [
+    {
+      "file": "src/components/analytics/identity-ready-beacon.tsx",
+      "kind": "component",
+      "exported": [
+        "IdentityReadyBeacon"
+      ]
+    },
+    {
+      "file": "src/components/analytics/vercel-analytics.tsx",
+      "kind": "component",
+      "exported": [
+        "VercelAnalytics"
+      ]
+    },
+    {
+      "file": "src/components/auth/google-link-button.tsx",
+      "kind": "component",
+      "exported": [
+        "GoogleLinkButton"
+      ]
+    },
+    {
+      "file": "src/components/auth/google-sign-in-button.tsx",
+      "kind": "component",
+      "exported": [
+        "GoogleSignInButton"
+      ]
+    },
+    {
+      "file": "src/components/clubs/club-admin-panel.tsx",
+      "kind": "component",
+      "exported": [
+        "ClubAdminPanel"
+      ]
+    },
+    {
+      "file": "src/components/clubs/club-chrome-nav.tsx",
+      "kind": "component",
+      "exported": [
+        "ClubChromeNav"
+      ]
+    },
+    {
+      "file": "src/components/clubs/club-join-toast.tsx",
+      "kind": "component",
+      "exported": [
+        "ClubJoinToast"
+      ]
+    },
+    {
+      "file": "src/components/clubs/club-list.tsx",
+      "kind": "component",
+      "exported": [
+        "ClubList"
+      ]
+    },
+    {
+      "file": "src/components/clubs/club-switcher.tsx",
+      "kind": "component",
+      "exported": [
+        "ClubSwitcher"
+      ]
+    },
+    {
+      "file": "src/components/clubs/create-club-form.tsx",
+      "kind": "component",
+      "exported": [
+        "CreateClubForm"
+      ]
+    },
+    {
+      "file": "src/components/clubs/join-club-panel.tsx",
+      "kind": "component",
+      "exported": [
+        "JoinClubPanel"
+      ]
+    },
+    {
+      "file": "src/components/join/club-join-screen.tsx",
+      "kind": "component",
+      "exported": [
+        "ClubJoinScreen"
+      ]
+    },
+    {
+      "file": "src/components/join/join-finalizer.tsx",
+      "kind": "component",
+      "exported": [
+        "JoinFinalizer"
+      ]
+    },
+    {
+      "file": "src/components/leaderboard/advanced-stats-toggle.tsx",
+      "kind": "component",
+      "exported": [
+        "AdvancedStatsToggle"
+      ]
+    },
+    {
+      "file": "src/components/leaderboard/bolt-icons.tsx",
+      "kind": "component",
+      "exported": [
+        "BoltSvg",
+        "Bolts"
+      ]
+    },
+    {
+      "file": "src/components/leaderboard/leaderboard-hero-card.tsx",
+      "kind": "component",
+      "exported": [
+        "LeaderboardHeroCard"
+      ]
+    },
+    {
+      "file": "src/components/leaderboard/leaderboard-page.tsx",
+      "kind": "component",
+      "exported": [
+        "LeaderboardPage"
+      ]
+    },
+    {
+      "file": "src/components/leaderboard/leaderboard-podium.tsx",
+      "kind": "component",
+      "exported": [
+        "LeaderboardPodium"
+      ]
+    },
+    {
+      "file": "src/components/leaderboard/leaderboard-row.tsx",
+      "kind": "component",
+      "exported": [
+        "LeaderboardRow"
+      ]
+    },
+    {
+      "file": "src/components/leaderboard/leaderboard-table.tsx",
+      "kind": "component",
+      "exported": [
+        "LeaderboardTable"
+      ]
+    },
+    {
+      "file": "src/components/leaderboard/stadium-leaderboard-row.tsx",
+      "kind": "component",
+      "exported": [
+        "StadiumLeaderboardRow"
+      ]
+    },
+    {
+      "file": "src/components/leaderboard/stadium-leaderboard.tsx",
+      "kind": "component",
+      "exported": [
+        "StadiumLeaderboard"
+      ]
+    },
+    {
+      "file": "src/components/leaderboard/you-strip.tsx",
+      "kind": "component",
+      "exported": [
+        "YouStrip"
+      ]
+    },
+    {
+      "file": "src/components/login-form.tsx",
+      "kind": "component",
+      "exported": [
+        "LoginForm"
+      ]
+    },
+    {
+      "file": "src/components/notifications/google-link-card.tsx",
+      "kind": "component",
+      "exported": [
+        "GoogleLinkCard"
+      ]
+    },
+    {
+      "file": "src/components/notifications/install-prompt.tsx",
+      "kind": "component",
+      "exported": [
+        "InstallPrompt"
+      ]
+    },
+    {
+      "file": "src/components/notifications/notification-enrollment.tsx",
+      "kind": "component",
+      "exported": [
+        "NotificationEnrollment"
+      ]
+    },
+    {
+      "file": "src/components/organizer/active-courts.tsx",
+      "kind": "component",
+      "exported": [
+        "ActiveCourts"
+      ]
+    },
+    {
+      "file": "src/components/organizer/court-card.tsx",
+      "kind": "component",
+      "exported": [
+        "AlertTier",
+        "CourtCard"
+      ]
+    },
+    {
+      "file": "src/components/organizer/dashboard-cards-preview.tsx",
+      "kind": "component",
+      "exported": [
+        "DashboardCardsPreview"
+      ]
+    },
+    {
+      "file": "src/components/organizer/dev-tools.tsx",
+      "kind": "component",
+      "exported": [
+        "DevTools"
+      ]
+    },
+    {
+      "file": "src/components/organizer/draft-cap-popover.tsx",
+      "kind": "component",
+      "exported": [
+        "DraftCapPopover"
+      ]
+    },
+    {
+      "file": "src/components/organizer/edit-match-dialog.tsx",
+      "kind": "component",
+      "exported": [
+        "EditMatchDialog"
+      ]
+    },
+    {
+      "file": "src/components/organizer/fix-record-sheet.tsx",
+      "kind": "component",
+      "exported": [
+        "FixRecordSheet"
+      ]
+    },
+    {
+      "file": "src/components/organizer/h2h-strip.tsx",
+      "kind": "component",
+      "exported": [
+        "H2HStrip"
+      ]
+    },
+    {
+      "file": "src/components/organizer/live-swap-sheet.tsx",
+      "kind": "component",
+      "exported": [
+        "LiveSwapSheet"
+      ]
+    },
+    {
+      "file": "src/components/organizer/manual-match-bar.tsx",
+      "kind": "component",
+      "exported": [
+        "ManualMatchBar"
+      ]
+    },
+    {
+      "file": "src/components/organizer/match-event-timeline.tsx",
+      "kind": "component",
+      "exported": [
+        "MatchEventTimeline"
+      ]
+    },
+    {
+      "file": "src/components/organizer/match-history-panel.tsx",
+      "kind": "component",
+      "exported": [
+        "MatchHistoryPanel"
+      ]
+    },
+    {
+      "file": "src/components/organizer/match-history-player-filter.tsx",
+      "kind": "component",
+      "exported": [
+        "MatchHistoryPlayerFilter"
+      ]
+    },
+    {
+      "file": "src/components/organizer/match-origin-tag.tsx",
+      "kind": "component",
+      "exported": [
+        "MatchOriginTag"
+      ]
+    },
+    {
+      "file": "src/components/organizer/match-roster.tsx",
+      "kind": "component",
+      "exported": [
+        "TeamsGrid"
+      ]
+    },
+    {
+      "file": "src/components/organizer/on-deck-panel.tsx",
+      "kind": "component",
+      "exported": [
+        "OnDeckPanel",
+        "SwapContext"
+      ]
+    },
+    {
+      "file": "src/components/organizer/organizer-center-alert.tsx",
+      "kind": "component",
+      "exported": [
+        "OrganizerCenterAlert"
+      ]
+    },
+    {
+      "file": "src/components/organizer/organizer-dashboard.tsx",
+      "kind": "component",
+      "exported": [
+        "OrganizerDashboard"
+      ]
+    },
+    {
+      "file": "src/components/organizer/organizer-entry.tsx",
+      "kind": "component",
+      "exported": [
+        "OrganizerEntry",
+        "SessionWithStats"
+      ]
+    },
+    {
+      "file": "src/components/organizer/organizer-header-preview.tsx",
+      "kind": "component",
+      "exported": [
+        "OrganizerHeaderPreview"
+      ]
+    },
+    {
+      "file": "src/components/organizer/organizer-notice-inbox.tsx",
+      "kind": "component",
+      "exported": [
+        "OrganizerNoticeInbox"
+      ]
+    },
+    {
+      "file": "src/components/organizer/paused-badge.tsx",
+      "kind": "component",
+      "exported": [
+        "PausedBadge"
+      ]
+    },
+    {
+      "file": "src/components/organizer/queue-control.tsx",
+      "kind": "component",
+      "exported": [
+        "QueueControl"
+      ]
+    },
+    {
+      "file": "src/components/organizer/queue-skill-groups.tsx",
+      "kind": "component",
+      "exported": [
+        "QueueSkillGroups"
+      ]
+    },
+    {
+      "file": "src/components/organizer/repeat-marker.tsx",
+      "kind": "component",
+      "exported": [
+        "FreshContext",
+        "FreshMarker",
+        "RepeatMarker",
+        "RepeatMarkerLegend"
+      ]
+    },
+    {
+      "file": "src/components/organizer/repeat-pair-details.tsx",
+      "kind": "component",
+      "exported": [
+        "RepeatPairDetails"
+      ]
+    },
+    {
+      "file": "src/components/organizer/score-modal.tsx",
+      "kind": "component",
+      "exported": [
+        "ScoreModal"
+      ]
+    },
+    {
+      "file": "src/components/organizer/session-header.tsx",
+      "kind": "component",
+      "exported": [
+        "OrganizerSessionHeader"
+      ]
+    },
+    {
+      "file": "src/components/organizer/session-recap.tsx",
+      "kind": "component",
+      "exported": [
+        "SessionRecap"
+      ]
+    },
+    {
+      "file": "src/components/organizer/share-session-dialog.tsx",
+      "kind": "component",
+      "exported": [
+        "ShareSessionDialog"
+      ]
+    },
+    {
+      "file": "src/components/organizer/sortable-card.tsx",
+      "kind": "component",
+      "exported": [
+        "CapSaturationNotice",
+        "OverlayCard",
+        "SortableCard"
+      ]
+    },
+    {
+      "file": "src/components/organizer/swap-floating-bar.tsx",
+      "kind": "component",
+      "exported": [
+        "SwapFloatingBar"
+      ]
+    },
+    {
+      "file": "src/components/organizer/swap-sheet.tsx",
+      "kind": "component",
+      "exported": [
+        "SwapSheet",
+        "UndoableSwap"
+      ]
+    },
+    {
+      "file": "src/components/organizer/wait-time-monitor.tsx",
+      "kind": "component",
+      "exported": [
+        "WaitTimeMonitor"
+      ]
+    },
+    {
+      "file": "src/components/player/all-sessions-history.tsx",
+      "kind": "component",
+      "exported": [
+        "AllSessionsHistory"
+      ]
+    },
+    {
+      "file": "src/components/player/change-display-name.tsx",
+      "kind": "component",
+      "exported": [
+        "ChangeDisplayName"
+      ]
+    },
+    {
+      "file": "src/components/player/live-courts-tab.tsx",
+      "kind": "component",
+      "exported": [
+        "LiveCourtsTab"
+      ]
+    },
+    {
+      "file": "src/components/player/match-alert.tsx",
+      "kind": "component",
+      "exported": [
+        "MatchAlert",
+        "MatchAlertPresence"
+      ]
+    },
+    {
+      "file": "src/components/player/match-history.tsx",
+      "kind": "component",
+      "exported": [
+        "MatchHistory"
+      ]
+    },
+    {
+      "file": "src/components/player/my-status-tab.tsx",
+      "kind": "component",
+      "exported": [
+        "MyStatusTab"
+      ]
+    },
+    {
+      "file": "src/components/player/on-deck-alert.tsx",
+      "kind": "component",
+      "exported": [
+        "OnDeckAlert"
+      ]
+    },
+    {
+      "file": "src/components/player/player-dashboard.tsx",
+      "kind": "component",
+      "exported": [
+        "PlayerDashboard"
+      ]
+    },
+    {
+      "file": "src/components/player/player-match-alert-preview.tsx",
+      "kind": "component",
+      "exported": [
+        "PlayerMatchAlertPreview"
+      ]
+    },
+    {
+      "file": "src/components/player/queue-status.tsx",
+      "kind": "component",
+      "exported": [
+        "QueueStatus"
+      ]
+    },
+    {
+      "file": "src/components/player/rename-screen.tsx",
+      "kind": "component",
+      "exported": [
+        "RenameScreen"
+      ]
+    },
+    {
+      "file": "src/components/player/score-correction-request.tsx",
+      "kind": "component",
+      "exported": [
+        "ScoreCorrectionRequest"
+      ]
+    },
+    {
+      "file": "src/components/player/score-input-card.tsx",
+      "kind": "component",
+      "exported": [
+        "ScoreInputCard"
+      ]
+    },
+    {
+      "file": "src/components/player/skill-level-picker.tsx",
+      "kind": "component",
+      "exported": [
+        "SkillLevelPicker"
+      ]
+    },
+    {
+      "file": "src/components/player/waitlist-tab.tsx",
+      "kind": "component",
+      "exported": [
+        "WaitlistTab"
+      ]
+    },
+    {
+      "file": "src/components/pwa-nav-bar.tsx",
+      "kind": "component",
+      "exported": [
+        "PwaNavBar"
+      ]
+    },
+    {
+      "file": "src/components/reconnect-modal.tsx",
+      "kind": "component",
+      "exported": [
+        "ReconnectModal",
+        "Spinner"
+      ]
+    },
+    {
+      "file": "src/components/serwist-register.tsx",
+      "kind": "component",
+      "exported": [
+        "SerwistRegister"
+      ]
+    },
+    {
+      "file": "src/components/session-list.tsx",
+      "kind": "component",
+      "exported": [
+        "SessionList"
+      ]
+    },
+    {
+      "file": "src/components/sign-out-button.tsx",
+      "kind": "component",
+      "exported": [
+        "SignOutButton"
+      ]
+    },
+    {
+      "file": "src/components/theme-provider.tsx",
+      "kind": "component",
+      "exported": [
+        "ThemeProvider"
+      ]
+    },
+    {
+      "file": "src/components/ui/alert-dialog.tsx",
+      "kind": "component",
+      "exported": []
+    },
+    {
+      "file": "src/components/ui/badge.tsx",
+      "kind": "component",
+      "exported": []
+    },
+    {
+      "file": "src/components/ui/badminton-court.tsx",
+      "kind": "component",
+      "exported": [
+        "BadmintonCourt"
+      ]
+    },
+    {
+      "file": "src/components/ui/court-time-popover.tsx",
+      "kind": "component",
+      "exported": [
+        "CourtTimePopover"
+      ]
+    },
+    {
+      "file": "src/components/ui/dialog.tsx",
+      "kind": "component",
+      "exported": []
+    },
+    {
+      "file": "src/components/ui/match-timer.tsx",
+      "kind": "component",
+      "exported": [
+        "MatchTimer"
+      ]
+    },
+    {
+      "file": "src/components/ui/sheet.tsx",
+      "kind": "component",
+      "exported": []
+    },
+    {
+      "file": "src/components/ui/skill-badge.tsx",
+      "kind": "component",
+      "exported": [
+        "SkillBadge"
+      ]
+    },
+    {
+      "file": "src/components/ui/theme-toggle.tsx",
+      "kind": "component",
+      "exported": [
+        "ThemeToggle"
+      ]
+    },
+    {
+      "file": "src/components/ui/vip-tag.tsx",
+      "kind": "component",
+      "exported": [
+        "VipTag"
+      ]
+    },
+    {
+      "file": "src/components/wrapped/wrapped-award-card.tsx",
+      "kind": "component",
+      "exported": [
+        "WrappedAwardCard"
+      ]
+    },
+    {
+      "file": "src/components/wrapped/wrapped-awards-feed.tsx",
+      "kind": "component",
+      "exported": [
+        "WrappedAwardsFeed"
+      ]
+    },
+    {
+      "file": "src/components/wrapped/wrapped-intro.tsx",
+      "kind": "component",
+      "exported": [
+        "WrappedIntro"
+      ]
+    },
+    {
+      "file": "src/components/wrapped/wrapped-match-recap.tsx",
+      "kind": "component",
+      "exported": [
+        "WrappedMatchRecap"
+      ]
+    },
+    {
+      "file": "src/components/wrapped/wrapped-shell.tsx",
+      "kind": "component",
+      "exported": [
+        "WrappedShell",
+        "WrappedStats"
+      ]
+    },
+    {
+      "file": "src/components/wrapped/wrapped-stats-card.tsx",
+      "kind": "component",
+      "exported": [
+        "WrappedStatsCard"
+      ]
+    },
+    {
+      "file": "src/hooks/use-auth-recovery-refetch.ts",
+      "kind": "hook",
+      "exported": [
+        "useAuthRecoveryRefetch"
+      ]
+    },
+    {
+      "file": "src/hooks/use-club-slug.ts",
+      "kind": "hook",
+      "exported": [
+        "useClubSlug"
+      ]
+    },
+    {
+      "file": "src/hooks/use-edit-match.ts",
+      "kind": "hook",
+      "exported": [
+        "UseEditMatchOptions",
+        "UseEditMatchResult",
+        "useEditMatch"
+      ]
+    },
+    {
+      "file": "src/hooks/use-enriched-matches.ts",
+      "kind": "hook",
+      "exported": [
+        "EnrichedMatch",
+        "useEnrichedMatches"
+      ]
+    },
+    {
+      "file": "src/hooks/use-fix-record.ts",
+      "kind": "hook",
+      "exported": [
+        "FixRecordState",
+        "FixRecordStep",
+        "SelectedPlayer",
+        "useFixRecord"
+      ]
+    },
+    {
+      "file": "src/hooks/use-flip-list.ts",
+      "kind": "hook",
+      "exported": [
+        "useFlipList"
+      ]
+    },
+    {
+      "file": "src/hooks/use-h2h.ts",
+      "kind": "hook",
+      "exported": [
+        "useH2H"
+      ]
+    },
+    {
+      "file": "src/hooks/use-leaderboard.ts",
+      "kind": "hook",
+      "exported": [
+        "LeaderboardSessionOption",
+        "MIN_ALLTIME_GP",
+        "MIN_MONTH_GP",
+        "MIN_SESSION_GP",
+        "ScopeTab",
+        "useLeaderboard"
+      ]
+    },
+    {
+      "file": "src/hooks/use-live-match-swap.ts",
+      "kind": "hook",
+      "exported": [
+        "FillCandidate",
+        "LiveSwapState",
+        "ReplacementCandidate",
+        "ReplacementSource",
+        "useLiveMatchSwap"
+      ]
+    },
+    {
+      "file": "src/hooks/use-match-alerts.ts",
+      "kind": "hook",
+      "exported": [
+        "AlertType",
+        "useMatchAlerts"
+      ]
+    },
+    {
+      "file": "src/hooks/use-match-history.ts",
+      "kind": "hook",
+      "exported": [
+        "CompletedMatch",
+        "useMatchHistory"
+      ]
+    },
+    {
+      "file": "src/hooks/use-organizer-alerts.ts",
+      "kind": "hook",
+      "exported": [
+        "useOrganizerAlerts"
+      ]
+    },
+    {
+      "file": "src/hooks/use-organizer-broadcast.ts",
+      "kind": "hook",
+      "exported": [
+        "useOrganizerBroadcast"
+      ]
+    },
+    {
+      "file": "src/hooks/use-organizer-courts.ts",
+      "kind": "hook",
+      "exported": [
+        "useOrganizerCourts"
+      ]
+    },
+    {
+      "file": "src/hooks/use-organizer-dashboard.ts",
+      "kind": "hook",
+      "exported": [
+        "OrganizerTab",
+        "TabConfig",
+        "useOrganizerDashboard"
+      ]
+    },
+    {
+      "file": "src/hooks/use-organizer-data.ts",
+      "kind": "hook",
+      "exported": [
+        "useOrganizerData"
+      ]
+    },
+    {
+      "file": "src/hooks/use-organizer-matches.ts",
+      "kind": "hook",
+      "exported": [
+        "useOrganizerMatches"
+      ]
+    },
+    {
+      "file": "src/hooks/use-organizer-queue.ts",
+      "kind": "hook",
+      "exported": [
+        "useOrganizerQueue"
+      ]
+    },
+    {
+      "file": "src/hooks/use-organizer-session.ts",
+      "kind": "hook",
+      "exported": [
+        "CapPhase",
+        "CapPhaseSignal",
+        "useOrganizerSession"
+      ]
+    },
+    {
+      "file": "src/hooks/use-pair-counts.ts",
+      "kind": "hook",
+      "exported": [
+        "usePairCounts"
+      ]
+    },
+    {
+      "file": "src/hooks/use-player-match.ts",
+      "kind": "hook",
+      "exported": [
+        "usePlayerMatch"
+      ]
+    },
+    {
+      "file": "src/hooks/use-queue.ts",
+      "kind": "hook",
+      "exported": [
+        "useQueue"
+      ]
+    },
+    {
+      "file": "src/hooks/use-repeat-pairing.ts",
+      "kind": "hook",
+      "exported": [
+        "ANNOUNCE_DEBOUNCE_MS",
+        "MarkerContext",
+        "RepeatPairingState",
+        "useRepeatPairing"
+      ]
+    },
+    {
+      "file": "src/hooks/use-score-form.ts",
+      "kind": "hook",
+      "exported": [
+        "ScoreSubmitOutcome",
+        "useScoreForm"
+      ]
+    },
+    {
+      "file": "src/hooks/use-score-input.ts",
+      "kind": "hook",
+      "exported": [
+        "useScoreInput"
+      ]
+    },
+    {
+      "file": "src/hooks/use-session-closed-watcher.ts",
+      "kind": "hook",
+      "exported": [
+        "SessionClosedWatcher",
+        "useSessionClosedWatcher"
+      ]
+    },
+    {
+      "file": "src/hooks/use-session-completed-players.ts",
+      "kind": "hook",
+      "exported": [
+        "SessionCompletedPlayer",
+        "useSessionCompletedPlayers"
+      ]
+    },
+    {
+      "file": "src/hooks/use-session-data.ts",
+      "kind": "hook",
+      "exported": [
+        "EnrichedMatchPlayer",
+        "SessionMatch",
+        "useSessionData"
+      ]
+    },
+    {
+      "file": "src/hooks/use-swap-state.ts",
+      "kind": "hook",
+      "exported": [
+        "useSwapState"
+      ]
+    },
+    {
+      "file": "src/hooks/use-tv-board.ts",
+      "kind": "hook",
+      "exported": [
+        "useTvBoard"
+      ]
+    },
+    {
+      "file": "src/hooks/use-visibility-refresh.ts",
+      "kind": "hook",
+      "exported": [
+        "useVisibilityRefresh"
+      ]
+    },
+    {
+      "file": "src/app/actions/_shared.ts",
+      "kind": "action",
+      "exported": [
+        "MatchActionCode",
+        "MatchActionResult",
+        "getActorContext",
+        "getAuthenticatedUser",
+        "isPlayerInSessionScope",
+        "isSessionActive",
+        "isSessionOrganizer"
+      ]
+    },
+    {
+      "file": "src/app/actions/auth.ts",
+      "kind": "action",
+      "exported": [
+        "AuthErrorCode",
+        "AuthField",
+        "SignInFailure",
+        "getCurrentProfile",
+        "playerLogOut",
+        "reconnectPlayer",
+        "signInAnonymously",
+        "signOut"
+      ]
+    },
+    {
+      "file": "src/app/actions/clubs.ts",
+      "kind": "action",
+      "exported": [
+        "AcceptInviteResult",
+        "CreateClubResult",
+        "CreateInviteResult",
+        "LeaveClubResult",
+        "MemberActionResult",
+        "acceptClubInvite",
+        "changeMemberRole",
+        "createClub",
+        "createClubInvite",
+        "leaveClub",
+        "removeMember",
+        "restoreMember"
+      ]
+    },
+    {
+      "file": "src/app/actions/courts.ts",
+      "kind": "action",
+      "exported": [
+        "CourtActionResult",
+        "addCourtAction",
+        "removeCourtAction",
+        "updateCourtStatusAction"
+      ]
+    },
+    {
+      "file": "src/app/actions/dev.ts",
+      "kind": "action",
+      "exported": [
+        "ClearResult",
+        "SeedResult",
+        "clearSessionData",
+        "seedNamedPlayers",
+        "seedTestData"
+      ]
+    },
+    {
+      "file": "src/app/actions/fix-player-record.ts",
+      "kind": "action",
+      "exported": [
+        "FixRecordErrorCode",
+        "FixRecordResult",
+        "fixPlayerRecord"
+      ]
+    },
+    {
+      "file": "src/app/actions/h2h.ts",
+      "kind": "action",
+      "exported": [
+        "getH2HRecord"
+      ]
+    },
+    {
+      "file": "src/app/actions/history.ts",
+      "kind": "action",
+      "exported": [
+        "AllSessionsHistoryResult",
+        "MatchHistoryError",
+        "MatchHistoryResult",
+        "SessionMeta",
+        "getAllSessionsHistory",
+        "getMatchHistory"
+      ]
+    },
+    {
+      "file": "src/app/actions/leaderboard.ts",
+      "kind": "action",
+      "exported": [
+        "getAllTimeLeaderboard",
+        "getLeaderboardMonths",
+        "getMonthlyLeaderboard",
+        "getPlayerMonthlyStats",
+        "getPlayerStats",
+        "getSessionLeaderboard"
+      ]
+    },
+    {
+      "file": "src/app/actions/live-match-swap.ts",
+      "kind": "action",
+      "exported": [
+        "LiveSwapErrorCode",
+        "LiveSwapResult",
+        "LiveSwapUndoContext",
+        "swapActiveFromOnDeck",
+        "swapPlayerInActiveMatch",
+        "swapTeamsInActiveMatch",
+        "undoLiveSwap"
+      ]
+    },
+    {
+      "file": "src/app/actions/match-drafts.ts",
+      "kind": "action",
+      "exported": [
+        "ClearAllDraftsResult",
+        "clearAllUnpublishedDrafts",
+        "clearOnDeckMatch",
+        "publishAllDraftMatchesAction",
+        "publishMatchAction",
+        "reorderOnDeckMatches"
+      ]
+    },
+    {
+      "file": "src/app/actions/match-events.ts",
+      "kind": "action",
+      "exported": [
+        "GetMatchEventsResult",
+        "GetSessionProvenanceResult",
+        "SessionProvenanceSummary",
+        "getMatchEvents",
+        "getSessionProvenance"
+      ]
+    },
+    {
+      "file": "src/app/actions/match-lifecycle.ts",
+      "kind": "action",
+      "exported": [
+        "CreateManualMatchResult",
+        "cancelMatchAction",
+        "createManualMatchAction",
+        "endMatchAction",
+        "submitMatchScore",
+        "updateMatchDetails"
+      ]
+    },
+    {
+      "file": "src/app/actions/matchmaking.ts",
+      "kind": "action",
+      "exported": [
+        "callNextMatch",
+        "promoteOnDeckMatchInternal",
+        "recomputeHeldReadiness",
+        "runEngineForSession"
+      ]
+    },
+    {
+      "file": "src/app/actions/notifications.ts",
+      "kind": "action",
+      "exported": [
+        "ActionResult",
+        "listMyScoreCorrections",
+        "listSessionNotifications",
+        "markNotificationRead",
+        "recordPauseReminder",
+        "requestScoreCorrection",
+        "resolveScoreCorrection",
+        "sendPlayerNotification"
+      ]
+    },
+    {
+      "file": "src/app/actions/oauth.ts",
+      "kind": "action",
+      "exported": [
+        "linkWithGoogle",
+        "signInWithGoogle"
+      ]
+    },
+    {
+      "file": "src/app/actions/profile.ts",
+      "kind": "action",
+      "exported": [
+        "PinResult",
+        "UpdateSkillResult",
+        "getPlayerPin",
+        "resetPlayerPin",
+        "updatePlayerPin",
+        "updatePlayerSkill"
+      ]
+    },
+    {
+      "file": "src/app/actions/queue.ts",
+      "kind": "action",
+      "exported": [
+        "CheckoutResult",
+        "JoinQueueActionKind",
+        "JoinQueueResult",
+        "RemovePlayerFromQueueResult",
+        "TogglePlayerPauseResult",
+        "checkoutPlayer",
+        "joinQueueAction",
+        "removePlayerFromQueue",
+        "togglePlayerPause"
+      ]
+    },
+    {
+      "file": "src/app/actions/registration.ts",
+      "kind": "action",
+      "exported": [
+        "CompleteJoinCode",
+        "CompleteJoinResult",
+        "completeRegistrationJoinAction"
+      ]
+    },
+    {
+      "file": "src/app/actions/rename.ts",
+      "kind": "action",
+      "exported": [
+        "NameCheckResult",
+        "RenameResult",
+        "checkNameAvailable",
+        "renamePlayer"
+      ]
+    },
+    {
+      "file": "src/app/actions/repeat-pairing.ts",
+      "kind": "action",
+      "exported": [
+        "GetPairMatchesResult",
+        "GetSessionPairCountsResult",
+        "PairCountsPayload",
+        "PairMatch",
+        "PairMatchPlayer",
+        "getPairMatches",
+        "getSessionPairCounts"
+      ]
+    },
+    {
+      "file": "src/app/actions/sessions.ts",
+      "kind": "action",
+      "exported": [
+        "ApplyDraftCapResult",
+        "CloseSessionResult",
+        "CreateSessionResult",
+        "GetSessionResult",
+        "JoinCoOrganizerResult",
+        "PlayerSessionStatusResult",
+        "ToggleAutoMatchmakingResult",
+        "ToggleAutoPublishResult",
+        "applyDraftCapOverride",
+        "closeSession",
+        "createSession",
+        "getPlayerSessionStatus",
+        "getSessionForOrganizer",
+        "joinAsCoOrganizer",
+        "renotifySessionClosed",
+        "toggleAutoMatchmaking",
+        "toggleAutoPublish",
+        "updateSessionSettings"
+      ]
+    },
+    {
+      "file": "src/app/actions/swap-player.ts",
+      "kind": "action",
+      "exported": [
+        "SwapErrorCode",
+        "SwapMatchPlayersErrorCode",
+        "SwapMatchPlayersResult",
+        "SwapResult",
+        "swapMatchPlayers",
+        "swapPlayerInMatch"
+      ]
+    },
+    {
+      "file": "src/app/actions/tv.ts",
+      "kind": "action",
+      "exported": [
+        "getTvData"
+      ]
+    },
+    {
+      "file": "src/app/actions/upcoming-match.ts",
+      "kind": "action",
+      "exported": [
+        "UpcomingHeldDraft",
+        "UpcomingHeldDraftResult",
+        "getUpcomingHeldDraft"
+      ]
+    },
+    {
+      "file": "src/app/actions/wrapped.ts",
+      "kind": "action",
+      "exported": [
+        "dismissWrappedIntro",
+        "getWrappedData"
+      ]
+    }
+  ],
+  "routes": [
+    {
+      "file": "src/app/auth/callback/route.ts",
+      "route": "/auth/callback",
+      "kind": "route",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/auth/continue-google/route.ts",
+      "route": "/auth/continue-google",
+      "kind": "route",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/c/[clubSlug]/(app)/admin/page.tsx",
+      "route": "/c/[clubSlug]/admin",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/c/[clubSlug]/(app)/layout.tsx",
+      "route": "/c/[clubSlug]",
+      "kind": "layout",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/c/[clubSlug]/(app)/leaderboard/page.tsx",
+      "route": "/c/[clubSlug]/leaderboard",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/c/[clubSlug]/(app)/page.tsx",
+      "route": "/c/[clubSlug]",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/c/[clubSlug]/(full)/layout.tsx",
+      "route": "/c/[clubSlug]",
+      "kind": "layout",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/c/[clubSlug]/(full)/organizer/[sessionId]/page.tsx",
+      "route": "/c/[clubSlug]/organizer/[sessionId]",
+      "kind": "page",
+      "audience": "organizer"
+    },
+    {
+      "file": "src/app/c/[clubSlug]/(full)/organizer/page.tsx",
+      "route": "/c/[clubSlug]/organizer",
+      "kind": "page",
+      "audience": "organizer"
+    },
+    {
+      "file": "src/app/c/[clubSlug]/(full)/play/[sessionId]/page.tsx",
+      "route": "/c/[clubSlug]/play/[sessionId]",
+      "kind": "page",
+      "audience": "player"
+    },
+    {
+      "file": "src/app/c/[clubSlug]/join/[sessionId]/page.tsx",
+      "route": "/c/[clubSlug]/join/[sessionId]",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/c/[clubSlug]/join/page.tsx",
+      "route": "/c/[clubSlug]/join",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/c/[clubSlug]/layout.tsx",
+      "route": "/c/[clubSlug]",
+      "kind": "layout",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/c/[clubSlug]/tv/[sessionId]/page.tsx",
+      "route": "/c/[clubSlug]/tv/[sessionId]",
+      "kind": "page",
+      "audience": "player"
+    },
+    {
+      "file": "src/app/c/[clubSlug]/wrapped/[sessionId]/[playerId]/page.tsx",
+      "route": "/c/[clubSlug]/wrapped/[sessionId]/[playerId]",
+      "kind": "page",
+      "audience": "player"
+    },
+    {
+      "file": "src/app/clubs/join/page.tsx",
+      "route": "/clubs/join",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/clubs/new/page.tsx",
+      "route": "/clubs/new",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/clubs/page.tsx",
+      "route": "/clubs",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/j/[sessionId]/page.tsx",
+      "route": "/j/[sessionId]",
+      "kind": "page",
+      "audience": "player"
+    },
+    {
+      "file": "src/app/layout.tsx",
+      "route": "/",
+      "kind": "layout",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/leaderboard/[sessionId]/page.tsx",
+      "route": "/leaderboard/[sessionId]",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/leaderboard/page.tsx",
+      "route": "/leaderboard",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/offline/page.tsx",
+      "route": "/offline",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/organizer/[sessionId]/page.tsx",
+      "route": "/organizer/[sessionId]",
+      "kind": "page",
+      "audience": "organizer"
+    },
+    {
+      "file": "src/app/organizer/layout.tsx",
+      "route": "/organizer",
+      "kind": "layout",
+      "audience": "organizer"
+    },
+    {
+      "file": "src/app/organizer/page.tsx",
+      "route": "/organizer",
+      "kind": "page",
+      "audience": "organizer"
+    },
+    {
+      "file": "src/app/page.tsx",
+      "route": "/",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/play/[sessionId]/page.tsx",
+      "route": "/play/[sessionId]",
+      "kind": "page",
+      "audience": "player"
+    },
+    {
+      "file": "src/app/play/join/[sessionId]/page.tsx",
+      "route": "/play/join/[sessionId]",
+      "kind": "page",
+      "audience": "player"
+    },
+    {
+      "file": "src/app/play/join/page.tsx",
+      "route": "/play/join",
+      "kind": "page",
+      "audience": "player"
+    },
+    {
+      "file": "src/app/play/page.tsx",
+      "route": "/play",
+      "kind": "page",
+      "audience": "player"
+    },
+    {
+      "file": "src/app/rename/page.tsx",
+      "route": "/rename",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/sandbox/active-courts-grid/page.tsx",
+      "route": "/sandbox/active-courts-grid",
+      "kind": "page",
+      "audience": "dev"
+    },
+    {
+      "file": "src/app/sandbox/dashboard-cards/page.tsx",
+      "route": "/sandbox/dashboard-cards",
+      "kind": "page",
+      "audience": "dev"
+    },
+    {
+      "file": "src/app/sandbox/flame-preview/page.tsx",
+      "route": "/sandbox/flame-preview",
+      "kind": "page",
+      "audience": "dev"
+    },
+    {
+      "file": "src/app/sandbox/match-origin/page.tsx",
+      "route": "/sandbox/match-origin",
+      "kind": "page",
+      "audience": "dev"
+    },
+    {
+      "file": "src/app/sandbox/organizer-center-alert/page.tsx",
+      "route": "/sandbox/organizer-center-alert",
+      "kind": "page",
+      "audience": "dev"
+    },
+    {
+      "file": "src/app/sandbox/organizer-header/page.tsx",
+      "route": "/sandbox/organizer-header",
+      "kind": "page",
+      "audience": "dev"
+    },
+    {
+      "file": "src/app/sandbox/player-alert/page.tsx",
+      "route": "/sandbox/player-alert",
+      "kind": "page",
+      "audience": "dev"
+    },
+    {
+      "file": "src/app/sandbox/streak-preview/page.tsx",
+      "route": "/sandbox/streak-preview",
+      "kind": "page",
+      "audience": "dev"
+    },
+    {
+      "file": "src/app/tv/[sessionId]/page.tsx",
+      "route": "/tv/[sessionId]",
+      "kind": "page",
+      "audience": "player"
+    },
+    {
+      "file": "src/app/vip-preview/page.tsx",
+      "route": "/vip-preview",
+      "kind": "page",
+      "audience": "dev"
+    },
+    {
+      "file": "src/app/welcome/page.tsx",
+      "route": "/welcome",
+      "kind": "page",
+      "audience": "public"
+    },
+    {
+      "file": "src/app/wrapped/[sessionId]/[playerId]/layout.tsx",
+      "route": "/wrapped/[sessionId]/[playerId]",
+      "kind": "layout",
+      "audience": "player"
+    },
+    {
+      "file": "src/app/wrapped/[sessionId]/[playerId]/page.tsx",
+      "route": "/wrapped/[sessionId]/[playerId]",
+      "kind": "page",
+      "audience": "player"
+    },
+    {
+      "file": "src/app/wrapped/preview/page.tsx",
+      "route": "/wrapped/preview",
+      "kind": "page",
+      "audience": "dev"
+    }
+  ],
   "designTokens": {
     "fonts": [
       {
@@ -8532,6 +10278,32 @@
           "from": "completed",
           "to": "in_progress",
           "label": "score reverted (revert_match_to_active)"
+        }
+      ]
+    },
+    {
+      "name": "Held-draft lifecycle",
+      "field": "deriveHeldState",
+      "states": [
+        "HOLDING",
+        "RESTING",
+        "READY"
+      ],
+      "edges": [
+        {
+          "from": "HOLDING",
+          "to": "RESTING",
+          "label": "source match ends; held_ready_at still null"
+        },
+        {
+          "from": "RESTING",
+          "to": "READY",
+          "label": "held_ready_at stamped (promotable)"
+        },
+        {
+          "from": "HOLDING",
+          "to": "READY",
+          "label": "held_ready_at stamped while source still in_progress"
         }
       ]
     }
