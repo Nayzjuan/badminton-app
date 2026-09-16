@@ -2,9 +2,23 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import PageHeader from '../components/PageHeader.astro';
 import manifest from '../data/manifest.json';
+import { constByName } from '../lib/invariants.ts';
 
-// Constants from manifest, ordered by importance for the page narrative
 const constants = manifest.constants;
+const ENGINE_CONST_NAMES = [
+  'CRITICAL_WAIT_MINUTES',
+  'GAME_PENALTY_MINUTES',
+  'RED_ZONE_SCORE_FLOOR',
+  'HARD_WAIT_CAP_MINUTES',
+  'HARD_CAP_SCORE_FLOOR',
+  'HARD_CAP_GAMES_CEILING',
+  'GAMES_AHEAD_PENALTY',
+  'GAMES_AHEAD_PENALTY_RED_ZONE',
+  'MAX_PARTNERSHIP_REPEATS',
+] as const;
+const engineConstants = Object.fromEntries(
+  ENGINE_CONST_NAMES.map((name) => [name, constByName(manifest, name).value])
+);
 ---
 
 <BaseLayout
@@ -381,15 +395,27 @@ const constants = manifest.constants;
      + Partnership Cap Visualizer
      Zero framework dependencies — vanilla TS in Astro's script pipeline.
      ══════════════════════════════════════════════════════════════ -->
+<script type="application/json" id="engine-constants" is:inline set:html={JSON.stringify(engineConstants)}></script>
 <script>
   // ── Priority Score Calculator ─────────────────────────────────
 
   const waitSlider  = document.getElementById('pc-wait')  as HTMLInputElement;
   const gamesSlider = document.getElementById('pc-games') as HTMLInputElement;
 
-  const CRITICAL_WAIT  = 25;
-  const GAME_PENALTY   = 12;
-  const RED_ZONE_FLOOR = 1000;
+  type EngineConsts = {
+    CRITICAL_WAIT_MINUTES: number;
+    GAME_PENALTY_MINUTES: number;
+    RED_ZONE_SCORE_FLOOR: number;
+    HARD_WAIT_CAP_MINUTES: number;
+    HARD_CAP_SCORE_FLOOR: number;
+    HARD_CAP_GAMES_CEILING: number;
+    GAMES_AHEAD_PENALTY: number;
+    GAMES_AHEAD_PENALTY_RED_ZONE: number;
+    MAX_PARTNERSHIP_REPEATS: number;
+  };
+  const C = JSON.parse(
+    document.getElementById('engine-constants')!.textContent ?? '{}'
+  ) as EngineConsts;
 
   function updateSliderTrack(el: HTMLInputElement) {
     const pct = ((+el.value - +el.min) / (+el.max - +el.min)) * 100;
@@ -399,13 +425,27 @@ const constants = manifest.constants;
   function computePriority() {
     const wait  = +waitSlider.value;
     const games = +gamesSlider.value;
-    const isRed = wait >= CRITICAL_WAIT;
+    const isRed = wait >= C.CRITICAL_WAIT_MINUTES;
 
-    const priorityScore = isRed
-      ? RED_ZONE_FLOOR + wait
-      : Math.max(0, wait - games * GAME_PENALTY);
+    let tier: 'hard' | 'red' | 'normal';
+    let priorityScore: number;
+    let formula: string;
+    if (games < C.HARD_CAP_GAMES_CEILING && wait >= C.HARD_WAIT_CAP_MINUTES) {
+      tier = 'hard';
+      priorityScore = C.HARD_CAP_SCORE_FLOOR + Math.round((wait - C.HARD_WAIT_CAP_MINUTES) * 10);
+      formula = `${C.HARD_CAP_SCORE_FLOOR} + round((${wait} − ${C.HARD_WAIT_CAP_MINUTES}) × 10) = ${priorityScore}`;
+    } else if (wait >= C.CRITICAL_WAIT_MINUTES) {
+      tier = 'red';
+      priorityScore = C.RED_ZONE_SCORE_FLOOR + wait - games * C.GAME_PENALTY_MINUTES;
+      formula = `${C.RED_ZONE_SCORE_FLOOR} + ${wait} − (${games} × ${C.GAME_PENALTY_MINUTES}) = ${priorityScore}`;
+    } else {
+      tier = 'normal';
+      priorityScore = wait - games * C.GAME_PENALTY_MINUTES;
+      formula = `${wait} − (${games} × ${C.GAME_PENALTY_MINUTES}) = ${priorityScore}`;
+    }
 
-    const multiplier = isRed ? 100 : 10_000;
+    const multiplier = isRed ? C.GAMES_AHEAD_PENALTY_RED_ZONE : C.GAMES_AHEAD_PENALTY;
+    const zoneLabel = tier === 'hard' ? '⬛ HARD CAP' : isRed ? '🔴 RED ZONE' : '⚪ NORMAL';
 
     // Update value readouts
     (document.getElementById('pc-wait-val')  as HTMLElement).textContent = String(wait);
@@ -413,18 +453,15 @@ const constants = manifest.constants;
 
     // Zone chip
     const chip = document.getElementById('pc-zone-chip') as HTMLElement;
-    chip.textContent = isRed ? '🔴 RED ZONE' : '⚪ NORMAL';
-    chip.className = isRed
+    chip.textContent = zoneLabel;
+    chip.className = tier === 'hard'
+      ? 'ml-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-accent-faint border border-accent-ring text-accent-hi'
+      : isRed
       ? 'ml-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-err-wash border border-err/20 text-err'
       : 'ml-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-raised border border-edge text-ink-3';
 
-    // Formula string
-    const formula = isRed
-      ? `${RED_ZONE_FLOOR} + ${wait} = ${priorityScore}`
-      : `max(0, ${wait} − (${games} × ${GAME_PENALTY})) = ${priorityScore}`;
-
     const candidateNote = isRed
-      ? `Red Zone urgency overrides 1 prior overlap (${multiplier.toLocaleString()}× vs normal 10,000×)`
+      ? `Red Zone urgency uses ×${multiplier.toLocaleString()} overlap (Normal is ×${C.GAMES_AHEAD_PENALTY.toLocaleString()}). Membership is wait ≥ ${C.CRITICAL_WAIT_MINUTES}, not score ≥ ${C.RED_ZONE_SCORE_FLOOR}.`
       : `One prior pairing ≈ ${multiplier.toLocaleString()} min extra wait — strongly avoids repeats`;
 
     const result = document.getElementById('pc-result') as HTMLElement;
@@ -461,7 +498,7 @@ const constants = manifest.constants;
 
   // ── Partnership Cap Visualizer ────────────────────────────────
 
-  const MAX_REPEATS = 2;
+  const MAX_REPEATS = C.MAX_PARTNERSHIP_REPEATS;
 
   const PLAYERS: Record<string, { name: string; color: string }> = {
     a: { name: 'Alice', color: 'oklch(76% 0.17 155)' },  // accent emerald
