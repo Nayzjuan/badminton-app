@@ -48,4 +48,39 @@ describe("SkillLevelPicker compact", () => {
     expect(screen.getByLabelText(/^skill level$/i)).toBeDisabled();
     expect(screen.getByLabelText(/^skill level$/i)).toHaveValue("intermediate");
   });
+
+  it("gives each compact picker unique ids so two can mount in one document", () => {
+    render(
+      <>
+        <SkillLevelPicker compact value="beginner" onChange={() => undefined} />
+        <SkillLevelPicker compact value="advanced" onChange={() => undefined} />
+      </>
+    );
+    const selects = screen.getAllByLabelText(/^skill level$/i);
+    expect(selects).toHaveLength(2);
+    expect(selects[0].id).not.toBe(selects[1].id);
+    expect(selects[0].getAttribute("aria-describedby")).not.toBe(
+      selects[1].getAttribute("aria-describedby")
+    );
+    expect(document.querySelectorAll("[id$='-hint']")).toHaveLength(2);
+  });
+
+  it("points aria-describedby at the error only, not the hint as well", () => {
+    render(
+      <>
+        <SkillLevelPicker
+          compact
+          value="beginner"
+          onChange={() => undefined}
+          invalid
+          describedBy="skill_level_error"
+        />
+        <p id="skill_level_error">Pick a skill level</p>
+      </>
+    );
+    expect(screen.getByLabelText(/^skill level$/i)).toHaveAttribute(
+      "aria-describedby",
+      "skill_level_error"
+    );
+  });
 });

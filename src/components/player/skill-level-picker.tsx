@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import { SKILL_LEVELS, type SkillLevel } from "@/types/database";
 import { SKILL_COLORS } from "@/lib/skill-picker-styles";
 
@@ -21,21 +22,22 @@ export function SkillLevelPicker({
   describedBy,
   invalid,
 }: SkillLevelPickerProps) {
+  const uid = useId();
   if (compact) {
-    const hintId = "skill_level_hint";
-    const described = [describedBy, hintId].filter(Boolean).join(" ");
+    const selectId = `${uid}-skill`;
+    const hintId = `${uid}-hint`;
     return (
       <div className="space-y-1.5">
-        <label htmlFor="skill_level" className="block text-sm font-semibold text-foreground">
+        <label htmlFor={selectId} className="block text-sm font-semibold text-foreground">
           Skill level
         </label>
         <select
-          id="skill_level"
+          id={selectId}
           name="skill_level"
           value={value}
           disabled={disabled}
           aria-invalid={invalid || undefined}
-          aria-describedby={described}
+          aria-describedby={describedBy ?? hintId}
           onChange={(e) => onChange(e.target.value as SkillLevel)}
           className="min-h-11 w-full rounded-lg border border-input bg-background px-3 py-2
                      text-base focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2

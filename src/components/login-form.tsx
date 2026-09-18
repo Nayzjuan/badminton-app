@@ -97,8 +97,8 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
 
   function focusFirstInvalid(ids: string[]) {
     for (const id of ids) {
-      const el = document.getElementById(id);
-      if (el) {
+      const el = document.getElementById(id) ?? document.getElementsByName(id)[0];
+      if (el instanceof HTMLElement) {
         el.focus();
         return;
       }
