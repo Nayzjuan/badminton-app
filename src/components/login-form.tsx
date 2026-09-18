@@ -130,7 +130,11 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
       });
       if (!newFocused.current) {
         newFocused.current = true;
-        focusFirstInvalid(["display_name", "skill_level", "pin"]);
+        focusFirstInvalid([
+          ...(next.name ? ["display_name"] : []),
+          ...(next.skill ? ["skill_level"] : []),
+          ...(next.pin ? ["pin"] : []),
+        ]);
       }
       return;
     }
@@ -186,7 +190,10 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
       });
       if (!reconnectFocused.current) {
         reconnectFocused.current = true;
-        focusFirstInvalid(["reconnect_name", "reconnect_pin"]);
+        focusFirstInvalid([
+          ...(next.name ? ["reconnect_name"] : []),
+          ...(next.pin ? ["reconnect_pin"] : []),
+        ]);
       }
       return;
     }

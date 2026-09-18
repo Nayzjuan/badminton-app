@@ -129,6 +129,17 @@ describe("LoginForm", () => {
     expect(await screen.findAllByRole("alert")).not.toHaveLength(0);
   });
 
+  it("LF-6b: a PIN-only reconnect error focuses the PIN, not the valid name", async () => {
+    const user = userEvent.setup();
+    render(<LoginForm />);
+    await user.click(screen.getByRole("tab", { name: /returning/i }));
+    await user.type(screen.getByLabelText(/your name/i), "Miggy");
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText(/pin must be exactly 4 digits/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/your pin/i)).toHaveFocus();
+    expect(reconnectPlayer).not.toHaveBeenCalled();
+  });
+
   it("LF-7: tabs expose aria-controls to matching tabpanels", () => {
     render(<LoginForm />);
     expect(screen.getByRole("tab", { name: /new player/i })).toHaveAttribute(
@@ -167,5 +178,38 @@ describe("LoginForm", () => {
     expect(returning.getAttribute("aria-selected")).toBe("false");
     expect(returning.className).toMatch(/\btext-cc-t2\b/);
     expect(returning.className).not.toMatch(/text-muted-foreground/);
+  });
+
+  it("LF-11: a skill error focuses the compact select by name and announces the error only", async () => {
+    const nativeGet = FormData.prototype.get;
+    const spy = vi.spyOn(FormData.prototype, "get").mockImplementation(function (
+      this: FormData,
+      name
+    ) {
+      if (String(name) === "skill_level") return "not-a-level";
+      return nativeGet.call(this, name);
+    });
+    const user = userEvent.setup();
+    try {
+      render(<LoginForm />);
+      const select = screen.getByLabelText(/^skill level$/i);
+      expect(select.id).not.toBe("skill_level");
+      expect(select).toHaveAttribute("name", "skill_level");
+
+      await user.type(screen.getByLabelText(/your name/i), "Miggy");
+      await user.type(screen.getByLabelText(/choose a 4-digit pin/i), "1234");
+      await user.click(screen.getByRole("button", { name: /create player profile/i }));
+
+      expect(await screen.findByText(/please select a valid skill level/i)).toBeInTheDocument();
+      expect(select).toHaveFocus();
+      expect(select).toHaveAttribute("aria-invalid", "true");
+      expect(select.getAttribute("aria-describedby")?.split(/\s+/)).toEqual(["skill_level_error"]);
+      expect(signInAnonymously).not.toHaveBeenCalled();
+      expect(trackRegistration).toHaveBeenCalledWith(
+        expect.objectContaining({ step: "validation_error", field: "skill" })
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

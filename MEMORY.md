@@ -19,7 +19,7 @@
 
 ## 2026-09-18 — registration tap targets and contrast
 
-Compact skill picker is a `<select>` plus a one-line Beginner hint; the stacked "What do the 6 levels mean?" control is gone. NEW/RETURNING tabs use `gap-3` and `text-cc-t2`. `/` and join chrome `justify-start` on small `dvh`, `bg-cc-bg`, CTAs `bg-cc-amber` / `text-cc-btn-on-accent`.
+Compact skill picker is a `<select>` plus a one-line Beginner hint; the stacked "What do the 6 levels mean?" control is gone. NEW/RETURNING tabs use `gap-3` and `text-cc-t2`. `/` and join chrome `justify-start` on small `dvh`, `bg-cc-bg`, CTAs `bg-cc-amber` / `text-cc-btn-on-accent`. Compact `id`s are `useId()`-scoped; `name="skill_level"` is the focus hook. Client validation focuses only failed fields (`LoginForm` `focusFirstInvalid`).
 
 ---
 
