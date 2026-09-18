@@ -84,6 +84,13 @@ test.describe("Auth — [K-1] Anonymous login form visible", () => {
       await expect(page.getByRole("button", { name: /create player profile/i })).toBeVisible({
         timeout: 5_000,
       });
+
+      const skill = page.getByLabel(/^skill level$/i);
+      await expect(skill).toBeVisible({ timeout: 5_000 });
+      await expect(skill).toHaveAttribute("name", "skill_level");
+      await expect(skill.locator("option")).toHaveCount(6);
+      await expect(page.getByText(/not sure\? leave beginner/i)).toBeVisible();
+      await expect(page.getByText(/what do the 6 levels mean/i)).toHaveCount(0);
     } finally {
       await context.close();
     }

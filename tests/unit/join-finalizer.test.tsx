@@ -91,6 +91,10 @@ describe("JoinFinalizer", () => {
       });
     render(<JoinFinalizer clubSlug="chillax" sessionId={SID} />);
     expect(await screen.findByRole("alert")).toHaveTextContent(/session has ended/i);
+    const retry = screen.getByRole("button", { name: /retry/i });
+    expect(retry.className).toMatch(/\bbg-cc-amber\b/);
+    expect(retry.className).toMatch(/\btext-cc-btn-on-accent\b/);
+    expect(retry.className).not.toMatch(/bg-amber-500/);
     const before = vi.mocked(completeRegistrationJoinAction).mock.calls.length;
     await user.click(screen.getByRole("button", { name: /retry/i }));
     await vi.waitFor(() =>
