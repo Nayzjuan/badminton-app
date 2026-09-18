@@ -26,6 +26,12 @@
 //     K-10 Negative: primary organizer cannot join their own session.
 //     K-11 Negative: closed session passcode rejected.
 //
+//   getOrCreateCoOrganizerInvite / redeemCoOrganizerInvite
+//     K-14 Happy: factory session (null token) mints; redeem admits
+//          without enqueueing; destination is the session club.
+//     K-15 Negative: a non-organizer cannot mint the QR token.
+//     K-16 Negative: closed / close-in-flight refuse redeem and remint.
+//
 //   toggleAutoMatchmaking
 //     K-12 Happy: organizer flips false→true and back.
 //     K-13 Negative: non-organizer rejected.
@@ -38,7 +44,15 @@ import { Faker, en } from "@faker-js/faker";
 import { makeProfile, makeSession } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
-import { createSession, joinAsCoOrganizer, toggleAutoMatchmaking } from "@/app/actions/sessions";
+import {
+  createSession,
+  getOrCreateCoOrganizerInvite,
+  joinAsCoOrganizer,
+  redeemCoOrganizerInvite,
+  toggleAutoMatchmaking,
+} from "@/app/actions/sessions";
+import { isCoOrganizerInviteTokenShape } from "@/lib/co-organizer-invite";
+import { clubOrganizer, sessionCoOrgShare } from "@/lib/club-paths";
 
 const faker = new Faker({ locale: [en] });
 faker.seed(11001);
@@ -155,7 +169,9 @@ describe("Session Lifecycle — Suite K", () => {
 
       const { data: session } = await serviceClient()
         .from("sessions")
-        .select("name, scoring, organizer_passcode, created_by, is_active")
+        .select(
+          "name, scoring, organizer_passcode, created_by, is_active, co_organizer_invite_token"
+        )
         .eq("id", result.sessionId!)
         .single();
 
@@ -164,6 +180,7 @@ describe("Session Lifecycle — Suite K", () => {
       expect(session?.organizer_passcode).toBe("SMASH7");
       expect(session?.created_by).toBe(me.id);
       expect(session?.is_active).toBe(true);
+      expect(isCoOrganizerInviteTokenShape(session?.co_organizer_invite_token ?? "")).toBe(true);
     } finally {
       restore();
     }
@@ -461,6 +478,7 @@ describe("Session Lifecycle — Suite K", () => {
       const result = await joinAsCoOrganizer("join01"); // case-insensitive
       expect(result.success).toBe(true);
       expect(result.sessionId).toBe(sessionId);
+      expect(result.clubSlug).toBe("legacy");
 
       const { data: rows } = await serviceClient()
         .from("session_organizers")
@@ -590,6 +608,121 @@ describe("Session Lifecycle — Suite K", () => {
         .eq("session_id", sessionId!)
         .eq("user_id", lateJoiner.id);
       expect(count).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
+  // ============================================================
+  // getOrCreateCoOrganizerInvite / redeemCoOrganizerInvite
+  // ============================================================
+
+  it("K-14: a factory session mints a QR token; redeem admits without enqueueing", async () => {
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+
+    let token: string | undefined;
+    {
+      const restore = mockAuthAs(organizer.id);
+      try {
+        const minted = await getOrCreateCoOrganizerInvite(session.id);
+        expect(minted.success).toBe(true);
+        expect(isCoOrganizerInviteTokenShape(minted.token ?? "")).toBe(true);
+        expect(minted.path).toBe(sessionCoOrgShare(minted.token!));
+        token = minted.token;
+
+        const again = await getOrCreateCoOrganizerInvite(session.id);
+        expect(again.success).toBe(true);
+        expect(again.token).toBe(token);
+      } finally {
+        restore();
+      }
+    }
+
+    const coOrganizer = await makeProfile({ faker });
+    const restore = mockAuthAs(coOrganizer.id);
+    try {
+      const redeemed = await redeemCoOrganizerInvite(token!);
+      expect(redeemed.success).toBe(true);
+      expect(redeemed.destination).toBe(clubOrganizer("legacy", session.id));
+
+      const { data: orgs } = await serviceClient()
+        .from("session_organizers")
+        .select("user_id")
+        .eq("session_id", session.id);
+      expect((orgs ?? []).map((r) => r.user_id)).toEqual(
+        expect.arrayContaining([organizer.id, coOrganizer.id])
+      );
+
+      const { count } = await serviceClient()
+        .from("queue_entries")
+        .select("*", { count: "exact", head: true })
+        .eq("session_id", session.id)
+        .eq("player_id", coOrganizer.id);
+      expect(count).toBe(0);
+    } finally {
+      restore();
+    }
+  });
+
+  it("K-15: getOrCreateCoOrganizerInvite refuses a caller who is not an organizer", async () => {
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+    const outsider = await makeProfile({ faker });
+
+    const restore = mockAuthAs(outsider.id);
+    try {
+      const result = await getOrCreateCoOrganizerInvite(session.id);
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/organizer/i);
+
+      const { data } = await serviceClient()
+        .from("sessions")
+        .select("co_organizer_invite_token")
+        .eq("id", session.id)
+        .single();
+      expect(data?.co_organizer_invite_token).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+
+  it("K-16: redeem and remint refuse a closed session", async () => {
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+
+    let token: string | undefined;
+    {
+      const restore = mockAuthAs(organizer.id);
+      try {
+        const minted = await getOrCreateCoOrganizerInvite(session.id);
+        token = minted.token;
+      } finally {
+        restore();
+      }
+    }
+
+    await serviceClient()
+      .from("sessions")
+      .update({ is_active: true, ended_at: new Date().toISOString() })
+      .eq("id", session.id);
+
+    const lateJoiner = await makeProfile({ faker });
+    {
+      const restore = mockAuthAs(lateJoiner.id);
+      try {
+        const redeemed = await redeemCoOrganizerInvite(token!);
+        expect(redeemed.success).toBe(false);
+        expect(redeemed.message).toMatch(/invalid or expired/i);
+      } finally {
+        restore();
+      }
+    }
+
+    const restore = mockAuthAs(organizer.id);
+    try {
+      const remint = await getOrCreateCoOrganizerInvite(session.id);
+      expect(remint.success).toBe(false);
     } finally {
       restore();
     }
