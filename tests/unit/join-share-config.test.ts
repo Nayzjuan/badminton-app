@@ -17,6 +17,7 @@ const JOIN_SOURCES = [
   "/play/join",
   "/play/join/:sessionId",
   "/j/:sessionId",
+  "/o/:token",
 ];
 
 describe("join-share next.config", () => {
@@ -43,6 +44,9 @@ describe("join-share next.config", () => {
     const headers = await nextConfig.headers!();
     const locked = headers.find((h) => h.source.includes("?!j/"));
     expect(locked, "the catch-all exclusion for join routes is gone").toBeDefined();
+    expect(locked!.source, "/o/ must be excluded from XFO DENY or in-app scans blank").toContain(
+      "o/"
+    );
     expect(locked!.headers.find((h) => h.key === "X-Frame-Options")?.value).toBe("DENY");
     expect(locked!.headers.find((h) => h.key === "Content-Security-Policy")?.value ?? "").toContain(
       "frame-ancestors 'none'"

@@ -13,7 +13,13 @@
 
 ---
 
-## Part 0 — sessions 2026-09-15, 2026-09-13, 2026-09-11, and 2026-08-22
+## Part 0 — sessions 2026-09-18, 2026-09-15, 2026-09-13, 2026-09-11, and 2026-08-22
+
+## 2026-09-18 — registration tap targets and contrast
+
+Archived from `MEMORY.md` after PR #94 merged. Compact skill picker is a `<select>` plus a one-line Beginner hint. NEW/RETURNING tabs use `gap-3` and `text-cc-t2`. Join L1 for QR is `JoinFinalizer` → `completeRegistrationJoinAction`. Prod stamp `20260915150524` / `join_queue_session_lock_and_idempotent`.
+
+---
 
 ## 2026-09-13 — Google name confirm + skill + identity merge (APPLIED)
 

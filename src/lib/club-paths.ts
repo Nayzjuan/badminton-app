@@ -57,3 +57,12 @@ export function clubJoin(slug: string, sessionId?: string): string {
 export function sessionShare(sessionId: string): string {
   return `/j/${encodeURIComponent(sessionId)}`;
 }
+
+/**
+ * Co-organizer QR / share URL. Token lives in the path (no query string)
+ * for the same in-app-browser reason as sessionShare. Must NOT be derived
+ * from the session UUID — player /j/[id] already publishes that.
+ */
+export function sessionCoOrgShare(token: string): string {
+  return `/o/${encodeURIComponent(token)}`;
+}

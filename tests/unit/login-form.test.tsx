@@ -7,8 +7,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+const { replace, push } = vi.hoisted(() => ({
+  replace: vi.fn(),
+  push: vi.fn(),
+}));
+
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch: vi.fn() }),
+  useRouter: () => ({ push, replace, prefetch: vi.fn() }),
 }));
 
 vi.mock("@/app/actions/auth", () => ({
@@ -211,5 +216,31 @@ describe("LoginForm", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("LF-12: co-organizer next labels Join as Co-Organizer, omits session_id, and sends Google to /o/", () => {
+    const tokenPath = "/o/abcdefghijklmnopqrstuvwxyz012345";
+    render(<LoginForm next={tokenPath} clubSlug="chillax" />);
+    expect(screen.getByRole("button", { name: /join as co-organizer/i })).toBeInTheDocument();
+    expect(screen.getByTestId("google-next")).toHaveTextContent(tokenPath);
+    const form = screen.getByRole("button", { name: /join as co-organizer/i }).closest("form");
+    expect(form?.querySelector('input[name="next"]')).toHaveValue(tokenPath);
+    expect(form?.querySelector('input[name="session_id"]')).toBeNull();
+  });
+
+  it("LF-13: reconnect with next=/o/ returns to the invite, not player /j/", async () => {
+    const tokenPath = "/o/abcdefghijklmnopqrstuvwxyz012345";
+    vi.mocked(reconnectPlayer).mockResolvedValue({ success: true });
+    const user = userEvent.setup();
+    render(<LoginForm next={tokenPath} />);
+    await user.click(screen.getByRole("tab", { name: /returning/i }));
+    await user.type(screen.getByLabelText(/your name/i), "Miggy");
+    await user.type(screen.getByLabelText(/your pin/i), "1234");
+    await user.click(screen.getByRole("button", { name: /^reconnect$/i }));
+    await vi.waitFor(() => {
+      expect(replace).toHaveBeenCalledWith(tokenPath);
+    });
+    expect(replace).not.toHaveBeenCalledWith(expect.stringContaining("/j/"));
+    expect(push).not.toHaveBeenCalled();
   });
 });

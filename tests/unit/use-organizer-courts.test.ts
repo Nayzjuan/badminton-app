@@ -168,6 +168,7 @@ function makeSession(timeLimit: number | null): Session {
     created_by: "11111111-1111-4111-8111-111111111111",
     club_id: "22222222-2222-4222-8222-222222222222",
     organizer_passcode: null,
+    co_organizer_invite_token: null,
     scoring: "single",
     is_active: true,
     is_auto_matchmaking_on: false,

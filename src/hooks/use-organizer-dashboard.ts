@@ -166,6 +166,8 @@ export interface UseOrganizerDashboardResult {
   setMoreMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   shareOpen: boolean;
   setShareOpen: (open: boolean) => void;
+  coOrgShareOpen: boolean;
+  setCoOrgShareOpen: (open: boolean) => void;
   closeOpen: boolean;
   setCloseOpen: (open: boolean) => void;
 
@@ -242,6 +244,7 @@ export function useOrganizerDashboard({
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [coOrgShareOpen, setCoOrgShareOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
 
   // ── Session close flow ────────────────────────────────────
@@ -685,6 +688,8 @@ export function useOrganizerDashboard({
     setMoreMenuOpen,
     shareOpen,
     setShareOpen,
+    coOrgShareOpen,
+    setCoOrgShareOpen,
     closeOpen,
     setCloseOpen,
     switcherRef,

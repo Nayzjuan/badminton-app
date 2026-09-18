@@ -36,6 +36,7 @@ import {
   Power,
   Tv2,
   Share2,
+  KeyRound,
   MoreVertical,
   WifiOff,
 } from "lucide-react";
@@ -116,6 +117,7 @@ export interface OrganizerSessionHeaderProps {
   setMoreMenuOpen: React.Dispatch<React.SetStateAction<boolean>>;
   moreMenuRef: React.RefObject<HTMLDivElement | null>;
   setShareOpen: (open: boolean) => void;
+  setCoOrgShareOpen: (open: boolean) => void;
   setCloseOpen: (open: boolean) => void;
 
   // Tabs
@@ -152,6 +154,7 @@ export function OrganizerSessionHeader({
   setMoreMenuOpen,
   moreMenuRef,
   setShareOpen,
+  setCoOrgShareOpen,
   setCloseOpen,
   tabs,
   activeTab,
@@ -251,6 +254,19 @@ export function OrganizerSessionHeader({
                     >
                       <Share2 className="h-4 w-4 text-cc-t3 shrink-0" />
                       Share Session
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setMoreMenuOpen(false);
+                        setCoOrgShareOpen(true);
+                      }}
+                      className="flex items-center gap-3 w-full px-4 py-3 text-sm text-left
+                                 text-cc-t2 hover:bg-cc-bg-3
+                                 hover:text-cc-t1 transition-colors"
+                    >
+                      <KeyRound className="h-4 w-4 text-cc-t3 shrink-0" />
+                      Co-organizer QR
                     </button>
 
                     <div className="border-t border-cc-border" />
@@ -551,6 +567,17 @@ export function OrganizerSessionHeader({
               >
                 <Share2 className="h-3.5 w-3.5 shrink-0" />
                 <span className="hidden xl:inline">Share Session</span>
+              </button>
+
+              <button
+                onClick={() => setCoOrgShareOpen(true)}
+                aria-label="Co-organizer QR"
+                title="Co-organizer QR"
+                className={`${LINK_CHIP} border-cc-border bg-cc-bg-3 text-cc-t2
+                            hover:bg-cc-bg-2 hover:text-cc-t1 hover:border-cc-border-hi`}
+              >
+                <KeyRound className="h-3.5 w-3.5 shrink-0" />
+                <span className="hidden xl:inline">Co-organizer QR</span>
               </button>
 
               <button

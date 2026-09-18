@@ -48,7 +48,7 @@ export default async function ClubOrganizerDashboardPage({ params }: PageProps) 
     .single();
   if (!sessionRow) notFound();
   if (sessionRow.club_id !== club.id) notFound(); // session belongs to another club
-  const session = { ...sessionRow, organizer_passcode: null };
+  const session = { ...sessionRow, organizer_passcode: null, co_organizer_invite_token: null };
 
   // Ended session → no live command center (the dashboard is a LIVE control
   // surface; a stale board would look joinable). Instead of bouncing to the
@@ -75,7 +75,11 @@ export default async function ClubOrganizerDashboardPage({ params }: PageProps) 
     .neq("id", sessionId)
     .order("created_at", { ascending: false });
 
-  const otherSessions = (otherSessionsData ?? []).map((s) => ({ ...s, organizer_passcode: null }));
+  const otherSessions = (otherSessionsData ?? []).map((s) => ({
+    ...s,
+    organizer_passcode: null,
+    co_organizer_invite_token: null,
+  }));
 
   return <OrganizerDashboard profile={profile} session={session} otherSessions={otherSessions} />;
 }

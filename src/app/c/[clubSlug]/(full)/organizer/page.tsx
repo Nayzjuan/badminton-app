@@ -10,7 +10,7 @@
 import { notFound, redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { getClubBySlug, getRequestUser } from "@/lib/clubs";
+import { getClubBySlug, getRequestUser, getClubRole } from "@/lib/clubs";
 import { OrganizerEntry, type SessionWithStats } from "@/components/organizer/organizer-entry";
 import { PUBLIC_PROFILE_COLUMNS } from "@/types/database";
 
@@ -39,11 +39,14 @@ export default async function ClubOrganizerHubPage({ params }: PageProps) {
   const club = await getClubBySlug(clubSlug);
   if (!club) notFound();
 
+  const role = await getClubRole(user.id, club.id);
+  const isImplicitOrganizer = role === "owner" || role === "admin";
+
   // ── Fetch this club's sessions (active + closed) ──────────────
   // Service client — OrganizerEntry shows each active session's
-  // organizer_passcode, and the browser/anon client's column privilege on
-  // sessions no longer includes it. Scoped to this one club_id, so the
-  // service-role read is the sanctioned secrets use case (CLAUDE.md).
+  // organizer_passcode (and invite token) ONLY for sessions this viewer
+  // organizes. Scoped to this one club_id, so the service-role read is
+  // the sanctioned secrets use case (CLAUDE.md).
   const db = createServiceClient();
   const allSessions =
     (
@@ -104,15 +107,41 @@ export default async function ClubOrganizerHubPage({ params }: PageProps) {
   const playerCounts = countBy(queueRows.data);
   const courtCounts = countBy(courtRows.data);
 
+  const { data: organizerRows } =
+    allIds.length && !isImplicitOrganizer
+      ? await db
+          .from("session_organizers")
+          .select("session_id")
+          .eq("user_id", user.id)
+          .in("session_id", allIds)
+      : { data: [] as { session_id: string }[] };
+
+  const organizedSessionIds = isImplicitOrganizer
+    ? allIds
+    : [
+        ...new Set([
+          ...allSessions.filter((s) => s.created_by === user.id).map((s) => s.id),
+          ...(organizerRows ?? []).map((r) => r.session_id),
+        ]),
+      ];
+  const organized = new Set(organizedSessionIds);
+
+  const stripSecrets = <T extends (typeof allSessions)[number]>(session: T): T => {
+    if (organized.has(session.id)) {
+      return { ...session, co_organizer_invite_token: null };
+    }
+    return { ...session, organizer_passcode: null, co_organizer_invite_token: null };
+  };
+
   const activeWithStats: SessionWithStats[] = activeSessions.map((session) => ({
-    ...session,
+    ...stripSecrets(session),
     playerCount: playerCounts.get(session.id) ?? 0,
     courtCount: courtCounts.get(session.id) ?? 0,
     matchCount: matchCounts.get(session.id) ?? 0,
   }));
 
   const pastWithStats: SessionWithStats[] = pastSessions.map((session) => ({
-    ...session,
+    ...stripSecrets(session),
     playerCount: 0,
     courtCount: 0,
     matchCount: matchCounts.get(session.id) ?? 0,
@@ -125,6 +154,7 @@ export default async function ClubOrganizerHubPage({ params }: PageProps) {
       activeSessions={activeWithStats}
       pastSessions={pastWithStats}
       soloClubId={club.id}
+      organizedSessionIds={organizedSessionIds}
     />
   );
 }

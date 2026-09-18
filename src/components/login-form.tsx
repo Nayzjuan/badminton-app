@@ -23,18 +23,23 @@ import { trackRegistration, type RegistrationEntry } from "@/lib/registration-an
 interface LoginFormProps {
   sessionId?: string;
   clubSlug?: string;
+  /** Post-auth return path. Co-organizer /o/[token] must set this so Google
+   *  and reconnect do not bounce through player /j/. */
+  next?: string;
 }
 
 type LoginMode = "new" | "returning";
 type FieldKey = "name" | "pin" | "skill" | "form";
 
-function entryContext(sessionId?: string, clubSlug?: string): RegistrationEntry {
+function entryContext(sessionId?: string, clubSlug?: string, next?: string): RegistrationEntry {
+  if (next?.startsWith("/o/")) return "qr_coorg";
   if (sessionId) return "qr_session";
   if (clubSlug) return "qr_club";
   return "direct";
 }
 
-function oauthNext(sessionId?: string, clubSlug?: string): string {
+function oauthNext(sessionId?: string, clubSlug?: string, next?: string): string {
+  if (next) return next;
   if (sessionId) return sessionShare(sessionId);
   if (clubSlug) return clubJoin(clubSlug);
   return "/play";
@@ -43,6 +48,7 @@ function oauthNext(sessionId?: string, clubSlug?: string): string {
 function submitLabel(entry: RegistrationEntry): string {
   if (entry === "qr_session") return "Join Session";
   if (entry === "qr_club") return "Join Club";
+  if (entry === "qr_coorg") return "Join as Co-Organizer";
   return "Create Player Profile";
 }
 
@@ -58,9 +64,9 @@ function FieldError({ id, message }: { id: string; message: string }) {
   );
 }
 
-export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
+export function LoginForm({ sessionId, clubSlug, next }: LoginFormProps = {}) {
   const router = useRouter();
-  const entry = entryContext(sessionId, clubSlug);
+  const entry = entryContext(sessionId, clubSlug, next);
 
   const [mode, setMode] = useState<LoginMode>("new");
 
@@ -91,9 +97,9 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
 
   useEffect(() => {
     router.prefetch(
-      sessionId ? sessionShare(sessionId) : clubSlug ? clubJoin(clubSlug) : "/welcome"
+      next ?? (sessionId ? sessionShare(sessionId) : clubSlug ? clubJoin(clubSlug) : "/welcome")
     );
-  }, [router, sessionId, clubSlug]);
+  }, [router, sessionId, clubSlug, next]);
 
   function focusFirstInvalid(ids: string[]) {
     for (const id of ids) {
@@ -115,13 +121,13 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
     const nameParsed = displayNameSchema.safeParse(formData.get("display_name") ?? "");
     const skillParsed = skillLevelSchema.safeParse(formData.get("skill_level"));
     const pinParsed = pinSchema.safeParse(formData.get("pin") ?? "");
-    const next: Partial<Record<FieldKey, string>> = {};
-    if (!nameParsed.success) next.name = nameParsed.error.issues[0].message;
-    if (!skillParsed.success) next.skill = skillParsed.error.issues[0].message;
-    if (!pinParsed.success) next.pin = pinParsed.error.issues[0].message;
-    if (Object.keys(next).length > 0) {
-      setNewErrors(next);
-      const firstField = next.name ? "name" : next.skill ? "skill" : "pin";
+    const fieldErrors: Partial<Record<FieldKey, string>> = {};
+    if (!nameParsed.success) fieldErrors.name = nameParsed.error.issues[0].message;
+    if (!skillParsed.success) fieldErrors.skill = skillParsed.error.issues[0].message;
+    if (!pinParsed.success) fieldErrors.pin = pinParsed.error.issues[0].message;
+    if (Object.keys(fieldErrors).length > 0) {
+      setNewErrors(fieldErrors);
+      const firstField = fieldErrors.name ? "name" : fieldErrors.skill ? "skill" : "pin";
       trackRegistration({
         step: "validation_error",
         entry,
@@ -131,9 +137,9 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
       if (!newFocused.current) {
         newFocused.current = true;
         focusFirstInvalid([
-          ...(next.name ? ["display_name"] : []),
-          ...(next.skill ? ["skill_level"] : []),
-          ...(next.pin ? ["pin"] : []),
+          ...(fieldErrors.name ? ["display_name"] : []),
+          ...(fieldErrors.skill ? ["skill_level"] : []),
+          ...(fieldErrors.pin ? ["pin"] : []),
         ]);
       }
       return;
@@ -177,22 +183,22 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
 
     const nameParsed = displayNameSchema.safeParse(reconnectName);
     const pinParsed = pinSchema.safeParse(reconnectPin);
-    const next: Partial<Record<FieldKey, string>> = {};
-    if (!nameParsed.success) next.name = nameParsed.error.issues[0].message;
-    if (!pinParsed.success) next.pin = pinParsed.error.issues[0].message;
-    if (Object.keys(next).length > 0) {
-      setReconnectErrors(next);
+    const fieldErrors: Partial<Record<FieldKey, string>> = {};
+    if (!nameParsed.success) fieldErrors.name = nameParsed.error.issues[0].message;
+    if (!pinParsed.success) fieldErrors.pin = pinParsed.error.issues[0].message;
+    if (Object.keys(fieldErrors).length > 0) {
+      setReconnectErrors(fieldErrors);
       trackRegistration({
         step: "validation_error",
         entry,
         method: "pin",
-        field: next.name ? "name" : "pin",
+        field: fieldErrors.name ? "name" : "pin",
       });
       if (!reconnectFocused.current) {
         reconnectFocused.current = true;
         focusFirstInvalid([
-          ...(next.name ? ["reconnect_name"] : []),
-          ...(next.pin ? ["reconnect_pin"] : []),
+          ...(fieldErrors.name ? ["reconnect_name"] : []),
+          ...(fieldErrors.pin ? ["reconnect_pin"] : []),
         ]);
       }
       return;
@@ -207,12 +213,18 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
         return;
       }
       if (result.requiresRename) {
-        const nextPath = sessionId
-          ? sessionShare(sessionId)
-          : clubSlug
-            ? clubJoin(clubSlug)
-            : "/play";
+        const nextPath = next
+          ? next
+          : sessionId
+            ? sessionShare(sessionId)
+            : clubSlug
+              ? clubJoin(clubSlug)
+              : "/play";
         router.replace(`/rename?next=${encodeURIComponent(nextPath)}`);
+        return;
+      }
+      if (next) {
+        router.replace(next);
         return;
       }
       if (sessionId) {
@@ -259,7 +271,7 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
   return (
     <div className="w-full max-w-sm sm:max-w-md space-y-3">
       <GoogleSignInButton
-        next={oauthNext(sessionId, clubSlug)}
+        next={oauthNext(sessionId, clubSlug, next)}
         clubSlug={clubSlug}
         dividerPosition="below"
       />
@@ -411,7 +423,8 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
             )}
           </div>
 
-          {sessionId && <input type="hidden" name="session_id" value={sessionId} />}
+          {next && <input type="hidden" name="next" value={next} />}
+          {sessionId && !next && <input type="hidden" name="session_id" value={sessionId} />}
           {clubSlug && <input type="hidden" name="club_slug" value={clubSlug} />}
 
           {newFormErr && (

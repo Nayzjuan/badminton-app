@@ -49,7 +49,7 @@ export default async function ClubPlayerDashboardPage({ params }: PageProps) {
     .single();
   if (!sessionRow) notFound();
   if (sessionRow.club_id !== club.id) notFound(); // session belongs to another club
-  const session = { ...sessionRow, organizer_passcode: null };
+  const session = { ...sessionRow, organizer_passcode: null, co_organizer_invite_token: null };
 
   // Duplicate-name gate (L1) — run AFTER confirming the session exists AND
   // belongs to this club, so the post-rename return to clubPlay(...) can never
