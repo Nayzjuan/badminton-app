@@ -92,8 +92,8 @@ export function JoinFinalizer({ clubSlug, sessionId }: Props) {
             setRetryKey((k) => k + 1);
           }}
           className="flex min-h-11 w-full cursor-pointer items-center justify-center rounded-lg
-                     bg-amber-500 px-4 py-3 text-base font-semibold text-[#0E1C3A]
-                     hover:bg-amber-600"
+                     bg-cc-amber px-4 py-3 text-base font-semibold text-cc-btn-on-accent
+                     hover:bg-cc-amber/90"
         >
           Retry
         </button>
@@ -104,9 +104,7 @@ export function JoinFinalizer({ clubSlug, sessionId }: Props) {
   return (
     <div className="flex w-full max-w-sm flex-col items-center gap-3 py-8 text-center">
       <Spinner />
-      <p className="text-sm text-muted-foreground">
-        {sessionId ? "Joining session…" : "Joining club…"}
-      </p>
+      <p className="text-sm text-cc-t2">{sessionId ? "Joining session…" : "Joining club…"}</p>
     </div>
   );
 }

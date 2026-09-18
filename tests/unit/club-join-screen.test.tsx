@@ -116,6 +116,11 @@ describe("ClubJoinScreen", () => {
     );
     expect(html).toContain("join-finalizer");
     expect(html).toContain(`data-session="${SID}"`);
+    expect(html).toContain("Joining Session · Chillax");
+    expect(html).toContain("Thursday");
+    expect(html).toMatch(/\bjustify-start\b/);
+    expect(html).toMatch(/\bbg-cc-bg\b/);
+    expect(html).not.toContain("bg-amber-50");
     expect(html).not.toContain("login-form");
     expect(ensureClubMembership).not.toHaveBeenCalled();
     expect(upsert).not.toHaveBeenCalled();
@@ -135,6 +140,8 @@ describe("ClubJoinScreen", () => {
     const html = renderToStaticMarkup(await ClubJoinScreen({ clubSlug: "chillax" }));
     expect(html).toContain("join-finalizer");
     expect(html).toContain('data-session=""');
+    expect(html).toContain("Joining Club");
+    expect(html).not.toContain("Joining Session");
     expect(upsert).not.toHaveBeenCalled();
   });
 

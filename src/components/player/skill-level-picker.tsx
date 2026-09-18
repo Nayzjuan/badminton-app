@@ -22,10 +22,12 @@ export function SkillLevelPicker({
   invalid,
 }: SkillLevelPickerProps) {
   if (compact) {
+    const hintId = "skill_level_hint";
+    const described = [describedBy, hintId].filter(Boolean).join(" ");
     return (
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         <label htmlFor="skill_level" className="block text-sm font-semibold text-foreground">
-          Skill level — 6 choices
+          Skill level
         </label>
         <select
           id="skill_level"
@@ -33,7 +35,7 @@ export function SkillLevelPicker({
           value={value}
           disabled={disabled}
           aria-invalid={invalid || undefined}
-          aria-describedby={describedBy}
+          aria-describedby={described}
           onChange={(e) => onChange(e.target.value as SkillLevel)}
           className="min-h-11 w-full rounded-lg border border-input bg-background px-3 py-2
                      text-base focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2
@@ -41,29 +43,13 @@ export function SkillLevelPicker({
         >
           {SKILL_LEVELS.map((level) => (
             <option key={level.value} value={level.value}>
-              {level.label} — {SKILL_COLORS[level.value].descriptor}
+              {level.label}: {SKILL_COLORS[level.value].descriptor}
             </option>
           ))}
         </select>
-        <details className="text-sm text-muted-foreground">
-          <summary
-            className="min-h-11 cursor-pointer list-none py-2 font-medium text-foreground
-                               underline-offset-2 hover:underline focus-visible:outline-none
-                               focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden"
-          >
-            What do the 6 levels mean?
-          </summary>
-          <ul className="mt-2 space-y-1.5 pl-1">
-            {SKILL_LEVELS.map((level) => (
-              <li key={level.value}>
-                <span className="font-medium text-foreground">{level.label}</span>
-                {" — "}
-                {SKILL_COLORS[level.value].descriptor}
-              </li>
-            ))}
-          </ul>
-          <p className="mt-2">Not sure? Leave Beginner selected — you can change this later.</p>
-        </details>
+        <p id={hintId} className="text-xs text-cc-t2">
+          Not sure? Leave Beginner. You can change this later.
+        </p>
       </div>
     );
   }

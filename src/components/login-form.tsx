@@ -260,7 +260,7 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
       <div
         role="tablist"
         aria-label="Login mode"
-        className="grid grid-cols-2 rounded-xl border border-border bg-muted/40 p-1 gap-1"
+        className="grid grid-cols-2 rounded-xl border border-border bg-muted/40 p-1 gap-3"
       >
         <button
           role="tab"
@@ -275,8 +275,8 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
                       text-sm font-semibold transition-all duration-150
                       ${
                         mode === "new"
-                          ? "bg-background text-foreground shadow-sm ring-1 ring-border/50"
-                          : "text-muted-foreground hover:text-foreground"
+                          ? "bg-background text-cc-t1 shadow-sm ring-1 ring-border/50"
+                          : "text-cc-t2 hover:text-cc-t1"
                       }`}
         >
           <UserPlus className="h-4 w-4" aria-hidden="true" />
@@ -296,8 +296,8 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
                       text-sm font-semibold transition-all duration-150
                       ${
                         mode === "returning"
-                          ? "bg-background text-foreground shadow-sm ring-1 ring-border/50"
-                          : "text-muted-foreground hover:text-foreground"
+                          ? "bg-background text-cc-t1 shadow-sm ring-1 ring-border/50"
+                          : "text-cc-t2 hover:text-cc-t1"
                       }`}
         >
           <RotateCcw className="h-4 w-4" aria-hidden="true" />
@@ -337,7 +337,7 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
             {newNameErr ? (
               <FieldError id="display_name_error" message={newNameErr} />
             ) : (
-              <p id="display_name_hint" className="text-xs text-muted-foreground">
+              <p id="display_name_hint" className="text-xs text-cc-t2">
                 Letters, numbers, and spaces. 3–30 characters.
               </p>
             )}
@@ -398,7 +398,7 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
             {newPinErr ? (
               <FieldError id="pin_error" message={newPinErr} />
             ) : (
-              <p id="pin_hint" className="text-xs text-muted-foreground">
+              <p id="pin_hint" className="text-xs text-cc-t2">
                 You&apos;ll use this PIN to sign back in.
               </p>
             )}
@@ -417,15 +417,15 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
             type="submit"
             disabled={newIsPending}
             className="flex min-h-[44px] w-full cursor-pointer items-center justify-center
-                       gap-2 rounded-lg bg-amber-500 px-4 py-3 text-base font-semibold
-                       text-[#0E1C3A] hover:bg-amber-600 disabled:cursor-not-allowed
+                       gap-2 rounded-lg bg-cc-amber px-4 py-3 text-base font-semibold
+                       text-cc-btn-on-accent hover:bg-cc-amber/90 disabled:cursor-not-allowed
                        disabled:opacity-70"
           >
             {newIsPending && <Spinner />}
             {newIsPending ? pendingLabel(entry) : submitLabel(entry)}
           </button>
           {entry === "direct" && (
-            <p className="text-center text-xs text-muted-foreground">
+            <p className="text-center text-xs text-cc-t2">
               This creates your profile. Scan a session QR next to join the queue.
             </p>
           )}
@@ -440,7 +440,7 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
           onSubmit={handleReconnectSubmit}
           className="space-y-3"
         >
-          <p className="text-sm text-muted-foreground">Enter the name and PIN you used before.</p>
+          <p className="text-sm text-cc-t2">Enter the name and PIN you used before.</p>
 
           <div className="space-y-1.5">
             <label htmlFor="reconnect_name" className="block text-sm font-semibold text-foreground">
@@ -509,8 +509,8 @@ export function LoginForm({ sessionId, clubSlug }: LoginFormProps = {}) {
             type="submit"
             disabled={reconnectIsPending}
             className="flex min-h-[44px] w-full cursor-pointer items-center justify-center
-                       gap-2 rounded-lg bg-amber-500 px-4 py-3 text-base font-semibold
-                       text-[#0E1C3A] hover:bg-amber-600 disabled:cursor-not-allowed
+                       gap-2 rounded-lg bg-cc-amber px-4 py-3 text-base font-semibold
+                       text-cc-btn-on-accent hover:bg-cc-amber/90 disabled:cursor-not-allowed
                        disabled:opacity-70"
           >
             {reconnectIsPending && <Spinner />}

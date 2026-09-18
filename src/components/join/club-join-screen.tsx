@@ -65,20 +65,16 @@ function JoinChrome({
   children: ReactNode;
 }) {
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center bg-background px-4 py-8">
-      <div className="mb-4 w-full max-w-sm sm:max-w-md">
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center dark:border-amber-800/50 dark:bg-amber-950/20">
-          <p className="mb-1 truncate text-xs font-semibold uppercase tracking-widest text-amber-700 dark:text-amber-400">
+    <main className="flex min-h-dvh flex-col items-center justify-start bg-cc-bg px-4 py-8 sm:justify-center">
+      <div className="mb-3 w-full max-w-sm sm:max-w-md">
+        <div className="rounded-lg border border-cc-amber/40 bg-cc-amber-dim px-3 py-2 text-center">
+          <p className="truncate text-[11px] font-semibold uppercase tracking-widest text-cc-amber">
             {sessionName ? "Joining Session" : "Joining Club"}
+            {sessionName ? ` · ${clubName}` : ""}
           </p>
-          <h1 className="truncate text-xl font-black tracking-tight text-foreground">
+          <h1 className="truncate text-lg font-black tracking-tight text-cc-t1">
             {sessionName ?? clubName}
           </h1>
-          {sessionName && (
-            <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-muted-foreground">
-              {clubName}
-            </p>
-          )}
         </div>
       </div>
       {children}

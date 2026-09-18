@@ -49,10 +49,13 @@ describe("LoginForm", () => {
     expect(screen.getByTestId("google-next")).toHaveTextContent(sessionShare(SID));
   });
 
-  it("LF-3: compact picker lists all six levels", () => {
+  it("LF-3: compact picker lists all six levels without a second tap target", () => {
     render(<LoginForm />);
-    const select = screen.getByLabelText(/skill level — 6 choices/i);
+    const select = screen.getByLabelText(/^skill level$/i);
     expect(select.querySelectorAll("option")).toHaveLength(6);
+    expect(screen.getByText(/not sure\? leave beginner/i)).toBeInTheDocument();
+    expect(screen.queryByText(/what do the 6 levels mean/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/6 choices/i)).not.toBeInTheDocument();
   });
 
   it("LF-4: client validation shows persistent field errors and does not call the server", async () => {
@@ -133,5 +136,36 @@ describe("LoginForm", () => {
       "panel-new"
     );
     expect(screen.getByRole("tabpanel")).toHaveAttribute("id", "panel-new");
+  });
+
+  it("LF-8: mode tabs use a 12px gap so they are not a 4px fat-finger pair", () => {
+    render(<LoginForm />);
+    const tablist = screen.getByRole("tablist", { name: /login mode/i });
+    expect(tablist.className).toMatch(/\bgap-3\b/);
+    expect(tablist.className).not.toMatch(/\bgap-1\b/);
+  });
+
+  it("LF-9: primary CTAs use cc-amber tokens, not raw amber-500", async () => {
+    const user = userEvent.setup();
+    render(<LoginForm />);
+    const create = screen.getByRole("button", { name: /create player profile/i });
+    expect(create.className).toMatch(/\bbg-cc-amber\b/);
+    expect(create.className).toMatch(/\btext-cc-btn-on-accent\b/);
+    expect(create.className).not.toMatch(/bg-amber-500/);
+    expect(create.className).not.toMatch(/#0E1C3A/);
+
+    await user.click(screen.getByRole("tab", { name: /returning/i }));
+    const reconnect = screen.getByRole("button", { name: /^reconnect$/i });
+    expect(reconnect.className).toMatch(/\bbg-cc-amber\b/);
+    expect(reconnect.className).toMatch(/\btext-cc-btn-on-accent\b/);
+    expect(reconnect.className).not.toMatch(/bg-amber-500/);
+  });
+
+  it("LF-10: the unselected mode tab uses cc-t2, not muted-foreground", () => {
+    render(<LoginForm />);
+    const returning = screen.getByRole("tab", { name: /returning/i });
+    expect(returning.getAttribute("aria-selected")).toBe("false");
+    expect(returning.className).toMatch(/\btext-cc-t2\b/);
+    expect(returning.className).not.toMatch(/text-muted-foreground/);
   });
 });
