@@ -17,6 +17,7 @@ import { QueueControl } from "./queue-control";
 import { WaitTimeMonitor } from "./wait-time-monitor";
 import { MatchHistoryPanel } from "./match-history-panel";
 import { ShareSessionDialog } from "./share-session-dialog";
+import { CoOrganizerShareDialog } from "./co-organizer-share-dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -144,6 +145,8 @@ export function OrganizerDashboard({
     setMoreMenuOpen,
     shareOpen,
     setShareOpen,
+    coOrgShareOpen,
+    setCoOrgShareOpen,
     closeOpen,
     setCloseOpen,
     switcherRef,
@@ -307,6 +310,7 @@ export function OrganizerDashboard({
         setMoreMenuOpen={setMoreMenuOpen}
         moreMenuRef={moreMenuRef}
         setShareOpen={setShareOpen}
+        setCoOrgShareOpen={setCoOrgShareOpen}
         setCloseOpen={setCloseOpen}
         tabs={tabs}
         activeTab={activeTab}
@@ -330,6 +334,14 @@ export function OrganizerDashboard({
             sessionName={session.name}
             open={shareOpen}
             onOpenChange={setShareOpen}
+          />
+
+          <CoOrganizerShareDialog
+            sessionId={session.id}
+            sessionName={session.name}
+            open={coOrgShareOpen}
+            onOpenChange={setCoOrgShareOpen}
+            hideTrigger
           />
 
           {/* Close Session confirmation dialog — controlled by closeOpen state */}

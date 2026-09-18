@@ -165,4 +165,9 @@ describe("Suite SN — safeNext", () => {
   it("SN-15: ignores the fallback when the input is already safe", () => {
     expect(safeNext("/play", "/welcome")).toBe("/play");
   });
+
+  it("SN-16: returns a co-organizer /o/[token] path unchanged", () => {
+    const path = "/o/abcdefghijklmnopqrstuvwxyz012345";
+    expect(safeNext(path)).toBe(path);
+  });
 });

@@ -93,6 +93,7 @@ export function OrganizerHeaderPreview() {
         setMoreMenuOpen={setMoreMenuOpen}
         moreMenuRef={moreMenuRef}
         setShareOpen={() => {}}
+        setCoOrgShareOpen={() => {}}
         setCloseOpen={() => {}}
         tabs={[
           { key: "courts", label: "Active Courts", badge: 2, badgeVariant: "amber" },

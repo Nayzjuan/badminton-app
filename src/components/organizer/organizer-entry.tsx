@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { createSession, joinAsCoOrganizer } from "@/app/actions/sessions";
 import { SignOutButton } from "@/components/sign-out-button";
+import { CoOrganizerShareDialog } from "@/components/organizer/co-organizer-share-dialog";
 import { useClubSlug } from "@/hooks/use-club-slug";
 import { clubOrganizer } from "@/lib/club-paths";
 import type { Profile, ScoringFormat, Session } from "@/types/database";
@@ -49,6 +50,9 @@ interface OrganizerEntryProps {
    *  active club). Null when they're in 0 or 2+ clubs — creation is
    *  disabled in that case rather than guessing which club to attach to. */
   soloClubId: string | null;
+  /** Session ids this viewer already organizes (creator, session_organizers,
+   *  or club owner/admin). Passcodes and co-org QR only render for these. */
+  organizedSessionIds: string[];
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -82,6 +86,7 @@ export function OrganizerEntry({
   activeSessions,
   pastSessions,
   soloClubId,
+  organizedSessionIds,
 }: OrganizerEntryProps) {
   const router = useRouter();
   // Active club slug when rendered under /c/[clubSlug]/organizer. Lets session
@@ -106,8 +111,8 @@ export function OrganizerEntry({
   // Past sessions accordion
   const [pastExpanded, setPastExpanded] = useState(false);
 
-  // When the user already has active sessions, collapse create/join behind disclosure
-  const [createJoinExpanded, setCreateJoinExpanded] = useState(false);
+  // When the user already has active sessions, collapse create behind disclosure
+  const [createExpanded, setCreateExpanded] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -145,16 +150,21 @@ export function OrganizerEntry({
 
     const result = await joinAsCoOrganizer(joinPasscode.trim());
 
-    if (!result.success) {
-      setError(result.message);
-      setJoining(false);
+    if (result.success) {
+      if (result.clubSlug && result.sessionId) {
+        router.push(clubOrganizer(result.clubSlug, result.sessionId));
+        return;
+      }
+      openSession(result.sessionId);
       return;
     }
 
-    openSession(result.sessionId);
+    setError(result.message);
+    setJoining(false);
   }
 
   const hasSessions = activeSessions.length > 0;
+  const organized = new Set(organizedSessionIds);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -194,79 +204,29 @@ export function OrganizerEntry({
           {hasSessions ? (
             <div className="grid gap-3 sm:grid-cols-2">
               {activeSessions.map((s) => (
-                <button
+                <ActiveSessionCard
                   key={s.id}
-                  onClick={() => openSession(s.id)}
-                  className="group relative flex flex-col rounded-2xl border border-slate-200
-                             bg-white p-5 text-left shadow-sm
-                             transition-all duration-200
-                             hover:border-blue-200 hover:shadow-lg hover:-translate-y-0.5
-                             focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  {/* Card header */}
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-base font-bold text-slate-900 truncate">{s.name}</p>
-                      <p className="mt-0.5 text-xs text-slate-400">
-                        {formatDate(s.created_at)} &middot; {formatTime(s.created_at)}
-                      </p>
-                    </div>
-                    <div
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full
-                                    bg-slate-100 text-slate-400
-                                    transition-colors group-hover:bg-blue-50 group-hover:text-blue-600"
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </div>
-                  </div>
-
-                  {/* Stats row */}
-                  <div className="mt-4 flex items-center gap-4">
-                    <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                      <Users className="h-3.5 w-3.5" />
-                      <span className="font-semibold text-slate-700">{s.playerCount}</span>
-                      <span>player{s.playerCount !== 1 ? "s" : ""}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                      <LayoutGrid className="h-3.5 w-3.5" />
-                      <span className="font-semibold text-slate-700">{s.courtCount}</span>
-                      <span>court{s.courtCount !== 1 ? "s" : ""}</span>
-                    </div>
-                  </div>
-
-                  {/* Footer tags */}
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <span
-                      className="inline-flex items-center gap-1 rounded-full bg-emerald-50
-                                     border border-emerald-200 px-2 py-0.5 text-[10px]
-                                     font-bold uppercase tracking-wider text-emerald-700"
-                    >
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                      Active
-                    </span>
-
-                    {/* Passcode — primary organizer reads this aloud to co-organizers */}
-                    {s.organizer_passcode && (
-                      <span
-                        className="inline-flex items-center gap-1 rounded-full
-                                   bg-violet-50 border border-violet-200
-                                   px-2.5 py-0.5 text-[11px] font-black tracking-widest
-                                   text-violet-700 font-mono uppercase"
-                        title="Share this passcode with your co-organizer"
-                      >
-                        <Key className="h-2.5 w-2.5 shrink-0" />
-                        {s.organizer_passcode}
-                      </span>
-                    )}
-
-                    <span
-                      className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px]
-                                     font-semibold text-slate-500"
-                    >
-                      {scoringLabel(s.scoring)}
-                    </span>
-                  </div>
-                </button>
+                  session={s}
+                  isOrganizer={organized.has(s.id)}
+                  joining={joining}
+                  onOpen={() => openSession(s.id)}
+                  onJoin={async (code) => {
+                    setJoinPasscode(code);
+                    setJoining(true);
+                    setError(null);
+                    const result = await joinAsCoOrganizer(code);
+                    if (result.success) {
+                      if (result.clubSlug && result.sessionId) {
+                        router.push(clubOrganizer(result.clubSlug, result.sessionId));
+                        return;
+                      }
+                      openSession(result.sessionId);
+                      return;
+                    }
+                    setError(result.message);
+                    setJoining(false);
+                  }}
+                />
               ))}
             </div>
           ) : (
@@ -283,16 +243,28 @@ export function OrganizerEntry({
         </section>
 
         {/* ═══════════════════════════════════════════════════════
-            Sections B + C: Create / Join
-            — Shown prominently when no active sessions exist.
-            — Collapsed behind a disclosure when sessions exist
-              (user is already in the system; these are secondary).
+            Join is always first-class. Create stays collapsed when
+            a night is already live.
         ═══════════════════════════════════════════════════════ */}
+        <section className="space-y-3">
+          <div className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-violet-500" />
+            <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">
+              Join as Co-Organizer
+            </h2>
+          </div>
+          <JoinAsCoOrgForm
+            joinPasscode={joinPasscode}
+            setJoinPasscode={setJoinPasscode}
+            joining={joining}
+            onSubmit={handleJoinAsOrganizer}
+          />
+        </section>
+
         {hasSessions ? (
-          /* ── Collapsed disclosure ─────────────────────────── */
           <section>
             <button
-              onClick={() => setCreateJoinExpanded(!createJoinExpanded)}
+              onClick={() => setCreateExpanded(!createExpanded)}
               className="flex items-center gap-2 group w-full text-left"
             >
               <Plus className="h-4 w-4 text-slate-400 group-hover:text-slate-500 transition-colors" />
@@ -300,16 +272,16 @@ export function OrganizerEntry({
                 className="text-xs font-bold uppercase tracking-widest text-slate-400
                              group-hover:text-slate-500 transition-colors"
               >
-                New or different session
+                Create a new session
               </h2>
               <ChevronDown
                 className={`h-3.5 w-3.5 text-slate-400 ml-auto transition-transform
-                            ${createJoinExpanded ? "rotate-180" : ""}`}
+                            ${createExpanded ? "rotate-180" : ""}`}
               />
             </button>
 
-            {createJoinExpanded && (
-              <div className="mt-3 space-y-4">
+            {createExpanded && (
+              <div className="mt-3">
                 <CreateSessionForm
                   sessionName={sessionName}
                   setSessionName={setSessionName}
@@ -321,53 +293,29 @@ export function OrganizerEntry({
                   disabled={!soloClubId}
                   onSubmit={handleCreateSession}
                 />
-                <JoinAsCoOrgForm
-                  joinPasscode={joinPasscode}
-                  setJoinPasscode={setJoinPasscode}
-                  joining={joining}
-                  onSubmit={handleJoinAsOrganizer}
-                />
               </div>
             )}
           </section>
         ) : (
-          /* ── Prominent create + join when no active sessions ─ */
-          <>
-            <section className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Plus className="h-4 w-4 text-blue-500" />
-                <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">
-                  Start a New Session
-                </h2>
-              </div>
-              <CreateSessionForm
-                sessionName={sessionName}
-                setSessionName={setSessionName}
-                scoring={scoring}
-                setScoring={setScoring}
-                passcode={passcode}
-                setPasscode={setPasscode}
-                creating={creating}
-                disabled={!soloClubId}
-                onSubmit={handleCreateSession}
-              />
-            </section>
-
-            <section className="space-y-3">
-              <div className="flex items-center gap-2">
-                <KeyRound className="h-4 w-4 text-violet-500" />
-                <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">
-                  Join as Co-Organizer
-                </h2>
-              </div>
-              <JoinAsCoOrgForm
-                joinPasscode={joinPasscode}
-                setJoinPasscode={setJoinPasscode}
-                joining={joining}
-                onSubmit={handleJoinAsOrganizer}
-              />
-            </section>
-          </>
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Plus className="h-4 w-4 text-blue-500" />
+              <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500">
+                Start a New Session
+              </h2>
+            </div>
+            <CreateSessionForm
+              sessionName={sessionName}
+              setSessionName={setSessionName}
+              scoring={scoring}
+              setScoring={setScoring}
+              passcode={passcode}
+              setPasscode={setPasscode}
+              creating={creating}
+              disabled={!soloClubId}
+              onSubmit={handleCreateSession}
+            />
+          </section>
         )}
 
         {/* ═══════════════════════════════════════════════════════
@@ -462,6 +410,153 @@ export function OrganizerEntry({
           </section>
         )}
       </div>
+    </div>
+  );
+}
+
+function ActiveSessionCard({
+  session: s,
+  isOrganizer,
+  joining,
+  onOpen,
+  onJoin,
+}: {
+  session: SessionWithStats;
+  isOrganizer: boolean;
+  joining: boolean;
+  onOpen: () => void;
+  onJoin: (code: string) => void;
+}) {
+  const [cardCode, setCardCode] = useState("");
+
+  const body = (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-base font-bold text-slate-900 truncate">{s.name}</p>
+          <p className="mt-0.5 text-xs text-slate-400">
+            {formatDate(s.created_at)} &middot; {formatTime(s.created_at)}
+          </p>
+        </div>
+        {isOrganizer && (
+          <div
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full
+                          bg-slate-100 text-slate-400
+                          transition-colors group-hover:bg-blue-50 group-hover:text-blue-600"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 flex items-center gap-4">
+        <div className="flex items-center gap-1.5 text-xs text-slate-500">
+          <Users className="h-3.5 w-3.5" />
+          <span className="font-semibold text-slate-700">{s.playerCount}</span>
+          <span>player{s.playerCount !== 1 ? "s" : ""}</span>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-slate-500">
+          <LayoutGrid className="h-3.5 w-3.5" />
+          <span className="font-semibold text-slate-700">{s.courtCount}</span>
+          <span>court{s.courtCount !== 1 ? "s" : ""}</span>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span
+          className="inline-flex items-center gap-1 rounded-full bg-emerald-50
+                             border border-emerald-200 px-2 py-0.5 text-[10px]
+                             font-bold uppercase tracking-wider text-emerald-700"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          Active
+        </span>
+
+        {isOrganizer && s.organizer_passcode && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full
+                       bg-violet-50 border border-violet-200
+                       px-2.5 py-0.5 text-[11px] font-black tracking-widest
+                       text-violet-700 font-mono uppercase"
+            title="Share this passcode with your co-organizer"
+          >
+            <Key className="h-2.5 w-2.5 shrink-0" />
+            {s.organizer_passcode}
+          </span>
+        )}
+
+        <span
+          className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px]
+                             font-semibold text-slate-500"
+        >
+          {scoringLabel(s.scoring)}
+        </span>
+      </div>
+    </>
+  );
+
+  if (isOrganizer) {
+    return (
+      <div
+        className="relative flex flex-col rounded-2xl border border-slate-200
+                   bg-white p-5 text-left shadow-sm"
+      >
+        <button
+          type="button"
+          onClick={onOpen}
+          className="group flex flex-col text-left
+                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-xl"
+        >
+          {body}
+        </button>
+        <div className="mt-3">
+          <CoOrganizerShareDialog sessionId={s.id} sessionName={s.name} />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="relative flex flex-col rounded-2xl border border-slate-200
+                 bg-white p-5 text-left shadow-sm"
+    >
+      {body}
+      <form
+        className="mt-4 space-y-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!cardCode.trim()) return;
+          onJoin(cardCode.trim());
+        }}
+      >
+        <label htmlFor={`card-passcode-${s.id}`} className="text-xs font-medium text-slate-600">
+          Session passcode
+        </label>
+        <input
+          id={`card-passcode-${s.id}`}
+          type="text"
+          value={cardCode}
+          onChange={(e) => setCardCode(e.target.value.toUpperCase())}
+          placeholder="e.g. SMASH4271"
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={20}
+          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm
+                     font-mono tracking-widest uppercase text-slate-900
+                     placeholder:text-slate-400 placeholder:font-sans placeholder:tracking-normal
+                     focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+        <button
+          type="submit"
+          disabled={joining || !cardCode.trim()}
+          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm
+                     font-semibold text-slate-700 hover:bg-slate-50 transition-colors
+                     disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {joining ? "Joining…" : "Join as co-organizer"}
+        </button>
+      </form>
     </div>
   );
 }
@@ -589,8 +684,11 @@ function JoinAsCoOrgForm({
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
       <div className="space-y-1.5">
-        <label className="text-sm font-medium text-slate-700">Session Passcode</label>
+        <label htmlFor="join-coorg-passcode" className="text-sm font-medium text-slate-700">
+          Session Passcode
+        </label>
         <input
+          id="join-coorg-passcode"
           type="text"
           value={joinPasscode}
           onChange={(e) => setJoinPasscode(e.target.value.toUpperCase())}

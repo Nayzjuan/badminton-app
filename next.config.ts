@@ -102,7 +102,7 @@ const nextConfig: NextConfig = {
         // Everything except the public join / share surfaces. Those must
         // omit X-Frame-Options: DENY — a later source can override CSP but
         // cannot "unset" XFO, so they are excluded here and listed below.
-        source: "/((?!j/|play/join|c/[^/]+/join).*)",
+        source: "/((?!j/|o/|play/join|c/[^/]+/join).*)",
         headers: SECURITY_HEADERS,
       },
       {
@@ -123,6 +123,10 @@ const nextConfig: NextConfig = {
       },
       {
         source: "/j/:sessionId",
+        headers: JOIN_SECURITY_HEADERS,
+      },
+      {
+        source: "/o/:token",
         headers: JOIN_SECURITY_HEADERS,
       },
     ];

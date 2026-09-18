@@ -18,7 +18,7 @@ export const REGISTRATION_STEPS = [
 ] as const;
 
 export type RegistrationStep = (typeof REGISTRATION_STEPS)[number];
-export type RegistrationEntry = "direct" | "qr_session" | "qr_club";
+export type RegistrationEntry = "direct" | "qr_session" | "qr_club" | "qr_coorg";
 export type RegistrationMethod = "anonymous" | "pin" | "google";
 export type RegistrationOutcome =
   | "profile_only"
@@ -36,7 +36,7 @@ export type RegistrationProps = {
 };
 
 const STEPS = new Set<string>(REGISTRATION_STEPS);
-const ENTRIES = new Set(["direct", "qr_session", "qr_club"]);
+const ENTRIES = new Set(["direct", "qr_session", "qr_club", "qr_coorg"]);
 const METHODS = new Set(["anonymous", "pin", "google"]);
 const OUTCOMES = new Set(["profile_only", "club_joined", "queue_joined", "already_joined"]);
 const FIELDS = new Set(["name", "pin", "skill", "form"]);
@@ -59,6 +59,7 @@ export function canonicalizeAnalyticsPath(raw: string): string {
     pathname
       .replace(UUID_RE, "[id]")
       .replace(/^\/c\/[^/]+/, "/c/[clubSlug]")
+      .replace(/\/o\/[^/]+/, "/o/[token]")
       .replace(/\/play\/join.*/, "/play/join")
       .replace(/\/+$/, "") || "/"
   );

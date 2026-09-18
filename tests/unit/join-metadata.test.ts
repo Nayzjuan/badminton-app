@@ -31,4 +31,17 @@ describe("joinPageMetadata", () => {
     expect(String(m.description)).toContain("CHILLAX");
     expect(m.openGraph?.url).toBe("/c/chillax/join");
   });
+
+  it("JM-3: co-organizer copy names the role and does not mention the queue", () => {
+    const m = joinPageMetadata({
+      sessionName: "Friday Night",
+      clubName: "CHILLAX",
+      canonicalPath: "/o/abcdefghijklmnopqrstuvwxyz012345",
+      kind: "co-organizer",
+    });
+    expect(m.title).toBe("Co-organize Friday Night");
+    expect(String(m.description)).toContain("co-organizer");
+    expect(String(m.description)).not.toMatch(/queue/i);
+    expect(m.openGraph?.url).toBe("/o/abcdefghijklmnopqrstuvwxyz012345");
+  });
 });

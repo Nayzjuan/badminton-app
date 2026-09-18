@@ -24,12 +24,17 @@ import {
 import type { DraftCapPhase } from "@/lib/broadcast";
 import { clearAllUnpublishedDrafts } from "@/app/actions/match-drafts";
 import { isSessionOrganizer, isSessionActive, getActorContext } from "@/app/actions/_shared";
-import { isClubAdmin } from "@/lib/clubs";
+import { isClubAdmin, ensureClubMembership, resolveSessionClubSlug } from "@/lib/clubs";
 import { isValidUUID } from "@/lib/validate";
 import { getClientIp } from "@/lib/client-ip";
 import { withTimeout } from "@/lib/with-timeout";
 import type { ScoringFormat } from "@/types/database";
 import { scoringFormatSchema } from "@/lib/schemas/sessions";
+import {
+  generateCoOrganizerInviteToken,
+  isCoOrganizerInviteTokenShape,
+} from "@/lib/co-organizer-invite";
+import { clubOrganizer, sessionCoOrgShare } from "@/lib/club-paths";
 
 // ── Passcode auto-generation ──────────────────────────────────
 
@@ -235,6 +240,7 @@ export async function createSession(opts: {
       created_by: user.id,
       scoring,
       organizer_passcode: finalPasscode,
+      co_organizer_invite_token: generateCoOrganizerInviteToken(),
       club_id: clubId,
     })
     .select("id")
@@ -272,6 +278,8 @@ export type JoinCoOrganizerResult = {
   success: boolean;
   message: string;
   sessionId?: string;
+  /** Session's own club, so the client does not navigate with the hub slug. */
+  clubSlug?: string;
 };
 
 // ── Rate limiting for the co-organizer passcode-join brute-force surface ──
@@ -398,32 +406,204 @@ export async function joinAsCoOrganizer(passcode: string): Promise<JoinCoOrganiz
     return { success: false, message: "You are already the primary organizer of this session." };
   }
 
-  // Idempotent — if already a co-organizer just redirect in
-  const { data: existing } = await service
-    .from("session_organizers")
-    .select("id")
-    .eq("session_id", session.id)
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const clubSlug = await enrollInSessionClub(session.id, user.id);
+  if (!clubSlug) return { success: false, message: "Failed to join session. Please try again." };
 
-  if (existing) {
-    await markAttemptSucceeded();
-    return { success: true, message: "Already a co-organizer.", sessionId: session.id };
-  }
+  const admitted = await admitSessionOrganizer(service, session.id, user.id);
+  if (!admitted) return { success: false, message: INVALID };
 
-  // Insert the co-organizer row
-  const { error: insertError } = await service
-    .from("session_organizers")
-    .insert({ session_id: session.id, user_id: user.id });
-
-  if (insertError) {
-    console.error("[joinAsCoOrganizer] insert failed:", insertError.message);
-    return { success: false, message: "Failed to join session. Please try again." };
-  }
-
-  // A correct passcode: clear the pessimistic failure and let the caller in.
   await markAttemptSucceeded();
-  return { success: true, message: "Joined as co-organizer.", sessionId: session.id };
+  return {
+    success: true,
+    message: "Joined as co-organizer.",
+    sessionId: session.id,
+    clubSlug,
+  };
+}
+
+/** Enroll the caller in the session's club (additive) and return its slug. */
+async function enrollInSessionClub(sessionId: string, userId: string): Promise<string | undefined> {
+  const slug = await resolveSessionClubSlug(sessionId);
+  if (!slug) return undefined;
+  const enroll = await ensureClubMembership(slug, userId);
+  if (!enroll.ok) {
+    console.error(`[enrollInSessionClub] ${enroll.reason} for ${slug}`);
+    return undefined;
+  }
+  return slug;
+}
+
+async function admitSessionOrganizer(
+  service: ReturnType<typeof createServiceClient>,
+  sessionId: string,
+  userId: string
+): Promise<boolean> {
+  const { data, error } = await service.rpc("admit_session_organizer", {
+    p_session_id: sessionId,
+    p_user_id: userId,
+  });
+  if (error) {
+    console.error("[admitSessionOrganizer] rpc failed:", error.message);
+    return false;
+  }
+  return data === true;
+}
+
+const INVITE_INVALID = "This invite is invalid or expired.";
+
+export type CoOrganizerInviteResult = {
+  success: boolean;
+  message: string;
+  token?: string;
+  path?: string;
+};
+
+/**
+ * Return (and lazily mint) the co-organizer QR token for a session.
+ * Only an organizer of that session may call this. Hidden / closed /
+ * close-in-flight sessions are refused.
+ */
+export async function getOrCreateCoOrganizerInvite(
+  sessionId: string
+): Promise<CoOrganizerInviteResult> {
+  if (!isValidUUID(sessionId)) return { success: false, message: INVITE_INVALID };
+
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+  if (!(await isSessionOrganizer(user.id, sessionId))) {
+    return { success: false, message: "Not authorized. Organizer access required." };
+  }
+
+  const service = createServiceClient();
+  const { data: session, error } = await service
+    .from("sessions")
+    .select("co_organizer_invite_token, is_active, ended_at, is_hidden")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (error) {
+    console.error("[getOrCreateCoOrganizerInvite] read failed:", error.message);
+    return { success: false, message: INVITE_INVALID };
+  }
+  if (!session || !session.is_active || session.ended_at || session.is_hidden) {
+    return { success: false, message: INVITE_INVALID };
+  }
+  if (session.co_organizer_invite_token) {
+    return {
+      success: true,
+      message: "Invite ready.",
+      token: session.co_organizer_invite_token,
+      path: sessionCoOrgShare(session.co_organizer_invite_token),
+    };
+  }
+
+  const token = generateCoOrganizerInviteToken();
+  const { data: stamped, error: stampErr } = await service
+    .from("sessions")
+    .update({ co_organizer_invite_token: token })
+    .eq("id", sessionId)
+    .eq("is_active", true)
+    .is("ended_at", null)
+    .eq("is_hidden", false)
+    .is("co_organizer_invite_token", null)
+    .select("co_organizer_invite_token")
+    .maybeSingle();
+  if (stampErr) {
+    console.error("[getOrCreateCoOrganizerInvite] mint failed:", stampErr.message);
+    return { success: false, message: INVITE_INVALID };
+  }
+  const minted = stamped?.co_organizer_invite_token;
+  if (minted) {
+    return {
+      success: true,
+      message: "Invite ready.",
+      token: minted,
+      path: sessionCoOrgShare(minted),
+    };
+  }
+
+  // Lost the race — another organizer minted first. Re-read.
+  const { data: raced } = await service
+    .from("sessions")
+    .select("co_organizer_invite_token")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!raced?.co_organizer_invite_token) return { success: false, message: INVITE_INVALID };
+  return {
+    success: true,
+    message: "Invite ready.",
+    token: raced.co_organizer_invite_token,
+    path: sessionCoOrgShare(raced.co_organizer_invite_token),
+  };
+}
+
+export type RedeemCoOrganizerInviteResult = {
+  success: boolean;
+  message: string;
+  destination?: string;
+  requiresRename?: boolean;
+  next?: string;
+};
+
+/**
+ * Admit a co-organizer from /o/[token]. Does NOT enqueue them.
+ * Rename-pending profiles are sent to /rename before elevation.
+ */
+export async function redeemCoOrganizerInvite(
+  token: string
+): Promise<RedeemCoOrganizerInviteResult> {
+  const trimmed = token.trim();
+  const next = isCoOrganizerInviteTokenShape(trimmed) ? sessionCoOrgShare(trimmed) : "/play";
+
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+
+  const { data: profile, error: profileErr } = await supabase
+    .from("profiles")
+    .select("id, needs_rename, needs_name_confirm")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (profileErr || !profile) {
+    return { success: false, message: "Unable to load your profile. Please try again." };
+  }
+  if (profile.needs_rename || profile.needs_name_confirm) {
+    return { success: false, requiresRename: true, next, message: "Name confirmation required." };
+  }
+
+  if (!isCoOrganizerInviteTokenShape(trimmed)) {
+    return { success: false, message: INVITE_INVALID };
+  }
+
+  const service = createServiceClient();
+  const { data: session, error } = await service
+    .from("sessions")
+    .select("id, is_active, ended_at, is_hidden")
+    .eq("co_organizer_invite_token", trimmed)
+    .maybeSingle();
+  if (error) {
+    console.error("[redeemCoOrganizerInvite] lookup failed:", error.message);
+    return { success: false, message: INVITE_INVALID };
+  }
+  if (!session || !session.is_active || session.ended_at || session.is_hidden) {
+    return { success: false, message: INVITE_INVALID };
+  }
+
+  const clubSlug = await enrollInSessionClub(session.id, user.id);
+  if (!clubSlug) return { success: false, message: INVITE_INVALID };
+
+  const admitted = await admitSessionOrganizer(service, session.id, user.id);
+  if (!admitted) return { success: false, message: INVITE_INVALID };
+
+  return {
+    success: true,
+    message: "Joined as co-organizer.",
+    destination: clubOrganizer(clubSlug, session.id),
+  };
 }
 
 // ── toggleAutoMatchmaking ─────────────────────────────────────

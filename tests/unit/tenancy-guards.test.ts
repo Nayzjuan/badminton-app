@@ -22,7 +22,11 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("@/utils/supabase/server", () => ({ createServerSupabaseClient: vi.fn() }));
 vi.mock("@/utils/supabase/service", () => ({ createServiceClient: vi.fn() }));
-vi.mock("@/lib/clubs", () => ({ isClubAdmin: vi.fn() }));
+vi.mock("@/lib/clubs", () => ({
+  isClubAdmin: vi.fn(),
+  ensureClubMembership: vi.fn().mockResolvedValue({ ok: true, joined: false, action: "unchanged" }),
+  resolveSessionClubSlug: vi.fn().mockResolvedValue("chillax"),
+}));
 // profile.ts's own gates: keep the REAL isPlayerInSessionScope (that is what we
 // are testing) but stub the auth + organizer checks so we reach it.
 vi.mock("@/app/actions/_shared", async (importOriginal) => {

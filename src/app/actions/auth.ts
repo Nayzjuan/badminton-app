@@ -17,6 +17,7 @@ import { isNameTaken } from "@/lib/dup-name";
 import { getClubBySlug, resolveSessionClubSlug } from "@/lib/clubs";
 import { getClientIp } from "@/lib/client-ip";
 import { clubWrapped, sessionShare, clubJoin } from "@/lib/club-paths";
+import { safeNext } from "@/lib/safe-next";
 import { shouldRefreshLeaderboard } from "@/lib/leaderboard-refresh";
 
 // Shared message for a display name that already exists.
@@ -62,11 +63,10 @@ export async function signInAnonymously(formData: FormData): Promise<SignInFailu
   // /welcome (QR guidance) instead of claiming a queue join.
   const sessionId = (formData.get("session_id") as string)?.trim() || null;
   const clubSlug = (formData.get("club_slug") as string)?.trim() || null;
-  const destination = sessionId
-    ? sessionShare(sessionId)
-    : clubSlug
-      ? clubJoin(clubSlug)
-      : "/welcome";
+  const rawNext = (formData.get("next") as string)?.trim() || null;
+  const fallback = sessionId ? sessionShare(sessionId) : clubSlug ? clubJoin(clubSlug) : "/welcome";
+  // Co-organizer /o/[token] passes next so we do not bounce through player /j/.
+  const destination = rawNext ? safeNext(rawNext, fallback) : fallback;
 
   const nameResult = displayNameSchema.safeParse(rawName ?? "");
   if (!nameResult.success) {

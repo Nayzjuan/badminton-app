@@ -67,6 +67,7 @@ const mockSession: Session = {
   created_by: "org-1",
   club_id: "club-1",
   organizer_passcode: null,
+  co_organizer_invite_token: null,
   scoring: "single",
   is_active: true,
   is_auto_matchmaking_on: false,

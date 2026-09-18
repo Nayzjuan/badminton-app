@@ -15,6 +15,7 @@ import {
   clubLeaderboard,
   clubJoin,
   sessionShare,
+  sessionCoOrgShare,
 } from "@/lib/club-paths";
 
 describe("club-paths", () => {
@@ -58,6 +59,15 @@ describe("club-paths", () => {
     expect(sessionShare("00000000-0000-4000-8000-000000000001")).toBe(
       "/j/00000000-0000-4000-8000-000000000001"
     );
+  });
+
+  it("CP-11: sessionCoOrgShare is /o/[token], not derived from the session UUID", () => {
+    const token = "abcdefghijklmnopqrstuvwxyz012345";
+    const sessionId = "00000000-0000-4000-8000-000000000001";
+    expect(sessionCoOrgShare(token)).toBe(`/o/${token}`);
+    expect(sessionCoOrgShare(sessionId)).not.toBe(sessionShare(sessionId));
+    expect(sessionShare(sessionId)).not.toMatch(/^\/o\//);
+    expect(sessionCoOrgShare(token)).not.toMatch(/^\/j\//);
   });
 
   it("CP-9: every builder is prefixed with /c/<slug>", () => {

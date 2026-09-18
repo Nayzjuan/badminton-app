@@ -55,6 +55,7 @@ const SESSION: Session = {
   created_by: CURRENT_USER_ID,
   club_id: "club-chillax",
   organizer_passcode: null,
+  co_organizer_invite_token: null,
   scoring: "single",
   is_active: true,
   is_auto_matchmaking_on: false,

@@ -71,7 +71,11 @@ export default async function PlayPage() {
             .in("club_id", clubIds)
             .order("created_at", { ascending: false })
         ).data ?? []);
-  const activeSessions = activeSessionRows.map((s) => ({ ...s, organizer_passcode: null }));
+  const activeSessions = activeSessionRows.map((s) => ({
+    ...s,
+    organizer_passcode: null,
+    co_organizer_invite_token: null,
+  }));
 
   return (
     <main className="flex min-h-screen flex-col px-4 py-6">

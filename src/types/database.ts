@@ -140,11 +140,13 @@ export const PUBLIC_PROFILE_COLUMNS =
   "id, display_name, skill_level, vip_tag, vip_theme, needs_rename, collided_name, flagged_at, needs_name_confirm, created_at, updated_at" as const;
 
 /**
- * Every `sessions` column except `organizer_passcode` — the browser/anon-key
- * client's column privilege was locked down to this same set (see
- * 20260701000010_column_lockdown_fix_table_grants.sql), so a bare
- * `select("*")` now throws `permission denied for table sessions`. Use this
- * whenever the caller doesn't need to display the passcode itself.
+ * Every `sessions` column except `organizer_passcode` and
+ * `co_organizer_invite_token` — the browser/anon-key client's column
+ * privilege was locked down to this same set (see
+ * 20260701000010_column_lockdown_fix_table_grants.sql and
+ * 20260918000000_co_organizer_invite_token.sql), so a bare `select("*")`
+ * now throws `permission denied for table sessions`. Use this whenever
+ * the caller doesn't need to display those secrets.
  */
 export const PUBLIC_SESSION_COLUMNS =
   "id, name, created_by, club_id, scoring, is_active, is_auto_matchmaking_on, court_time_limit_minutes, max_auto_drafts_override, auto_publish, is_hidden, created_at, ended_at" as const;
@@ -189,6 +191,14 @@ export type Session = {
    * readable by id, which is how the e2e suite drives it.
    */
   is_hidden: boolean;
+  /**
+   * High-entropy QR admit secret for co-organizers. Distinct from
+   * organizer_passcode (typed join) and from the session UUID (player /j/).
+   * Column SELECT is revoked from anon/authenticated — only the service
+   * role reads it. null on rows minted before the column existed, until
+   * an organizer opens the QR (lazy mint).
+   */
+  co_organizer_invite_token: string | null;
   created_at: string;
   ended_at: string | null;
 };
@@ -454,13 +464,23 @@ export type ProfileUpdate = Partial<
 export type SessionInsert = Pick<Session, "name" | "created_by"> &
   // club_id optional during the Phase-0 transition (DB DEFAULT = default club, CHILLAX);
   // becomes a required, explicitly-passed value when createSession is club-aware (Phase 2).
-  Partial<Pick<Session, "organizer_passcode" | "scoring" | "is_auto_matchmaking_on" | "club_id">>;
+  Partial<
+    Pick<
+      Session,
+      | "organizer_passcode"
+      | "co_organizer_invite_token"
+      | "scoring"
+      | "is_auto_matchmaking_on"
+      | "club_id"
+    >
+  >;
 
 export type SessionUpdate = Partial<
   Pick<
     Session,
     | "name"
     | "organizer_passcode"
+    | "co_organizer_invite_token"
     | "scoring"
     | "is_active"
     | "is_auto_matchmaking_on"
@@ -1015,6 +1035,11 @@ export type Database = {
           over_user_limit: boolean;
           over_ip_limit: boolean;
         }[];
+      };
+      /** Lock a live session and insert session_organizers. Service-role only. */
+      admit_session_organizer: {
+        Args: { p_session_id: string; p_user_id: string };
+        Returns: boolean;
       };
       rejoin_queue: {
         Args: { p_session_id: string };

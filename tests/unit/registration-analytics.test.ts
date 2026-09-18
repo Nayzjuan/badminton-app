@@ -29,6 +29,7 @@ describe("canonicalizeAnalyticsPath", () => {
     );
     expect(canonicalizeAnalyticsPath("/rename?next=%2Fj%2Fabc")).toBe("/rename");
     expect(canonicalizeAnalyticsPath("/auth/callback?code=xyz")).toBe("/auth/callback");
+    expect(canonicalizeAnalyticsPath("/o/abcdefghijklmnopqrstuvwxyz012345")).toBe("/o/[token]");
   });
 });
 
@@ -51,6 +52,12 @@ describe("sanitizeRegistrationProps", () => {
       outcome: "queue_joined",
       field: "name",
     });
+    expect(
+      sanitizeRegistrationProps({
+        step: "viewed",
+        entry: "qr_coorg",
+      })
+    ).toEqual({ step: "viewed", entry: "qr_coorg" });
   });
 
   it("rejects unknown steps", () => {

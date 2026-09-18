@@ -17,17 +17,9 @@
 
 ---
 
-## 2026-09-18 — registration tap targets and contrast
+## 2026-09-18 — co-organizer QR + hub join
 
-Compact skill picker is a `<select>` plus a one-line Beginner hint; the stacked "What do the 6 levels mean?" control is gone. NEW/RETURNING tabs use `gap-3` and `text-cc-t2`. `/` and join chrome `justify-start` on small `dvh`, `bg-cc-bg`, CTAs `bg-cc-amber` / `text-cc-btn-on-accent`. Compact `id`s are `useId()`-scoped; `name="skill_level"` is the focus hook. Client validation focuses only failed fields (`LoginForm` `focusFirstInvalid`).
-
----
-
-
-
-QR/club authenticated join is `JoinFinalizer` → `completeRegistrationJoinAction` (auth, bind, rename, membership, `join_queue`). Direct `/` CTA is `Create Player Profile` then `/welcome`. Reconnect in a QR context returns to `/j/[id]`. Google `next` is `sessionShare` / `clubJoin`. Compact native 6-level skill `<select>`. Funnel: `@vercel/analytics` behind `NEXT_PUBLIC_VERCEL_ANALYTICS`, `Referrer-Policy: origin`.
-
-Prod stamp `20260915150524` / `join_queue_session_lock_and_idempotent` (repo file `20260915120000_join_queue_session_lock_and_idempotent.sql`). waiting / drafted / on_deck / playing are `unchanged` no-ops; session row locked. EXECUTE is service_role + postgres. Rollback body is in that file's header.
+Hub Join always visible; Create collapsed when live; passcode + QR for `isSessionOrganizer`. `/o/[token]` admits after login/rename; `joinAsCoOrganizer` returns `clubSlug`. Prod `20260918151017` / `co_organizer_invite_token` + `20260918151119` / `lock_admit_session_organizer_grants` (repo `20260918000000`+`000001`). SELECT revoked; EXECUTE service_role+postgres (grant first, revoke public/anon/authenticated).
 
 ---
 
@@ -87,8 +79,6 @@ from serving the key but does not remove it from history, and does not revoke it
 ## 2026-09-10 — co-organizer audit: close serialized; duplicate-session parked
 
 `closeSession` (`claimSessionClose`) now CAS-stamps `sessions.ended_at` while `is_active` stays true, then runs Wrapped, then CAS-flips `is_active`. A second closer gets `closeInFlight` (stay on the board) if Wrapped is still running, or `alreadyClosed` if the night is done — never a second `compute_session_wrapped`. A claim older than 30s with `is_active` still true can be stolen (crashed closer); a lost steal re-reads and returns `closeInFlight` if the night is still live. Pins: CST-8/9/10/11, OD-22l, Test 3b.
-
-**Kept on purpose:** club members who open `/c/[slug]/organizer` still see the co-organizer passcode on active cards. That is the join path.
 
 **PARKED — duplicate active session per club.** `createSession` still has only the 10-minute SELECT-then-INSERT window. A sub-commit-latency double-create can still open two active nights in one club (07/25 incident class). Closing it fully is a partial UNIQUE on `(club_id) WHERE is_active AND NOT is_hidden`. Do not "just add the index" without a product call on whether a club may run two overlapping nights.
 
