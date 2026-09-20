@@ -90,3 +90,43 @@ export function partitionCancelRestore(input: CancelRestoreInput): CancelRestore
 
   return { waitingIds, draftedIds, skippedIds };
 }
+
+export type HeldDraftPointer = {
+  id: string;
+  pulled_player_ids: string[] | null;
+};
+
+/**
+ * A finishing/cancelled player is only reserved as `drafted` when they are
+ * STILL on that hold's `match_players` roster. `pulled_player_ids` is a
+ * pointer, not membership — after a bench-swap the pointer can name someone
+ * who is no longer on the draft. Using the pointer alone is how Darwin was
+ * re-reserved as Drafted after leaving the hold.
+ *
+ * Fail closed: a hold with no roster rows contributes nobody. The caller
+ * must not pass a failed read as `[]` and then treat the empty set as
+ * "verified absent" for a destructive write; that distinction lives at the
+ * fetch site.
+ */
+export function bodiesStillOnHeldRoster(input: {
+  candidateIds: readonly string[];
+  holds: ReadonlyArray<HeldDraftPointer>;
+  holdRoster: ReadonlyArray<{ match_id: string; player_id: string }>;
+}): Set<string> {
+  const rosterByHold = new Map<string, Set<string>>();
+  for (const row of input.holdRoster) {
+    const set = rosterByHold.get(row.match_id) ?? new Set<string>();
+    set.add(row.player_id);
+    rosterByHold.set(row.match_id, set);
+  }
+  const candidates = new Set(input.candidateIds);
+  const out = new Set<string>();
+  for (const hold of input.holds) {
+    const roster = rosterByHold.get(hold.id);
+    if (!roster) continue;
+    for (const id of hold.pulled_player_ids ?? []) {
+      if (candidates.has(id) && roster.has(id)) out.add(id);
+    }
+  }
+  return out;
+}

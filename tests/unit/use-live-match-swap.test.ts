@@ -72,7 +72,8 @@
 //   LS-21  (negative) MATCH_NOT_ACTIVE closes the sheet
 //   LS-22  (negative) PLAYER_NOT_IN_MATCH closes the sheet
 //   LS-23  (negative) ONDECK_MATCH_STARTED closes the sheet
-//   LS-24  (edge) success:true with no undoContext is NOT treated as success
+//   LS-24  (edge) success:true with no undoContext still closes the sheet
+//          and does not call onSuccess (no undo toast for a still-reserved body)
 //   LS-25  isSubmitting is true for the whole flight and false once it settles
 //   LS-26  a retry after a failure re-dispatches and can succeed (positive
 //          control for LS-16 — the machine refuses a DOUBLE start, and that
@@ -115,6 +116,15 @@ vi.mock("@/app/actions/live-match-swap", () => ({
   undoLiveSwap: (...args: unknown[]) => mockUndoLiveSwap(...args),
 }));
 
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    warning: vi.fn(),
+    info: vi.fn(),
+  },
+}));
+
 import {
   useLiveMatchSwap,
   type ReplacementCandidate,
@@ -123,6 +133,7 @@ import {
 import type { LiveSwapUndoContext } from "@/app/actions/live-match-swap";
 import type { RosterPlayer } from "@/components/organizer/match-roster";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
+import { toast } from "sonner";
 
 // ── Fixtures ──────────────────────────────────────────────────
 // Every id and every name below is distinct from every other one. That is the
@@ -990,11 +1001,8 @@ describe("useLiveMatchSwap — client state machine (LS)", () => {
   });
 
   // ── LS-24 ──────────────────────────────────────────────────
-  it("LS-24: (edge) success:true with no undoContext is NOT treated as success", async () => {
-    // The contract says a successful swap always returns an undo context. If it
-    // ever does not, the hook must not clear the sheet — clearing it would
-    // strand the organizer with no undo and no evidence anything happened.
-    mockSwapPlayerInActiveMatch.mockResolvedValue({ success: true, message: "Player swapped." });
+  it("LS-24: success:true with no undoContext closes the sheet without onSuccess", async () => {
+    mockSwapPlayerInActiveMatch.mockResolvedValue({ success: true, message: "Swap complete." });
     const { result, onSuccess } = setup();
     arm(result, QUEUE_PICK);
 
@@ -1002,18 +1010,10 @@ describe("useLiveMatchSwap — client state machine (LS)", () => {
       result.current.confirm();
     });
 
-    expect(
-      onSuccess,
-      "onSuccess was invoked without an undo context — the parent renders an undo toast whose action has nothing to send"
-    ).not.toHaveBeenCalled();
-    expect(
-      result.current.isOpen,
-      "the sheet was cleared on a payload that carried no undo context, so the organizer is left with no way to reverse a swap that may have happened"
-    ).toBe(true);
-    expect(
-      result.current.isSubmitting,
-      "the machine stayed in flight after the payload came back"
-    ).toBe(false);
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(result.current.isOpen).toBe(false);
+    expect(result.current.isSubmitting).toBe(false);
+    expect(toast.success).toHaveBeenCalledWith("Swap complete.");
   });
 
   // ── LS-25 ──────────────────────────────────────────────────

@@ -10,7 +10,7 @@
 // ============================================================
 
 import { describe, it, expect } from "vitest";
-import { partitionCancelRestore } from "@/lib/cancel-restore";
+import { bodiesStillOnHeldRoster, partitionCancelRestore } from "@/lib/cancel-restore";
 
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
@@ -129,5 +129,35 @@ describe("partitionCancelRestore", () => {
     expect(result.waitingIds).toEqual([A]);
     expect(result.draftedIds).toEqual([B]);
     expect(result.skippedIds).toEqual([]);
+  });
+});
+
+const HOLD = "55555555-5555-4555-8555-555555555555";
+
+describe("bodiesStillOnHeldRoster", () => {
+  it("CC-CAN-08: a pulled id still on the hold roster is reserved", () => {
+    expect(
+      bodiesStillOnHeldRoster({
+        candidateIds: [A, B],
+        holds: [{ id: HOLD, pulled_player_ids: [B] }],
+        holdRoster: [
+          { match_id: HOLD, player_id: A },
+          { match_id: HOLD, player_id: B },
+        ],
+      })
+    ).toEqual(new Set([B]));
+  });
+
+  it("CC-CAN-09: a pulled id swapped off the hold roster is NOT reserved (Darwin)", () => {
+    expect(
+      bodiesStillOnHeldRoster({
+        candidateIds: [B],
+        holds: [{ id: HOLD, pulled_player_ids: [B] }],
+        holdRoster: [
+          { match_id: HOLD, player_id: A },
+          { match_id: HOLD, player_id: C },
+        ],
+      })
+    ).toEqual(new Set());
   });
 });

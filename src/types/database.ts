@@ -1112,6 +1112,19 @@ export type Database = {
         Args: { p_session_id: string; p_player_ids: string[]; p_drafted_ids: string[] };
         Returns: void;
       };
+      /**
+       * Derives queue_status from physical roster membership:
+       * in_progress → playing; unpublished pending → drafted;
+       * published pending → on_deck; else waiting. Service-role only.
+       */
+      queue_status_after_roster_change: {
+        Args: { p_session_id: string; p_player_id: string };
+        Returns: QueueStatus;
+      };
+      apply_queue_status_after_roster_change: {
+        Args: { p_session_id: string; p_player_ids: string[] };
+        Returns: void;
+      };
       // Per-session completed-match counts via GROUP BY (cap-safe: one row per
       // session, not per match). Used by the organizer hub.
       count_completed_matches_by_session: {

@@ -17,6 +17,12 @@
 
 ---
 
+## 2026-09-20 — held-swap queue status (Darwin stuck Drafted)
+
+`queue_status_after_roster_change` is the single derivation after roster writes: in_progress → playing; unpublished pending → drafted; published pending → on_deck; else waiting. `swap_player_in_match` / `swap_match_players` / live-swap / `requeue_finished_players` (`p_drafted_ids` ignored) apply it. `swap_match_players` rejects a still-playing body. N-2b: `recomputeHeldReadiness` downgrades a hold whose body left the live source court. Cancel restore intersects `pulled_player_ids` with hold `match_players`. Undo only when outgoing is `waiting`. Repo migration `20260920000000_queue_status_follows_roster.sql` — **not applied to prod** (hand-apply). Pins: HS-1…HS-8, CC-RDY-CC05, CC-RDY-ERR6. Incident: `docs/incidents/2026-09-20-held-swap-stuck-drafted.md`.
+
+---
+
 ## 2026-09-18 — co-organizer QR + hub join
 
 Hub Join always visible; Create collapsed when live; passcode + QR for `isSessionOrganizer`. `/o/[token]` admits after login/rename; `joinAsCoOrganizer` returns `clubSlug`. Prod `20260918151017` / `co_organizer_invite_token` + `20260918151119` / `lock_admit_session_organizer_grants` (repo `20260918000000`+`000001`). SELECT revoked; EXECUTE service_role+postgres (grant first, revoke public/anon/authenticated).

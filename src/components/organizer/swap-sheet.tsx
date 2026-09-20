@@ -53,6 +53,8 @@ export type UndoableSwap = {
   inPlayerId: string;
   outName: string;
   inName: string;
+  /** False when the outgoing player is still on court — undo would fail. */
+  undoable?: boolean;
 };
 
 // ── Props ─────────────────────────────────────────────────────
@@ -211,6 +213,7 @@ export function SwapSheet({
         inPlayerId: selectedPlayerId,
         outName: context.outPlayerName,
         inName,
+        undoable: result.undoable !== false,
       });
       // onClose is called by parent after onSwapComplete
       onClose();

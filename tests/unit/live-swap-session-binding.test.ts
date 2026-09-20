@@ -28,6 +28,7 @@ vi.mock("@/app/actions/_shared", () => ({
 }));
 vi.mock("@/lib/broadcast", () => ({ broadcastOrganizerIntervention: vi.fn() }));
 vi.mock("@/lib/notifications/push-server", () => ({ pushToPlayers: vi.fn() }));
+vi.mock("@/app/actions/matchmaking", () => ({ recomputeHeldReadiness: vi.fn(async () => {}) }));
 // after() needs a request scope; run the callback inline.
 vi.mock("next/server", () => ({ after: (fn: () => unknown) => fn() }));
 
@@ -61,7 +62,7 @@ type QueryResult = { data: unknown; error: unknown };
 function makeQuery(result: QueryResult) {
   const calls: [string, unknown[]][] = [];
   const q: Record<string, unknown> = { calls };
-  for (const m of ["select", "eq", "in", "order", "limit", "neq"]) {
+  for (const m of ["select", "eq", "in", "order", "limit", "neq", "is"]) {
     q[m] = vi.fn((...args: unknown[]) => {
       calls.push([m, args]);
       return q;
@@ -85,8 +86,20 @@ function mockDb(opts: {
     error: opts.matchesError ?? null,
   });
   const matchPlayers = makeQuery({ data: { team: "a" }, error: null });
+  const queueEntries = makeQuery({
+    data: [
+      { player_id: P_OUT, status: "waiting" },
+      { player_id: P_FILL, status: "on_deck" },
+    ],
+    error: null,
+  });
+  queueEntries.maybeSingle = vi.fn(async () => ({ data: { status: "waiting" }, error: null }));
   const rpc = vi.fn(async () => ({ data: null, error: opts.rpcError ?? null }));
-  const from = vi.fn((table: string) => (table === "matches" ? matches : matchPlayers));
+  const from = vi.fn((table: string) => {
+    if (table === "matches") return matches;
+    if (table === "queue_entries") return queueEntries;
+    return matchPlayers;
+  });
   const db = { from, rpc };
   vi.mocked(createServiceClient).mockReturnValue(db as never);
   return { db, matches, matchPlayers, rpc };
