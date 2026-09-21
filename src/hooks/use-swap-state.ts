@@ -245,6 +245,8 @@ export function useSwapState(
       toast.error("Match has already started — swap cancelled.");
     } else if (result.errorCode === "PLAYER_NOT_IN_MATCH") {
       toast.error("A player was already moved — swap cancelled.");
+    } else if (result.errorCode === "PLAYER_UNAVAILABLE") {
+      toast.error("That player is still on court — swap cancelled.");
     } else {
       toast.error(`Swap failed: ${result.message}`);
     }
@@ -273,13 +275,18 @@ export function useSwapState(
 
   // ── Bench swap complete: close sheet + fire undo toast ──────
   function handleSwapComplete(swap: UndoableSwap) {
-    lastSwapRef.current = swap;
+    const canUndo = swap.undoable !== false;
+    lastSwapRef.current = canUndo ? swap : null;
     toast.success(`Swapped ${swap.outName} → ${swap.inName}`, {
       duration: 5000,
-      action: {
-        label: "Undo",
-        onClick: () => handleUndoSwap(swap),
-      },
+      ...(canUndo
+        ? {
+            action: {
+              label: "Undo",
+              onClick: () => handleUndoSwap(swap),
+            },
+          }
+        : {}),
     });
     // Sheet is closed by SwapSheet itself after calling onSwapComplete
   }

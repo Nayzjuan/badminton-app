@@ -86,6 +86,14 @@ describe("Schema Parity — Suite G", () => {
     expect(await functionExists("undo_swap_active_from_ondeck")).toBe(true);
   });
 
+  it("queue_status_after_roster_change exists in public schema", async () => {
+    expect(await functionExists("queue_status_after_roster_change")).toBe(true);
+  });
+
+  it("apply_queue_status_after_roster_change exists in public schema", async () => {
+    expect(await functionExists("apply_queue_status_after_roster_change")).toBe(true);
+  });
+
   // ── Draft cap override RPC (migration 20260602000000) ──────
 
   it("clear_all_unpublished_drafts exists in public schema", async () => {

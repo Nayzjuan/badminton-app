@@ -2161,14 +2161,21 @@ describe("recomputeHeldReadiness — held-draft health check", () => {
     const mock = makeMockClient([
       { data: [held()], error: null },
       { data: { auto_publish: false }, error: null }, // session auto_publish mode → draft
-      { data: [{ player_id: "pp" }, { player_id: "w1" }], error: null }, // roster ok
+      { data: [{ player_id: "pp" }, { player_id: "w1" }], error: null }, // held roster ok
       { data: { status: "in_progress", completed_at: null }, error: null }, // source still live
+      { data: [{ player_id: "pp" }], error: null }, // source roster still has the body
     ]);
 
     await recomputeHeldReadiness(mock as never, SESSION_ID);
 
     expect(mock.recorder.update).toHaveLength(0);
-    expect(mock.queriedTables).toEqual(["matches", "sessions", "match_players", "matches"]);
+    expect(mock.queriedTables).toEqual([
+      "matches",
+      "sessions",
+      "match_players",
+      "matches",
+      "match_players",
+    ]);
   });
 
   it("CC-RDY-CC03 [N-2]: pulled body swapped out of roster ⇒ downgrade to a normal draft", async () => {
@@ -2187,6 +2194,26 @@ describe("recomputeHeldReadiness — held-draft health check", () => {
       held_ready_at: null,
     });
     expect(mock.rpc).not.toHaveBeenCalled(); // downgrade, not cancel
+  });
+
+  it("CC-RDY-CC05 [N-2b]: body missing from still-live source court ⇒ downgrade", async () => {
+    const mock = makeMockClient([
+      { data: [held()], error: null },
+      { data: { auto_publish: false }, error: null },
+      { data: [{ player_id: "pp" }, { player_id: "w1" }], error: null }, // held roster still has pp
+      { data: { status: "in_progress", completed_at: null }, error: null }, // source still live
+      { data: [{ player_id: "other" }], error: null }, // source roster WITHOUT pp
+      { data: null, error: null }, // downgrade update
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
+    expect(mock.recorder.update).toContainEqual({
+      pulled_player_ids: [],
+      pulled_from_match_id: null,
+      held_ready_at: null,
+    });
+    expect(mock.rpc).not.toHaveBeenCalled();
   });
 
   it("CC-RDY-CC04 [R3-B]: null source match ⇒ cancel via clear_on_deck_match_atomic", async () => {
@@ -2365,6 +2392,24 @@ describe("recomputeHeldReadiness — held-draft health check", () => {
     // and publish-all, so no organizer could finish or clear it. Skipping the
     // pass costs one lifecycle event instead.
     expect(mock.queriedTables).toEqual(["matches", "sessions"]);
+    expect(mock.recorder.update).toHaveLength(0);
+    expect(mock.rpc).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("CC-RDY-ERR6: source-roster read FAILS ⇒ no downgrade, no cancel, and it says so", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const mock = makeMockClient([
+      { data: [held()], error: null },
+      { data: { auto_publish: false }, error: null },
+      { data: [{ player_id: "pp" }, { player_id: "w1" }], error: null }, // held roster ok
+      { data: { status: "in_progress", completed_at: null }, error: null }, // source still live
+      { data: null, error: { message: "boom" } }, // source roster read failed
+    ]);
+
+    await recomputeHeldReadiness(mock as never, SESSION_ID);
+
     expect(mock.recorder.update).toHaveLength(0);
     expect(mock.rpc).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();

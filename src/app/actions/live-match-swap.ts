@@ -42,6 +42,7 @@ import { isValidUUID } from "@/lib/validate";
 // dispatchable cross-tenant oracle.
 import { allMatchesInSession } from "@/lib/match-session-binding";
 import { getAuthenticatedUser, isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
+import { recomputeHeldReadiness } from "@/app/actions/matchmaking";
 
 // ── Return types ──────────────────────────────────────────────
 
@@ -191,19 +192,35 @@ export async function swapPlayerInActiveMatch(
   // (waiting → playing). Ping them to head to the court now.
   after(() => pushToPlayers([inPlayerId], "COURT_CALL", sessionId));
 
+  await recomputeHeldReadiness(db, sessionId);
+
+  // Undo would put the outgoing player back on court as incoming. That is
+  // only legal while they are `waiting`. A pulled body live-swapped off
+  // its source court is now `drafted` on the hold; offering undo would
+  // double-book them after N-2 downgrades the hold.
+  const { data: outEntry } = await db
+    .from("queue_entries")
+    .select("status")
+    .eq("session_id", sessionId)
+    .eq("player_id", outPlayerId)
+    .maybeSingle();
+
   return {
     success: true,
     message: "Swap complete.",
-    undoContext: {
-      type: "queue_replacement",
-      matchId,
-      outPlayerId,
-      inPlayerId,
-      team: outRow.team,
-      sessionId,
-      outPlayerName,
-      inPlayerName,
-    },
+    undoContext:
+      outEntry?.status === "waiting"
+        ? {
+            type: "queue_replacement",
+            matchId,
+            outPlayerId,
+            inPlayerId,
+            team: outRow.team,
+            sessionId,
+            outPlayerName,
+            inPlayerName,
+          }
+        : undefined,
   };
 }
 
@@ -365,6 +382,12 @@ export async function swapActiveFromOnDeck(
         errorCode: "FILL_PLAYER_UNAVAILABLE",
         message: "Fill player is no longer available.",
       };
+    if (msg.includes("PLAYER_UNAVAILABLE"))
+      return {
+        success: false,
+        errorCode: "PLAYER_UNAVAILABLE",
+        message: "That player is still on court.",
+      };
     return { success: false, message: `Swap failed: ${msg}` };
   }
 
@@ -382,29 +405,43 @@ export async function swapActiveFromOnDeck(
   ]);
 
   // Two pings: the on-deck player was promoted into the live match
-  // (on_deck → playing = court call), and the fill player took the vacated
-  // on-deck slot (waiting → on_deck = get ready). The displaced outPlayer
-  // returns to 'waiting' and is intentionally not pinged.
+  // (on_deck → playing = court call). The fill player is pinged only when
+  // they actually landed on_deck (destination published). Filling an
+  // unpublished hold leaves them `drafted` — silent until publish.
   after(() => pushToPlayers([onDeckPlayerId], "COURT_CALL", sessionId));
-  after(() => pushToPlayers([fillPlayerId], "ON_DECK_WARNING", sessionId));
+
+  await recomputeHeldReadiness(db, sessionId);
+
+  const { data: followUp } = await db
+    .from("queue_entries")
+    .select("player_id, status")
+    .eq("session_id", sessionId)
+    .in("player_id", [outPlayerId, fillPlayerId]);
+  const statusById = new Map((followUp ?? []).map((r) => [r.player_id, r.status]));
+  if (statusById.get(fillPlayerId) === "on_deck") {
+    after(() => pushToPlayers([fillPlayerId], "ON_DECK_WARNING", sessionId));
+  }
 
   return {
     success: true,
     message: "Swap complete.",
-    undoContext: {
-      type: "ondeck_replacement",
-      activeMatchId,
-      outPlayerId,
-      onDeckPlayerId,
-      onDeckMatchId,
-      fillPlayerId,
-      sessionId,
-      outTeam,
-      onDeckTeam,
-      outPlayerName,
-      onDeckPlayerName,
-      fillPlayerName,
-    },
+    undoContext:
+      statusById.get(outPlayerId) === "waiting"
+        ? {
+            type: "ondeck_replacement",
+            activeMatchId,
+            outPlayerId,
+            onDeckPlayerId,
+            onDeckMatchId,
+            fillPlayerId,
+            sessionId,
+            outTeam,
+            onDeckTeam,
+            outPlayerName,
+            onDeckPlayerName,
+            fillPlayerName,
+          }
+        : undefined,
   };
 }
 
@@ -510,6 +547,7 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
         ctx.outPlayerId,
         ctx.inPlayerId,
       ]);
+      await recomputeHeldReadiness(db, ctx.sessionId);
     }
     return { success: !error };
   }
@@ -538,6 +576,7 @@ export async function undoLiveSwap(ctx: LiveSwapUndoContext): Promise<{ success:
         ctx.onDeckPlayerId,
         ctx.fillPlayerId,
       ]);
+      await recomputeHeldReadiness(db, ctx.sessionId);
     }
     return { success: !error };
   }

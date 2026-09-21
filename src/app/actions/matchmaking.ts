@@ -1154,7 +1154,8 @@ export async function promoteOnDeckMatchInternal(
 // idempotent.
 // For each HELD, not-yet-ready, PENDING match in the session:
 //   1. Roster integrity (N-2): if the pulled body was swapped OUT of the
-//      roster, clear the held columns → downgrade to a normal draft.
+//      held roster, OR off the still-live source court, clear the held
+//      columns → downgrade to a normal draft.
 //   2. Source integrity (R3-B): if pulled_from_match_id is null/missing
 //      (source purged, FK set null), cancel the held draft — it can never
 //      resolve readiness, so leaving it would silently lock "Holding".
@@ -1273,6 +1274,32 @@ export async function recomputeHeldReadiness(
         p_session_id: sessionId,
       });
       continue;
+    }
+
+    // 1b. Source-court integrity — the pulled body must still be ON the live
+    // source roster while that source is in_progress. Live-swapping the body
+    // off court leaves them on the hold (N-2 stillIn) while the pointer still
+    // names them; R3-1 would then re-reserve them as drafted when some other
+    // match ends. Downgrade the hold to a normal draft instead.
+    if (srcMatch.status === "in_progress" && pulledId) {
+      const { data: srcRoster, error: srcRosterErr } = await supabase
+        .from("match_players")
+        .select("player_id")
+        .eq("match_id", held.pulled_from_match_id);
+      if (srcRosterErr || !srcRoster) {
+        console.warn(
+          `[matchmaking] recomputeHeldReadiness: source-roster read failed for held draft ${held.id} — ` +
+            `${srcRosterErr?.message ?? "no rows returned"}; left untouched this pass.`
+        );
+        continue;
+      }
+      if (!srcRoster.some((r) => r.player_id === pulledId)) {
+        await supabase
+          .from("matches")
+          .update({ pulled_player_ids: [], pulled_from_match_id: null, held_ready_at: null })
+          .eq("id", held.id);
+        continue;
+      }
     }
 
     // 3. Readiness — the body is free only once its source match ended.

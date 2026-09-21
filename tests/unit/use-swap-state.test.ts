@@ -350,6 +350,24 @@ describe("useSwapState", () => {
         PLAYER_ALICE // outPlayerId → comes back in
       );
     });
+
+    it("SS-11: bench swap of a still-playing body does not offer undo", () => {
+      const { result } = setup();
+      act(() =>
+        result.current.handleSwapComplete({
+          matchId: MATCH_A,
+          outPlayerId: PLAYER_ALICE,
+          outName: "Alice",
+          inPlayerId: PLAYER_BOB,
+          inName: "Bob",
+          undoable: false,
+        })
+      );
+      const toastOptions = vi.mocked(toast.success).mock.calls[0]?.[1] as
+        | { action?: { onClick: () => void } }
+        | undefined;
+      expect(toastOptions?.action).toBeUndefined();
+    });
   });
 
   // ── SS-new-5 / SS-new-6 / SS-new-7: executeMatchSwap initial failure branches
@@ -391,6 +409,11 @@ describe("useSwapState", () => {
       expect(toast.error).toHaveBeenCalledWith(
         expect.stringMatching(/swap failed.*DB constraint violated/i)
       );
+    });
+
+    it("SS-new-8: initial swap with PLAYER_UNAVAILABLE error fires 'still on court' toast", async () => {
+      await triggerInitialSwapFailure({ success: false, errorCode: "PLAYER_UNAVAILABLE" });
+      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/still on court/i));
     });
   });
 

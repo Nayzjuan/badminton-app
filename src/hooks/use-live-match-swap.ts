@@ -202,10 +202,16 @@ export function useLiveMatchSwap({
         );
       }
 
-      if (result.success && result.undoContext) {
-        // Close the sheet first, then fire the undo callback.
+      if (result.success) {
+        // Close the sheet first. Undo toast only when the server returned a
+        // context — a still-playing / still-drafted outgoing player is not
+        // undoable (putting them back on court would double-book the hold).
         setState(INITIAL);
-        onSuccess(result.undoContext);
+        if (result.undoContext) {
+          onSuccess(result.undoContext);
+        } else {
+          toast.success(result.message);
+        }
       } else {
         const shouldClose =
           result.errorCode === "MATCH_NOT_ACTIVE" ||

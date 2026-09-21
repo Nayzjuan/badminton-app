@@ -18,7 +18,7 @@ import {
   recomputeHeldReadiness,
 } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
-import { partitionCancelRestore } from "@/lib/cancel-restore";
+import { bodiesStillOnHeldRoster, partitionCancelRestore } from "@/lib/cancel-restore";
 import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
 import { shouldRefreshLeaderboard } from "@/lib/leaderboard-refresh";
@@ -33,6 +33,58 @@ import { scoreSchema } from "@/lib/schemas/match";
 import { logMatchEvent } from "@/lib/match-event-log";
 import { closePendingScoreCorrections } from "@/lib/session-notice-write";
 import { DUPLICATE_ROSTER_WINDOW_MINUTES } from "@/lib/constants";
+
+/**
+ * R3-1 / cancel restore: a player named in `pulled_player_ids` is reserved
+ * as drafted only if they are still on that hold's roster. The pointer is
+ * not membership — a bench-swap can leave a stale id in the array.
+ *
+ * A failed hold or roster read returns an empty set (fail closed) rather
+ * than trusting the pointer. Re-reserving a swapped-out body as drafted
+ * is the worse of the two wrong answers.
+ */
+async function reservedHeldBodiesStillOnRoster(
+  db: ReturnType<typeof createServiceClient>,
+  sessionId: string,
+  candidateIds: string[]
+): Promise<Set<string>> {
+  if (candidateIds.length === 0) return new Set();
+  const { data: heldDrafts, error: heldErr } = await db
+    .from("matches")
+    .select("id, pulled_player_ids")
+    .eq("session_id", sessionId)
+    .eq("status", "pending")
+    .eq("is_held", true)
+    .overlaps("pulled_player_ids", candidateIds);
+  if (heldErr) {
+    console.error(
+      "[held-roster] held-draft read failed — not reserving from stale pointers:",
+      heldErr
+    );
+    return new Set();
+  }
+  const holds = heldDrafts ?? [];
+  if (holds.length === 0) return new Set();
+  const { data: holdRoster, error: rosterErr } = await db
+    .from("match_players")
+    .select("match_id, player_id")
+    .in(
+      "match_id",
+      holds.map((h) => h.id)
+    );
+  if (rosterErr) {
+    console.error(
+      "[held-roster] hold-roster read failed — not reserving from stale pointers:",
+      rosterErr
+    );
+    return new Set();
+  }
+  return bodiesStillOnHeldRoster({
+    candidateIds,
+    holds,
+    holdRoster: holdRoster ?? [],
+  });
+}
 
 // ============================================================
 // submitMatchScore — player-initiated score submission
@@ -328,29 +380,16 @@ async function endMatchInternal(
     // otherwise they reappear in fetchActivePool and the engine wastes slots on
     // them (each blocked by a guard, so no corruption, but it's a reservation leak).
     const finishingIds = matchPlayers.map((mp) => mp.player_id);
-    // Narrow at the DB level: only fetch held drafts where at least one of the
-    // finishing players appears in pulled_player_ids. Uses the && (overlaps)
-    // operator. Postgres uses the partial B-tree index on session_id (WHERE
-    // is_held=true AND status='pending') to limit the scan to the held-pending
-    // rows in this session; the && predicate then filters within that small set.
-    const { data: heldDrafts } = await db
-      .from("matches")
-      .select("pulled_player_ids")
-      .eq("session_id", match.session_id)
-      .eq("status", "pending")
-      .eq("is_held", true)
-      .overlaps("pulled_player_ids", finishingIds);
-    const reservedAsHeld = new Set(
-      (heldDrafts ?? [])
-        .flatMap((m) => m.pulled_player_ids ?? [])
-        .filter((id) => finishingIds.includes(id)) // safety: only flag IDs that are actually finishing
+    // p_drafted_ids is ignored by requeue_finished_players — status is derived
+    // from the live roster (in_progress → playing, unpublished pending →
+    // drafted, published pending → on_deck, else waiting). The intersected
+    // set is still passed so a reader of the call site sees the same rule
+    // cancelMatchAction uses; the RPC will not trust a stale pointer.
+    const reservedAsHeld = await reservedHeldBodiesStillOnRoster(
+      db,
+      match.session_id,
+      finishingIds
     );
-
-    // Single atomic requeue (replaces a per-player SELECT+UPDATE loop whose JS
-    // read-modify-write of games_played could lose a concurrent increment):
-    // increment games_played, stamp joined_at, and set status (drafted for a
-    // re-reserved held body, else waiting) in one statement. The `status <>
-    // 'left'` predicate in the RPC reproduces the maybeSingle-null skip.
     const draftedIds = finishingIds.filter((id) => reservedAsHeld.has(id));
     const { error: requeueError } = await db.rpc("requeue_finished_players", {
       p_session_id: match.session_id,
@@ -802,10 +841,7 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   if (matchPlayers && matchPlayers.length > 0) {
     playerIds = matchPlayers.map((mp) => mp.player_id);
 
-    const [
-      { data: liveMatches, error: liveMatchesError },
-      { data: heldDrafts, error: heldDraftsError },
-    ] = await Promise.all([
+    const [{ data: liveMatches, error: liveMatchesError }, reservedAsHeld] = await Promise.all([
       // Manual join (this codebase declares Relationships: [] — see CLAUDE.md);
       // same two-step shape as fetchPullablePlayers in matchmaking-db.ts.
       db
@@ -813,25 +849,9 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
         .select("id")
         .eq("session_id", match.session_id)
         .eq("status", "in_progress"),
-      // Same narrowing as R3-1: the partial index on session_id (WHERE
-      // is_held=true AND status='pending') limits the scan, then && filters.
-      db
-        .from("matches")
-        .select("pulled_player_ids")
-        .eq("session_id", match.session_id)
-        .eq("status", "pending")
-        .eq("is_held", true)
-        .overlaps("pulled_player_ids", playerIds),
+      reservedHeldBodiesStillOnRoster(db, match.session_id, playerIds),
     ]);
 
-    // A failed held-draft read degrades to "no holds" → a reserved body is
-    // restored to 'waiting' and the hold is stranded: the original defect.
-    if (heldDraftsError) {
-      console.error(
-        "[cancelMatch] held-draft read failed — held seats may be released:",
-        heldDraftsError
-      );
-    }
     // A failed live-match read degrades to "nobody playing" → a mid-game body is
     // flipped to 'waiting': the unseating defect 20260812000000 removed.
     if (liveMatchesError) {
@@ -840,12 +860,6 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
         liveMatchesError
       );
     }
-
-    const reservedAsHeld = new Set(
-      (heldDrafts ?? [])
-        .flatMap((m) => m.pulled_player_ids ?? [])
-        .filter((id) => playerIds.includes(id)) // safety: only flag IDs on this roster
-    );
 
     const liveMatchIds = (liveMatches ?? []).map((m) => m.id);
     let playingElsewhere = new Set<string>();

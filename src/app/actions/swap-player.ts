@@ -23,9 +23,11 @@
 // Writes (single atomic Postgres transaction via swap_player_in_match RPC):
 //   a. DELETE outPlayerId from match_players
 //   b. INSERT inPlayerId  into match_players (same team)
-//   c. UPDATE inPlayerId  queue_entries → "on_deck"
-//   d. UPDATE outPlayerId queue_entries → "waiting"
-//   e. Recompute is_mixed_level from current roster (COUNT DISTINCT skill_level)
+//   c. queue_status_after_roster_change for both players (in_progress stays
+//      playing; unpublished pending → drafted; published pending → on_deck;
+//      else waiting). Never unseats a still-playing pulled body.
+//   d. Recompute is_mixed_level from current roster (COUNT DISTINCT skill_level)
+//   e. recomputeHeldReadiness — N-2 downgrades the hold if the body left it.
 //
 // Atomicity: if the server crashes at any point Postgres rolls back the
 // entire transaction automatically — no partial-state corruption possible.
@@ -43,6 +45,7 @@ import { broadcastOrganizerIntervention } from "@/lib/broadcast";
 import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
 import { getAuthenticatedUser, isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
+import { recomputeHeldReadiness } from "@/app/actions/matchmaking";
 
 // ── Return types ──────────────────────────────────────────────
 
@@ -55,6 +58,12 @@ export type SwapResult = {
   success: boolean;
   message: string;
   errorCode?: SwapErrorCode;
+  /**
+   * Bench-swap undo is only safe when the outgoing player went back to
+   * `waiting`. A still-playing pulled body stays `playing`; offering undo
+   * would try to seat them as incoming while they are on court.
+   */
+  undoable?: boolean;
 };
 
 // ── Match-to-match swap return type ──────────────────────────
@@ -99,7 +108,8 @@ export type SwapResult = {
 // write them down. A delta with no second witness does not belong here.
 export type SwapMatchPlayersErrorCode =
   | "MATCH_STARTED" // one/both matches started, missing, or not in this session
-  | "PLAYER_NOT_IN_MATCH"; // a player already moved → toast + clear picking state
+  | "PLAYER_NOT_IN_MATCH" // a player already moved → toast + clear picking state
+  | "PLAYER_UNAVAILABLE"; // a tapped player is still physically on court
 
 export type SwapMatchPlayersResult = {
   success: boolean;
@@ -131,9 +141,8 @@ export async function swapPlayerInMatch(
 
   // ── Match lookup (the organizer gate needs its session_id) ─
   // Read via service client so RLS doesn't block.
-  // BUG-001 fix: fetch is_published so we can pass it to the swap RPC.
-  // For draft matches (is_published=false), the RPC skips step c so the
-  // incoming player stays 'waiting' and no ON_DECK_WARNING alert fires.
+  // Fetch is_published so ON_DECK_WARNING only fires for a published dest.
+  // Queue status itself is derived inside the RPC from the live roster.
   const { data: match } = await db
     .from("matches")
     .select("id, status, session_id, is_published")
@@ -249,6 +258,16 @@ export async function swapPlayerInMatch(
   // Postgres realtime (new match_players row fires fetchMyMatch).
   await broadcastOrganizerIntervention(match.session_id, "on_deck_cleared", [outPlayerId]);
 
+  await recomputeHeldReadiness(db, match.session_id);
+
+  const { data: outEntry } = await db
+    .from("queue_entries")
+    .select("status")
+    .eq("session_id", match.session_id)
+    .eq("player_id", outPlayerId)
+    .maybeSingle();
+  const undoable = outEntry?.status === "waiting";
+
   // On-deck ping: only when this is a PUBLISHED match — the incoming player
   // transitions waiting → on_deck. For an unpublished draft they go to
   // 'drafted' (still hidden), so we stay silent until publish.
@@ -256,7 +275,7 @@ export async function swapPlayerInMatch(
     after(() => pushToPlayers([inPlayerId], "ON_DECK_WARNING", match.session_id));
   }
 
-  return { success: true, message: "Swap complete." };
+  return { success: true, message: "Swap complete.", undoable };
 }
 
 // ============================================================
@@ -266,8 +285,11 @@ export async function swapPlayerInMatch(
 // either within the same match (team reassignment) or across
 // two different on-deck matches (match + team reassignment).
 //
-// Unlike swapPlayerInMatch, neither player touches the queue —
-// both remain "on_deck" throughout; only match_players rows change.
+// Unlike swapPlayerInMatch, neither player comes from the bench. Queue
+// status is derived after the roster write: a player who moved onto an
+// unpublished draft becomes `drafted`, onto a published match `on_deck`.
+// A still-playing pulled body is rejected (PLAYER_UNAVAILABLE) rather
+// than parked on a second pending roster.
 //
 // Safety guards (six pre-write checks), in this order for a reason:
 //   1. Auth
@@ -312,8 +334,8 @@ export async function swapPlayerInMatch(
 //   c. INSERT Player B into match A (on A's team)
 //   d. Recompute is_mixed_level for both affected matches
 //
-// queue_entries.status is intentionally UNCHANGED — both players
-// remain "on_deck" since they are still assigned to some match.
+// queue_entries.status follows the destination match via
+// queue_status_after_roster_change (unpublished → drafted, published → on_deck).
 // ============================================================
 
 export async function swapMatchPlayers(
@@ -451,8 +473,17 @@ export async function swapMatchPlayers(
         message: "Player no longer in match.",
       };
     }
+    if (msg.includes("PLAYER_UNAVAILABLE")) {
+      return {
+        success: false,
+        errorCode: "PLAYER_UNAVAILABLE",
+        message: "That player is still on court.",
+      };
+    }
     return { success: false, message: `Failed to swap: ${msg}` };
   }
+
+  await recomputeHeldReadiness(db, sessionId);
 
   return { success: true, message: "Swap complete." };
 }
