@@ -45,13 +45,15 @@ export type MatchEventType =
   | "cancelled" // match cancelled (lifecycle, no count)
   | "undo" // reverses one prior composition event (decrements)
   | "score_edit" // score correction (players unchanged — never counts)
-  | "revert"; // completed → active (players unchanged — never counts)
+  | "revert" // completed → active (players unchanged — never counts)
+  | "scored" // first complete — who submitted the score (never counts)
+  | "started"; // pending → in_progress on a court (never counts)
 
 /** Match status at the moment an event occurred. */
 export type MatchPhase = "draft" | "active" | "post_completion";
 
 /** Who performed the action. */
-export type MatchEventActorType = "engine" | "organizer" | "system";
+export type MatchEventActorType = "engine" | "organizer" | "system" | "player";
 
 // ── Movement payload shapes (canonical) ─────────────────────
 
@@ -140,6 +142,8 @@ export function modificationDelta(eventType: MatchEventType): -1 | 0 | 1 {
     case "cancelled":
     case "score_edit":
     case "revert":
+    case "scored":
+    case "started":
       return 0;
   }
 }

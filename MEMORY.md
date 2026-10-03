@@ -17,21 +17,15 @@
 
 ---
 
+## 2026-10-04 — score + start actor logging
+
+Phantom 14–31 `ca0d02ef` (session `1b7f5a32`) completed with no scorer. Cleanup already applied in prod. TypeScript requires `complete_match_with_score` / `start_match_on_court` (fail-closed, no JS fallback). Repo `20261004000000`. Prod stamp `20261003185541` / `score_and_start_actor_logging`. EXECUTE is `service_role` + owner only. Incident: `docs/incidents/2026-10-03-phantom-14-31-unattributed-score.md`.
+
+---
+
 ## 2026-09-20 — held-swap queue status (Darwin stuck Drafted)
 
-`queue_status_after_roster_change` is the single derivation after roster writes: in_progress → playing; unpublished pending → drafted; published pending → on_deck; else waiting. `swap_player_in_match` / `swap_match_players` / live-swap / `requeue_finished_players` (`p_drafted_ids` ignored) apply it. `swap_match_players` rejects a still-playing body. N-2b: `recomputeHeldReadiness` downgrades a hold whose body left the live source court. Cancel restore intersects `pulled_player_ids` with hold `match_players`. Undo only when outgoing is `waiting`. Repo migration `20260920000000_queue_status_follows_roster.sql` — **not applied to prod** (hand-apply). Pins: HS-1…HS-8, CC-RDY-CC05, CC-RDY-ERR6. Incident: `docs/incidents/2026-09-20-held-swap-stuck-drafted.md`.
-
----
-
-## 2026-09-18 — co-organizer QR + hub join
-
-Hub Join always visible; Create collapsed when live; passcode + QR for `isSessionOrganizer`. `/o/[token]` admits after login/rename; `joinAsCoOrganizer` returns `clubSlug`. Prod `20260918151017` / `co_organizer_invite_token` + `20260918151119` / `lock_admit_session_organizer_grants` (repo `20260918000000`+`000001`). SELECT revoked; EXECUTE service_role+postgres (grant first, revoke public/anon/authenticated).
-
----
-
-## 2026-09-13 — consecutive partnership ban (session cap of 2 unchanged)
-
-`MAX_PARTNERSHIP_REPEATS` is still 2 — pre-filter + seater, no waivers. New hard ban: last game's teammates cannot share a side on the next draft (`deriveLastPartners` / `deriveLastSides`, same snapshot as last-opponents). They may face each other immediately and may partner again later while count is 1. `usedCapOverride` does not waive the ban. A stall from this path broadcasts `capSaturationReason: "consecutive"` so the organizer notice is not the 2-game-cap copy. Pins: SNAP-LP-1–6, snakeDraft consecutive suite, runAlgorithm rotate / stall / path-out, session-sim last-teammate invariant, MC-new-4 still `session_cap`.
+`queue_status_after_roster_change` is the single derivation after roster writes: in_progress → playing; unpublished pending → drafted; published pending → on_deck; else waiting. `swap_player_in_match` / `swap_match_players` / live-swap / `requeue_finished_players` (`p_drafted_ids` ignored) apply it. `swap_match_players` rejects a still-playing body. N-2b: `recomputeHeldReadiness` downgrades a hold whose body left the live source court. Cancel restore intersects `pulled_player_ids` with hold `match_players`. Undo only when outgoing is `waiting`. Prod `20260920121809` / `queue_status_follows_roster` (repo `20260920000000`). Pins: HS-1…HS-8, CC-RDY-CC05, CC-RDY-ERR6. Incident: `docs/incidents/2026-09-20-held-swap-stuck-drafted.md`.
 
 ## 🔴 OPEN — committed credentials removed from the tree, NOT yet revoked
 
@@ -146,6 +140,7 @@ Resolve a suspected gap file by file, never by count — and check that doc befo
 
 | Applied | Stamp |
 |---|---|
+| `20260920000000_queue_status_follows_roster` | `20260920121809` |
 | `20260821000000_prior_sessions_exclude_hidden` | `20260821000000` |
 | `20260820000000_wrapped_reads_the_ledger_as_of_this_session` | `20260820000000` |
 | `20260818120000_lock_queue_status_events_grants` | `20260819011750` |
@@ -468,3 +463,4 @@ closed session and unread counts.
 | A dated incident | `docs/incidents/` |
 | Retired plans for shipped features | `docs/archive/` |
 | Onboarding a new session | `HANDOFF.md`, then `CLAUDE.md` |
+| Matchmaking engine (full rules) | `MATCHMAKING.md` (authoritative; PDF at `docs/MATCHMAKING.pdf`) |

@@ -274,6 +274,25 @@ test.describe("Player Scoring — [O-2] Score submission", () => {
         )
         .toBe("completed|21|15");
 
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("match_events")
+              .select("event_type, actor_type, actor_id")
+              .eq("session_id", SESSION_ID)
+              .eq("event_type", "scored")
+              .maybeSingle();
+            return data;
+          },
+          { timeout: 8_000, intervals: [500, 1_000, 2_000] }
+        )
+        .toMatchObject({
+          event_type: "scored",
+          actor_type: "player",
+          actor_id: organizerUserId,
+        });
+
       // 2. The organizer bot's games_played must be incremented to 1.
       // Poll rather than single-read: the endMatch server action commits async
       // and the DB may not reflect the increment immediately after the UI update.

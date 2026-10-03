@@ -21,7 +21,12 @@
 // ============================================================
 
 import { describe, it, expect, vi } from "vitest";
-import { fetchActivePool, fetchRecentClearedRosters, type DbClient } from "@/lib/matchmaking-db";
+import {
+  executeMatch,
+  fetchActivePool,
+  fetchRecentClearedRosters,
+  type DbClient,
+} from "@/lib/matchmaking-db";
 import { MIN_REST_MINUTES, PLAYERS_PER_MATCH } from "@/lib/constants";
 
 // ── Mock factory ─────────────────────────────────────────────
@@ -219,5 +224,27 @@ describe("fetchRecentClearedRosters — rejection memory parsing", () => {
       expect.stringContaining("statement timeout")
     );
     warnSpy.mockRestore();
+  });
+});
+
+describe("executeMatch — on-deck only", () => {
+  it("EX-1: refuses !isOnDeck without writing a match", async () => {
+    const rpc = vi.fn();
+    const supabase = { rpc } as unknown as DbClient;
+    const proposal = {
+      teamA: [
+        { player_id: "a1", display_name: "A1" },
+        { player_id: "a2", display_name: "A2" },
+      ],
+      teamB: [
+        { player_id: "b1", display_name: "B1" },
+        { player_id: "b2", display_name: "B2" },
+      ],
+      isMixedLevel: false,
+    };
+    const result = await executeMatch(supabase, SESSION_ID, "court-1", proposal as never, false);
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/on-deck/i);
+    expect(rpc).not.toHaveBeenCalled();
   });
 });

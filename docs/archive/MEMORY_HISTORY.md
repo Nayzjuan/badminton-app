@@ -15,6 +15,18 @@
 
 ## Part 0 — sessions 2026-09-18, 2026-09-15, 2026-09-13, 2026-09-11, and 2026-08-22
 
+## 2026-09-29 — MATCHMAKING.md rewrite
+
+Archived from `MEMORY.md` when score-actor logging shipped. Current engine reference is `MATCHMAKING.md`; PDF via `npm run docs:matchmaking-pdf`.
+
+## 2026-09-18 — co-organizer QR + hub join
+
+Archived from `MEMORY.md` after prod stamps `20260918151017` / `co_organizer_invite_token` + `20260918151119` / `lock_admit_session_organizer_grants`. Hub Join always visible; `/o/[token]` admits after login/rename.
+
+## 2026-09-13 — consecutive partnership ban (session cap of 2 unchanged)
+
+Archived from `MEMORY.md`. `MAX_PARTNERSHIP_REPEATS` is still 2. Last game's teammates cannot share a side on the next draft (`deriveLastPartners` / `deriveLastSides`). Pins: SNAP-LP-1–6, snakeDraft consecutive suite.
+
 ## 2026-09-18 — registration tap targets and contrast
 
 Archived from `MEMORY.md` after PR #94 merged. Compact skill picker is a `<select>` plus a one-line Beginner hint. NEW/RETURNING tabs use `gap-3` and `text-cc-t2`. Join L1 for QR is `JoinFinalizer` → `completeRegistrationJoinAction`. Prod stamp `20260915150524` / `join_queue_session_lock_and_idempotent`.

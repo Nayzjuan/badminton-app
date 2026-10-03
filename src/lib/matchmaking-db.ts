@@ -557,21 +557,27 @@ export async function fetchPartnershipCounts(
 export async function executeMatch(
   supabase: DbClient,
   sessionId: string,
-  courtId: string | null,
+  _courtId: string | null,
   proposal: MatchProposal,
   isOnDeck: boolean,
   autoPublish = false
 ): Promise<ExecuteMatchResult> {
-  const now = new Date().toISOString();
+  if (!isOnDeck) {
+    return {
+      success: false,
+      message: "Engine matches must start as on-deck. Direct in-progress create is disabled.",
+    };
+  }
+
   const { teamA, teamB, isMixedLevel } = proposal;
 
   const { data: matchId, error: rpcError } = await supabase.rpc("create_match_with_players", {
     p_session_id: sessionId,
-    p_court_id: isOnDeck ? null : courtId,
-    p_status: isOnDeck ? "pending" : "in_progress",
+    p_court_id: null,
+    p_status: "pending",
     p_is_mixed_level: isMixedLevel,
-    p_started_at: isOnDeck ? null : now,
-    p_is_on_deck: isOnDeck,
+    p_started_at: null,
+    p_is_on_deck: true,
     p_team_a_ids: teamA.map((p) => p.player_id),
     p_team_b_ids: teamB.map((p) => p.player_id),
     p_origin: "auto" as const,
@@ -628,7 +634,7 @@ export async function executeMatch(
   return {
     success: true,
     matchId,
-    message: isOnDeck ? "On-deck match created!" : "Match created successfully!",
+    message: "On-deck match created!",
   };
 }
 

@@ -118,6 +118,8 @@ describe("MP-CNT · modification delta spec (mirrored by the RPCs)", () => {
       "cancelled",
       "score_edit",
       "revert",
+      "scored",
+      "started",
     ];
     for (const t of noncount) expect(modificationDelta(t)).toBe(0);
   });
