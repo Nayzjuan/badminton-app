@@ -227,7 +227,7 @@ Append-only access-control table. Never DELETE or UPDATE rows — presence of a 
 | `origin`         | `match_origin` enum        | `auto` \| `manual` \| `modified` — sticky: `manual` is never demoted                                           |
 | `is_published`   | `bool`                     | `false` = draft (hidden from players/TV). Auto-engine matches start as drafts. Manual matches start published. |
 | `created_at`     | `timestamptz`              |                                                                                                                |
-| `started_at`     | `timestamptz \| null`      | Set when promoted to active court                                                                              |
+| `started_at`     | `timestamptz \| null`      | Set by `start_match_on_court` when the match takes a court. `revert_match_to_active` refreshes it so a re-score's `seconds_since_start` is this playing stint. |
 | `completed_at`   | `timestamptz \| null`      | Set on end/cancel                                                                                              |
 
 #### `match_players`
@@ -376,6 +376,8 @@ One-time club-wide "firsts" ledger (migration `20260704000001`). Append-only; RL
 | `swap_teams_in_active_match(...)`                       | Swaps team assignments of two players within the same `in_progress` match; no queue changes                                                                                                                                                                                                                                          |
 | `swap_active_from_ondeck(...)`                          | Atomic 3-way: pull pending player into active match + fill vacated slot from queue. Fill status follows dest publish state (`on_deck` vs `drafted`). Rejects a still-playing on-deck candidate. OUT params for undo. |
 | `undo_swap_active_from_ondeck(...)`                     | Reverses `swap_active_from_ondeck` atomically via the same helper; silently no-ops if either match has advanced past its expected state                                                                                                                                                                                                                  |
+| `complete_match_with_score(...)`                        | CAS `in_progress` → `completed` **and** inserts a `scored` `match_events` row in one transaction. No score without an actor. Service-role only. Callers fail closed on `PGRST202` — there is no JS fallback. Repo `20261004000000`. Prod `20261003185541` / `score_and_start_actor_logging`. |
+| `start_match_on_court(...)`                             | CAS promote pending→`in_progress` + court `in_use` + roster `playing` + `started` event. `call_next` is an organizer actor; `after_score` / `after_cancel` are `system` with a null `actor_id` (the person who freed the court lives in `trigger_*`). Service-role only. Repo `20261004000000`. Prod `20261003185541` / `score_and_start_actor_logging`. |
 
 ---
 
@@ -689,9 +691,9 @@ New `matches` columns: `pulled_player_ids uuid[]`, `pulled_from_match_id uuid` (
 - Displays `status = "in_progress"` matches (have `court_id`).
 - Each court card shows: match timer (vs `court_time_limit_minutes`), team rosters via `TeamsGrid` with team color identity (sky = Team A, amber = Team B), VIP tags inline, origin badge (`auto` / `manual` / `modified`).
 - **Court Time Alert**: When `court_time_limit_minutes` is set and elapsed ≥ limit, the timer turns red and a warning indicator appears on the card. Configured via `CourtTimePopover` in the organizer dashboard header.
-- **"Call Next Match"**: Promotes the oldest published on-deck match to the court. If no published on-deck match exists and auto-matchmaking is ON, runs the engine inline and retries once. Returns `hasDraftsBlocking = true` when only unpublished drafts exist. **Fixed (20260507):** After the inline engine retry, if `promoteOnDeckMatchInternal` returns `hasDraftsBlocking = true`, that signal is now propagated to the caller instead of returning the generic "not enough players" message — the organizer sees the amber "review drafts" warning.
-- **Cancel (two-step)**: Inline confirmation prevents accidental abort. Cancel does NOT increment `games_played`. Auto-promotes from on-deck; runs engine to refill.
-- **End Match + Score**: Opens `ScoreModal` → submits scores → increments `games_played` for all 4 players → auto-promotes on-deck → refills engine. An idle modal (no in-flight `endMatch`) closes when the match leaves the live set; toast copy follows `matches.status` (`completed` vs `cancelled`) via `toastForTerminalMatchStatus`.
+- **"Call Next Match"**: Promotes the oldest published on-deck match to the court via `start_match_on_court` (writes a `started` event with the organizer as actor). If no published on-deck match exists and auto-matchmaking is ON, runs the engine inline and retries once. Returns `hasDraftsBlocking = true` when only unpublished drafts exist. After the inline engine retry, if `promoteOnDeckMatchInternal` returns `hasDraftsBlocking = true`, that signal is propagated to the caller instead of the generic "not enough players" message — the organizer sees the amber "review drafts" warning.
+- **Cancel (two-step)**: Inline confirmation prevents accidental abort. Cancel does NOT increment `games_played`. Auto-promotes from on-deck (`started` event is `system` / `after_cancel`); runs engine to refill.
+- **End Match + Score**: Opens `ScoreModal` → `complete_match_with_score` writes scores and a `scored` event (organizer, unless the caller is only a player in the match) → increments `games_played` for all 4 players → auto-promotes on-deck (`started` is `system` / `after_score`) → refills engine. An idle modal (no in-flight `endMatch`) closes when the match leaves the live set; toast copy follows `matches.status` (`completed` vs `cancelled`) via `toastForTerminalMatchStatus`. Duration (`seconds_since_start`) is stored on the event and is not shown in History. Incident: `docs/incidents/2026-10-03-phantom-14-31-unattributed-score.md`.
 - **Court management**: Add, rename, toggle status (`available` / `closed`), remove (confirmation dialog). Errors from Close, Reopen, and Remove are surfaced via inline card error and toast banner — they no longer fail silently. Handlers: `handleUpdateCourtStatus`, `handleRemoveCourt` in `active-courts.tsx`.
 
 ---
@@ -1360,7 +1362,7 @@ The Queue & Match Control tab renders one of two lenses over the same queue data
 
 **File:** `src/app/actions/match-lifecycle.ts`, `src/components/player/match-alert.tsx`
 
-Any player assigned to an `in_progress` match can submit the final score from their phone. Submission is guarded: only players in `match_players` for that match can call the action. Triggers the same cascade as organizer score entry (games_played increment, on-deck promotion, engine refill).
+Any player assigned to an `in_progress` match can submit the final score from their phone. Submission is guarded: only players in `match_players` for that match can call the action. `submitMatchScore` always records the `scored` event as `actor_type=player` / `via=player_submit`, even when the caller is also an organizer or club admin. Triggers the same cascade as organizer score entry (games_played increment, on-deck promotion, engine refill). A first score is never a `score_edit` — that event is only a later correction. Incident: `docs/incidents/2026-10-03-phantom-14-31-unattributed-score.md`.
 
 ---
 

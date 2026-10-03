@@ -1355,6 +1355,46 @@ export type Database = {
         };
         Returns: string; // new event id
       };
+      complete_match_with_score: {
+        Args: {
+          p_match_id: string;
+          p_session_id: string;
+          p_score_a: number;
+          p_score_b: number;
+          p_actor_type: MatchEventActorType;
+          p_actor_id: string;
+          p_actor_name: string | null;
+          p_via: "organizer_end" | "player_submit";
+        };
+        Returns: {
+          success: boolean;
+          status?: string;
+          event_id?: string;
+          seconds_since_start?: number | null;
+          error?: string;
+        };
+      };
+      start_match_on_court: {
+        Args: {
+          p_match_id: string;
+          p_session_id: string;
+          p_court_id: string;
+          p_trigger: "call_next" | "after_score" | "after_cancel";
+          p_actor_type: MatchEventActorType;
+          p_actor_id: string | null;
+          p_actor_name: string | null;
+          p_trigger_match_id: string | null;
+          p_trigger_actor_id: string | null;
+          p_trigger_actor_name: string | null;
+        };
+        Returns: {
+          success: boolean;
+          match_id?: string;
+          event_id?: string;
+          code?: string;
+          error?: string;
+        };
+      };
       join_queue: {
         Args: { p_session_id: string; p_player_id: string };
         Returns: { success: boolean; error?: string; action?: string; games_played?: number };

@@ -10,73 +10,18 @@
 
 import { useState, useTransition } from "react";
 import { getMatchEvents } from "@/app/actions/match-events";
-import type { MatchEvent, MatchMovement } from "@/types/database";
-import { isRosterSwapMovement } from "@/lib/match-provenance";
+import type { MatchEvent } from "@/types/database";
+import {
+  describeMatchEvent,
+  describeMatchEventActor,
+  MATCH_EVENT_PHASE_LABEL,
+} from "@/lib/match-event-copy";
 
 type Props = {
   matchId: string;
   sessionId: string;
   /** When true (provenance_backfilled), the match predates the audit log. */
   preCutover?: boolean;
-};
-
-function describe(ev: MatchEvent): string {
-  const moves = (ev.movements ?? []) as MatchMovement[];
-  switch (ev.event_type) {
-    case "created": {
-      const method = (ev.payload?.method as string) ?? "auto";
-      const label =
-        method === "held" ? "Held draft" : method === "manual" ? "Manual match" : "Auto draft";
-      return `Created · ${label}`;
-    }
-    case "published":
-      return "Published to players";
-    case "roster_swap": {
-      const m = moves[0];
-      if (m && isRosterSwapMovement(m))
-        return `${m.out_player_name} → ${m.in_player_name} (team ${m.team.toUpperCase()})`;
-      return "Roster changed";
-    }
-    case "team_flip": {
-      const names = moves
-        .map((m) => (isRosterSwapMovement(m) ? null : m.player_name))
-        .filter(Boolean);
-      return names.length === 2 ? `${names[0]} ↔ ${names[1]} swapped sides` : "Teams swapped";
-    }
-    case "ondeck_pull": {
-      const m = moves[0];
-      const leg = (ev.payload?.leg as string) ?? "";
-      if (m && isRosterSwapMovement(m))
-        return `Pulled ${m.in_player_name} in for ${m.out_player_name}${leg === "ondeck" ? " (backfill)" : ""}`;
-      return "Cross-court pull";
-    }
-    case "undo": {
-      const m = moves[0];
-      if (m && isRosterSwapMovement(m)) return `Undid: ${m.out_player_name} → ${m.in_player_name}`;
-      return "Undid a change";
-    }
-    case "player_left": {
-      const m = moves[0];
-      return m && isRosterSwapMovement(m) ? `${m.out_player_name} left` : "Player left";
-    }
-    case "cancelled":
-      return "Match cancelled";
-    case "score_edit": {
-      const o = ev.payload?.old as { a: number; b: number } | undefined;
-      const n = ev.payload?.new as { a: number; b: number } | undefined;
-      return o && n ? `Score corrected ${o.a}–${o.b} → ${n.a}–${n.b}` : "Score edited";
-    }
-    case "revert":
-      return "Reverted to active";
-    default:
-      return ev.event_type;
-  }
-}
-
-const PHASE_LABEL: Record<string, string> = {
-  draft: "draft",
-  active: "mid-game",
-  post_completion: "after game",
 };
 
 function eventTime(iso: string): string {
@@ -141,14 +86,10 @@ export function MatchEventTimeline({ matchId, sessionId, preCutover }: Props) {
                   <span className="shrink-0 font-mono tabular-nums text-muted-foreground/70">
                     {eventTime(ev.created_at)}
                   </span>
-                  <span className="text-foreground">{describe(ev)}</span>
+                  <span className="text-foreground">{describeMatchEvent(ev)}</span>
                   <span className="text-muted-foreground/70">
-                    · {PHASE_LABEL[ev.phase] ?? ev.phase}
-                    {ev.actor_name
-                      ? ` · ${ev.actor_name}`
-                      : ev.actor_type === "engine"
-                        ? " · engine"
-                        : ""}
+                    · {MATCH_EVENT_PHASE_LABEL[ev.phase] ?? ev.phase}
+                    {describeMatchEventActor(ev)}
                   </span>
                 </li>
               ))}

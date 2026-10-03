@@ -33,6 +33,7 @@ import { scoreSchema } from "@/lib/schemas/match";
 import { logMatchEvent } from "@/lib/match-event-log";
 import { closePendingScoreCorrections } from "@/lib/session-notice-write";
 import { DUPLICATE_ROSTER_WINDOW_MINUTES } from "@/lib/constants";
+import { parseJsonRpcResult, scoreActorType } from "@/lib/score-attribution";
 
 /**
  * R3-1 / cancel restore: a player named in `pulled_player_ids` is reserved
@@ -248,6 +249,7 @@ async function endMatchInternal(
   //    ORDER: this runs before the status check below, not after. The status
   //    check answers `Match is already completed.` for a row the caller may
   //    have no business reading; only an authorized caller may learn that.
+  let isOrganizer = false;
   if (!participantVerified) {
     const [isOrg, playerSlot] = await Promise.all([
       isSessionOrganizer(user.id, match.session_id),
@@ -262,6 +264,7 @@ async function endMatchInternal(
     if (!isOrg && !playerSlot.data) {
       return DENIED;
     }
+    isOrganizer = isOrg;
   }
 
   // Losing this check is the ordinary outcome of the organizer and a player
@@ -277,74 +280,54 @@ async function endMatchInternal(
     };
   }
 
-  // 2. P0-1: Atomic UPDATE — only succeeds if status is still "in_progress".
-  //    Adding .eq("status", "in_progress") makes this a compare-and-swap:
-  //    if a concurrent caller already changed the status, 0 rows are affected
-  //    and `updatedRows` will be empty — we bail out instead of double-completing.
-  //
-  //    Uses the service client so the primary organizer (sessions.created_by)
-  //    is never blocked. JS auth above is the gate; RLS is intentionally bypassed.
-  //
-  //    NOTE: Do NOT use .single() here. When the CAS guard causes 0 rows to be
-  //    updated (concurrent request already completed the match), PostgREST returns
-  //    an empty array — .single() throws "Cannot coerce the result to a single JSON
-  //    object" instead of returning null, surfacing a confusing error to the player.
-  const { data: updatedRows, error: matchUpdateError } = await db
-    .from("matches")
-    .update({
-      team_a_score: safeA,
-      team_b_score: safeB,
-      status: "completed" as const,
-      completed_at: new Date().toISOString(),
-    })
-    .eq("id", matchId)
-    .eq("status", "in_progress") // ← Atomic guard (CAS)
-    .select("id");
+  // 2. Atomic complete + scored event. No JS fallback: a missing RPC
+  //    must not write a score without an actor. The RPC's CAS still
+  //    discriminates concurrent cancel from concurrent complete so the
+  //    UI can keep the two copies apart (EMC-1 / EMC-2).
+  const actor = await getActorContext(user.id);
+  const attribution = scoreActorType({ participantVerified, isOrganizer });
+  const { data: completeRaw, error: completeError } = await db.rpc("complete_match_with_score", {
+    p_match_id: matchId,
+    p_session_id: match.session_id,
+    p_score_a: safeA,
+    p_score_b: safeB,
+    p_actor_type: attribution.actorType,
+    p_actor_id: actor.id,
+    p_actor_name: actor.name,
+    p_via: attribution.via,
+  });
 
-  if (matchUpdateError) {
-    return { success: false, message: `Failed to save scores: ${matchUpdateError.message}` };
+  if (completeError?.code === "PGRST202") {
+    console.error("[endMatch] complete_match_with_score missing:", completeError);
+    return { success: false, message: "Score logging is not installed. Score was not saved." };
   }
-  if (!updatedRows || updatedRows.length === 0) {
-    // 0 rows affected — another concurrent caller already completed/cancelled.
-    // This is the true concurrency window: the status check above passed, then
-    // the other caller's UPDATE landed first. Settled either way, so the code
-    // lets the UI transition rather than surface a red error for something the
-    // user cannot act on.
-    //
-    // Re-read the status instead of assuming "completed". The two outcomes need
-    // OPPOSITE copy — after a concurrent complete a score exists and was kept,
-    // after a concurrent cancel there is none and the game has to be re-run —
-    // and settledMatchToast can only keep them apart if it is handed the right
-    // code.
-    //
-    // Only "cancelled" takes the cancel arm, and the asymmetry is deliberate.
-    // The cancel copy states that no score was recorded; an organizer reading
-    // that re-runs the game, and re-running one that was in fact scored is how
-    // a second row for the same match gets created — the defect this change set
-    // exists for. So everything else lands on "already scored": a read error, a
-    // deleted row, and one status that is neither settled outcome — "pending",
-    // which passes the check above (it rejects only completed/cancelled) and
-    // then misses the CAS. That last case is not reachable from either UI today
-    // (the player card renders only on in_progress, the organizer's modal opens
-    // from a court card), and its copy would be wrong if it ever were, but the
-    // wrong-and-harmless direction is the one that does not invent a re-run.
-    const { data: settledRow } = await db
-      .from("matches")
-      .select("status")
-      .eq("id", matchId)
-      .maybeSingle();
-    if (settledRow?.status === "cancelled") {
+  if (completeError) {
+    return { success: false, message: `Failed to save scores: ${completeError.message}` };
+  }
+
+  const completeResult = parseJsonRpcResult<{
+    success: boolean;
+    status?: string;
+    error?: string;
+  }>(completeRaw);
+
+  if (!completeResult?.success) {
+    if (completeResult?.error === "already_settled") {
+      if (completeResult.status === "cancelled") {
+        return {
+          success: false,
+          message: "This match was cancelled while the score form was open.",
+          code: "match_cancelled",
+        };
+      }
       return {
         success: false,
-        message: "This match was cancelled while the score form was open.",
-        code: "match_cancelled",
+        message: "This match was already scored by someone else.",
+        code: "already_scored",
       };
     }
-    return {
-      success: false,
-      message: "This match was already scored by someone else.",
-      code: "already_scored",
-    };
+    console.error("[endMatch] complete_match_with_score rejected:", completeResult);
+    return { success: false, message: "Failed to save scores." };
   }
 
   // 3. Fetch all players in this match.
@@ -410,17 +393,24 @@ async function endMatchInternal(
     // Phase 6: this match just completed, which may have freed a held draft's
     // pulled body — refresh readiness so a now-ready held draft can take the court.
     await recomputeHeldReadiness(db, match.session_id);
-    const promoted = await promoteOnDeckMatchInternal(db, match.session_id, match.court_id);
+    const promoted = await promoteOnDeckMatchInternal(db, match.session_id, match.court_id, {
+      trigger: "after_score",
+      triggerMatchId: matchId,
+      triggerActorId: actor.id,
+      triggerActorName: actor.name,
+    });
 
-    if (!promoted.success) {
+    if (!promoted.success && promoted.code !== "start_logging_missing") {
       // No on-deck match — free the court immediately.
       await db
         .from("courts")
         .update({ status: "available" as const })
         .eq("id", match.court_id);
     }
-    // Either way, run the engine to refill on-deck from the queue.
-    await runEngineForSession(match.session_id);
+    if (promoted.code !== "start_logging_missing") {
+      // Either way, run the engine to refill on-deck from the queue.
+      await runEngineForSession(match.session_id);
+    }
   }
 
   // 6. Refresh the all-time leaderboard materialized view.
@@ -606,6 +596,7 @@ export async function updateMatchDetails(
         team_a_score: null,
         team_b_score: null,
         completed_at: null,
+        started_at: new Date().toISOString(),
       })
       .eq("id", matchId);
 
@@ -917,11 +908,18 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   // 4. PIPELINE: promote oldest on-deck match to the freed court.
   //    If no on-deck match exists, free the court immediately.
   //    Mirrors the endMatchAction pipeline so behaviour is consistent.
+  let startLoggingMissing = false;
   if (match.court_id) {
     // Phase 6: a cancelled match also frees a held draft's pulled body — refresh readiness.
     await recomputeHeldReadiness(db, match.session_id);
-    const promoted = await promoteOnDeckMatchInternal(db, match.session_id, match.court_id);
-    if (!promoted.success) {
+    const promoted = await promoteOnDeckMatchInternal(db, match.session_id, match.court_id, {
+      trigger: "after_cancel",
+      triggerMatchId: matchId,
+      triggerActorId: cancelActor.id,
+      triggerActorName: cancelActor.name,
+    });
+    startLoggingMissing = promoted.code === "start_logging_missing";
+    if (!promoted.success && !startLoggingMissing) {
       // Nothing on deck — free the court for manual use.
       await db
         .from("courts")
@@ -931,7 +929,9 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
   }
 
   // 5. Refill on-deck pool (engine exits silently if toggle is OFF).
-  await runEngineForSession(match.session_id);
+  if (!startLoggingMissing) {
+    await runEngineForSession(match.session_id);
+  }
 
   // 6. Notify affected players AND co-organizers via Realtime Broadcast so
   //    dashboards show a friendly explanation instead of a silent state change.

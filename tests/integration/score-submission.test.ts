@@ -103,6 +103,98 @@ describe("Score Submission Cascade — Suite F", () => {
     expect(m?.completed_at).not.toBeNull();
   });
 
+  it("F-score-actor-1: endMatchAction writes a scored event as organizer", async () => {
+    const { organizer, match } = await inProgressMatchSetup();
+
+    const restore = mockAuthAs(organizer.id);
+    try {
+      expect((await endMatchAction(match.id, 21, 15)).success).toBe(true);
+    } finally {
+      restore();
+    }
+
+    const { data: events } = await serviceClient()
+      .from("match_events")
+      .select("event_type, actor_type, actor_id, payload")
+      .eq("match_id", match.id)
+      .eq("event_type", "scored");
+
+    expect(events).toHaveLength(1);
+    expect(events![0].actor_type).toBe("organizer");
+    expect(events![0].actor_id).toBe(organizer.id);
+    expect(events![0].payload).toMatchObject({ a: 21, b: 15, via: "organizer_end" });
+    expect(JSON.stringify(events![0].payload)).not.toMatch(/shown|display_duration/i);
+  });
+
+  it("F-score-actor-2: submitMatchScore writes a scored event as player", async () => {
+    const { players, match } = await inProgressMatchSetup();
+
+    const restore = mockAuthAs(players[0].id);
+    try {
+      expect((await submitMatchScore(match.id, 21, 19)).success).toBe(true);
+    } finally {
+      restore();
+    }
+
+    const { data: events } = await serviceClient()
+      .from("match_events")
+      .select("event_type, actor_type, actor_id, payload")
+      .eq("match_id", match.id)
+      .eq("event_type", "scored");
+
+    expect(events).toHaveLength(1);
+    expect(events![0].actor_type).toBe("player");
+    expect(events![0].actor_id).toBe(players[0].id);
+    expect(events![0].payload).toMatchObject({ a: 21, b: 19, via: "player_submit" });
+  });
+
+  it("F-score-actor-3: an organizer on the roster still scores as player via submitMatchScore", async () => {
+    const organizer = await makeProfile({ faker });
+    const session = await makeSession({ faker, organizer: organizer.id });
+    const court = await makeCourt({ sessionId: session.id, name: "Court 1" });
+    const [p2, p3, p4] = await Promise.all([
+      makeProfile({ faker, skill: "intermediate" }),
+      makeProfile({ faker, skill: "intermediate" }),
+      makeProfile({ faker, skill: "intermediate" }),
+    ]);
+    await serviceClient()
+      .from("courts")
+      .update({ status: "in_use" as const })
+      .eq("id", court.id);
+    const match = await makeMatch({
+      sessionId: session.id,
+      teamA: [organizer.id, p2.id],
+      teamB: [p3.id, p4.id],
+      courtId: court.id,
+      status: "in_progress",
+      isPublished: true,
+    });
+    await Promise.all([
+      makeQueueEntry({ sessionId: session.id, playerId: organizer.id, status: "playing" }),
+      makeQueueEntry({ sessionId: session.id, playerId: p2.id, status: "playing" }),
+      makeQueueEntry({ sessionId: session.id, playerId: p3.id, status: "playing" }),
+      makeQueueEntry({ sessionId: session.id, playerId: p4.id, status: "playing" }),
+    ]);
+
+    const restore = mockAuthAs(organizer.id);
+    try {
+      expect((await submitMatchScore(match.id, 21, 17)).success).toBe(true);
+    } finally {
+      restore();
+    }
+
+    const { data: events } = await serviceClient()
+      .from("match_events")
+      .select("actor_type, actor_id, payload")
+      .eq("match_id", match.id)
+      .eq("event_type", "scored");
+
+    expect(events).toHaveLength(1);
+    expect(events![0].actor_type).toBe("player");
+    expect(events![0].actor_id).toBe(organizer.id);
+    expect(events![0].payload).toMatchObject({ via: "player_submit" });
+  });
+
   // ── Test 2: Players re-queued ────────────────────────────
 
   it("all 4 players are returned to 'waiting' with games_played incremented", async () => {

@@ -24,7 +24,7 @@
 //     Draft cap: MAX_AUTO_DRAFTS (tiered by waiting player count via
 //     getDynamicDraftCap). Counts only is_published=false pending
 //     matches — published on-deck matches do NOT block new draft gen.
-//   promoteOnDeckMatchInternal — CAS promote, player status updates.
+//   promoteOnDeckMatchInternal — start_match_on_court (CAS + started event).
 //
 // Module boundaries:
 //   matchmaking-core.ts — pure algorithm (runAlgorithm, scoreAndSortPool,
@@ -78,7 +78,12 @@ import {
   executeHeldMatch,
 } from "@/lib/matchmaking-db";
 import { isHeldAwaitingReadiness } from "@/lib/cross-court/derive-held-state";
-import { isSessionOrganizer, isSessionActive } from "@/app/actions/_shared";
+import { getActorContext, isSessionOrganizer, isSessionActive } from "@/app/actions/_shared";
+import {
+  parseJsonRpcResult,
+  startActorFields,
+  type MatchStartAttribution,
+} from "@/lib/score-attribution";
 import { isValidUUID } from "@/lib/validate";
 
 // ── Process-level concurrency guard ──────────────────────────
@@ -123,6 +128,8 @@ export interface MatchmakingResult {
    * "no match available" message.
    */
   hasDraftsBlocking?: boolean;
+  /** start_match_on_court is missing — do not treat this as an empty on-deck. */
+  code?: "start_logging_missing";
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -169,6 +176,13 @@ export async function callNextMatch(
     return { success: false, message: "This session has ended." };
   }
 
+  const actor = await getActorContext(user.id);
+  const startedBy: MatchStartAttribution = {
+    trigger: "call_next",
+    actorId: actor.id,
+    actorName: actor.name,
+  };
+
   const service = createServiceClient();
 
   // ── Court-ownership gate ──────────────────────────────────────
@@ -194,7 +208,7 @@ export async function callNextMatch(
   }
 
   // 1. Try to promote an existing on-deck match.
-  let promoted = await promoteOnDeckMatchInternal(service, sessionId, courtId);
+  let promoted = await promoteOnDeckMatchInternal(service, sessionId, courtId, startedBy);
   if (promoted.success) {
     // Refill the on-deck slot we just consumed — only if toggle is ON.
     // runEngineForSession checks is_auto_matchmaking_on before running,
@@ -202,6 +216,7 @@ export async function callNextMatch(
     await runEngineForSession(sessionId);
     return promoted;
   }
+  if (promoted.code === "start_logging_missing") return promoted;
 
   // 2. No on-deck match — check toggle.
   // Must use the service client: the sessions table RLS SELECT policy only
@@ -224,8 +239,9 @@ export async function callNextMatch(
   // bypassGate=true: organizer explicitly requested a match — don't let the
   // soft gate defer it. Serve the best available group immediately.
   await runEngineInternal(service, sessionId, true);
-  promoted = await promoteOnDeckMatchInternal(service, sessionId, courtId);
+  promoted = await promoteOnDeckMatchInternal(service, sessionId, courtId, startedBy);
   if (promoted.success) return promoted;
+  if (promoted.code === "start_logging_missing") return promoted;
   // Surface the draft-blocking signal so the organizer sees "review drafts"
   // rather than the generic "not enough players" when drafts are the real reason.
   if (promoted.hasDraftsBlocking) return promoted;
@@ -877,7 +893,8 @@ async function runEngineInternal(
 export async function promoteOnDeckMatchInternal(
   supabase: ReturnType<typeof createServiceClient>,
   sessionId: string,
-  courtId: string
+  courtId: string,
+  startedBy: MatchStartAttribution
 ): Promise<MatchmakingResult> {
   // ── Court-ownership gate (audit #12) ──────────────────────────
   // Authorize BEFORE any lookup. `sessionId` and `courtId` arrive as two
@@ -1012,31 +1029,44 @@ export async function promoteOnDeckMatchInternal(
     return { success: false, message: "No on-deck match available." };
   }
 
-  const now = new Date().toISOString();
+  const start = startActorFields(startedBy);
+  const { data: startRaw, error: startError } = await supabase.rpc("start_match_on_court", {
+    p_match_id: match.id,
+    p_session_id: sessionId,
+    p_court_id: courtId,
+    p_trigger: start.trigger,
+    p_actor_type: start.actorType,
+    p_actor_id: start.actorId,
+    p_actor_name: start.actorName,
+    p_trigger_match_id: start.triggerMatchId,
+    p_trigger_actor_id: start.triggerActorId,
+    p_trigger_actor_name: start.triggerActorName,
+  });
 
-  // P0-2: Atomic compare-and-swap — add .eq("status", "pending") so that
-  // if two courts free simultaneously and both call this function with the
-  // same on-deck match, only the FIRST UPDATE wins. The second will affect
-  // 0 rows (promotedMatch = null) and returns early, preventing the same
-  // match from being assigned to two courts at once.
-  // Also guard is_published=true so a draft that was un-published between
-  // the SELECT and this UPDATE cannot be accidentally promoted.
-  const { data: promotedMatch, error: updateError } = await supabase
-    .from("matches")
-    .update({
-      court_id: courtId,
-      status: "in_progress" as const,
-      started_at: now,
-    })
-    .eq("id", match.id)
-    .eq("status", "pending") // ← Atomic guard
-    .eq("is_published", true) // ← Draft guard
-    .select("id")
-    .single();
+  if (startError?.code === "PGRST202") {
+    console.error("[promoteOnDeckMatch] start_match_on_court missing:", startError);
+    return {
+      success: false,
+      message: "Start logging is not installed. Match was not started.",
+      code: "start_logging_missing",
+    };
+  }
+  if (startError) {
+    return {
+      success: false,
+      message: `Failed to promote on-deck match: ${startError.message}`,
+    };
+  }
 
-  if (updateError || !promotedMatch) {
-    if (!promotedMatch && !updateError) {
-      // Another concurrent request already promoted this match — bail gracefully.
+  const startResult = parseJsonRpcResult<{
+    success: boolean;
+    match_id?: string;
+    code?: string;
+    error?: string;
+  }>(startRaw);
+
+  if (!startResult?.success) {
+    if (startResult?.code === "already_promoted") {
       console.warn(
         "[matchmaking] promoteOnDeckMatch: match already promoted by concurrent request, skipping."
       );
@@ -1044,74 +1074,8 @@ export async function promoteOnDeckMatchInternal(
     }
     return {
       success: false,
-      message: `Failed to promote on-deck match: ${updateError?.message}`,
+      message: startResult?.error ?? "Failed to promote on-deck match.",
     };
-  }
-
-  // `.eq("session_id", …)` is redundant for every in-repo caller as things
-  // stand — callNextMatch validates `courtId` against `sessionId` before it
-  // gets here, and endMatch/cancelMatch pass `match.court_id` +
-  // `match.session_id` off the same row. It is here so the invariant is
-  // enforced at the write itself, for three reasons the callers cannot supply:
-  //   0. In-repo callers are not the only thing that decides reachability.
-  //      This module is `"use server"` and this function is exported, so the
-  //      build DOES mint it an action id (`registerServerReference`). What
-  //      stops a hand-crafted POST is not this signature and not any gate in
-  //      here — it is that the id is absent from `server-reference-manifest`'s
-  //      `node` map, because no CLIENT component imports it. Next rejects at
-  //      the `serverModuleMap[actionId]` lookup (next/dist/server/app-render/
-  //      action-handler.js:932-934) before it deserializes any argument.
-  //      Same for `recomputeHeldReadiness`. Verified on the 2026-08-13 build:
-  //      of this module's four exports only `callNextMatch` is in the manifest.
-  //      ⚠ That is a BUILD-DERIVED property and it flips the first time a
-  //      client component imports either helper — at which point they become
-  //      dispatchable with no auth gate of their own. This predicate is the
-  //      defence-in-depth for that day.
-  //      🪤 An earlier draft of this note claimed they fail closed "because
-  //      argument 1 is a Supabase client that cannot be serialized". Plausible,
-  //      and wrong: the request never reaches argument binding. Do not restate
-  //      it — check the manifest.
-  //   1. A future caller could reach this helper without the gate.
-  //   2. The invariant is code-maintained, NOT schema-enforced — `matches`
-  //      has `court_id uuid REFERENCES courts(id)` (initial_schema:223), a
-  //      single-column FK, so nothing in the DB stops a match from pointing
-  //      at a court in another session.
-  // Scope, precisely: this predicate is the SECOND half of the pair. The
-  // cross-session write is stopped by the gate at the top of this function,
-  // which runs before the CAS; by the time we get here the match row is
-  // already committed pointing at `courtId`, so all this can still protect is
-  // the `courts.status` flip. Do not describe it as what closes audit #12.
-  // It is not vacuous, though — because of (2) it can genuinely match 0 rows,
-  // so that is reported rather than swallowed: otherwise the caller would see
-  // success with the match `in_progress` while the court stayed `available` —
-  // a board showing a free court under a live match, with nothing logged.
-  const { error: courtError, count: courtCount } = await supabase
-    .from("courts")
-    .update({ status: "in_use" as const }, { count: "exact" })
-    .eq("id", courtId)
-    .eq("session_id", sessionId);
-
-  if (courtError || courtCount === 0) {
-    console.error(
-      `[promoteOnDeckMatch] court ${courtId} was not marked in_use for session ${sessionId}: ${
-        courtError?.message ?? "no matching court row"
-      }`
-    );
-  }
-
-  // matchPlayers was fetched during candidate selection above — reused here
-  // instead of re-querying.
-  if (matchPlayers && matchPlayers.length > 0) {
-    const playerIds = matchPlayers.map((mp) => mp.player_id);
-    // BUG-002 fix: guard against overwriting a 'left' player's status.
-    // If the organizer removed a player between publish and promote,
-    // their queue_entries row should remain 'left', not flip to 'playing'.
-    await supabase
-      .from("queue_entries")
-      .update({ status: "playing" as const })
-      .eq("session_id", sessionId)
-      .in("player_id", playerIds)
-      .neq("status", "left");
   }
 
   const playerIds = (matchPlayers ?? []).map((mp) => mp.player_id);

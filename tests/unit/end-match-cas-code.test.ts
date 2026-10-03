@@ -1,21 +1,16 @@
 // ============================================================
-// endMatchAction — the code returned when the CAS finds 0 rows
+// endMatchAction — the code returned when complete is refused
 // ============================================================
-// The status pre-check and the compare-and-swap catch the SAME race one step
-// apart: the pre-check sees a settled row, the CAS sees a row that settled
-// between the read and the UPDATE. The pre-check has always discriminated
-// completed from cancelled. The CAS branch used to hardcode `already_scored`,
-// which is the one input that makes `settledMatchToast` lie: it tells the
-// organizer "the score they entered was kept" for a match that was cancelled,
-// has no score, and has to be re-run.
-//
-// Nothing downstream can recover from that — the copy is chosen purely from the
-// code — so it has to be right here.
+// The status pre-check and the complete_match_with_score RPC catch the
+// SAME race one step apart: the pre-check sees a settled row, the RPC
+// sees a row that settled between the read and the CAS. The pre-check
+// has always discriminated completed from cancelled. The RPC returns
+// already_settled + status so the JS mapper can keep those copies apart.
 //
 // EMC-1 a concurrent CANCEL yields match_cancelled
 // EMC-2 a concurrent COMPLETE yields already_scored
-// EMC-3 an unreadable status falls back to already_scored, never to the
-//       "no score was recorded" copy
+// EMC-3 a settled row with no status falls back to already_scored
+// EMC-4 a missing RPC (PGRST202) fails closed — no score is written
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -40,9 +35,8 @@ const SESSION_ID = "00000000-0000-4000-8000-000000000010";
 const USER_ID = "00000000-0000-4000-8000-000000000020";
 const MATCH_ID = "00000000-0000-4000-8000-000000000040";
 
-type MockResponse = { data?: unknown; error?: { message: string } | null };
+type MockResponse = { data?: unknown; error?: { message: string; code?: string } | null };
 
-/** Awaitable chainable builder. Filters are recorded, never applied. */
 function makeBuilder(response: MockResponse) {
   const b: Record<string, unknown> = {};
   b["then"] = (onFulfilled: (v: MockResponse) => unknown, onRejected: (e: unknown) => unknown) =>
@@ -56,36 +50,20 @@ function makeBuilder(response: MockResponse) {
   return b;
 }
 
-/**
- * The `matches` table is read three times on this path and each read needs a
- * different answer, so it is served from a queue rather than one fixture:
- *
- *   1. the pre-check fetch  → an in_progress row, so the pre-check PASSES and
- *                             execution actually reaches the CAS
- *   2. the CAS update       → [] , i.e. 0 rows affected: the race is lost
- *   3. the status re-read   → what the other caller left behind — the whole
- *                             point of the test
- */
-function setup(settledStatus: string | null) {
-  const matchesResponses: MockResponse[] = [
-    {
-      data: { id: MATCH_ID, session_id: SESSION_ID, court_id: null, status: "in_progress" },
-      error: null,
-    },
-    { data: [], error: null },
-    { data: settledStatus === null ? null : { status: settledStatus }, error: null },
-  ];
+function setup(opts: {
+  settledStatus?: string | null;
+  rpcError?: { message: string; code?: string } | null;
+}) {
   let matchesCall = 0;
-
   const from = vi.fn((table: string) => {
     switch (table) {
       case "matches": {
-        const response = matchesResponses[matchesCall] ?? { data: null, error: null };
         matchesCall += 1;
-        return makeBuilder(response);
+        return makeBuilder({
+          data: { id: MATCH_ID, session_id: SESSION_ID, court_id: null, status: "in_progress" },
+          error: null,
+        });
       }
-      // created_by === the caller, so the organizer gate passes on the fast path
-      // and session_organizers/club_members are never consulted.
       case "sessions":
         return makeBuilder({ data: { created_by: USER_ID, club_id: "club-1" }, error: null });
       default:
@@ -93,7 +71,20 @@ function setup(settledStatus: string | null) {
     }
   });
 
-  vi.mocked(createServiceClient).mockReturnValue({ from, rpc: vi.fn() } as never);
+  const rpc = vi.fn().mockResolvedValue(
+    opts.rpcError
+      ? { data: null, error: opts.rpcError }
+      : {
+          data: {
+            success: false,
+            error: "already_settled",
+            status: opts.settledStatus === undefined ? "completed" : opts.settledStatus,
+          },
+          error: null,
+        }
+  );
+
+  vi.mocked(createServiceClient).mockReturnValue({ from, rpc } as never);
   vi.mocked(createServerSupabaseClient).mockResolvedValue({
     auth: {
       getUser: vi.fn().mockResolvedValue({ data: { user: { id: USER_ID } }, error: null }),
@@ -101,30 +92,35 @@ function setup(settledStatus: string | null) {
     from: vi.fn(),
   } as never);
 
-  return { matchesCallCount: () => matchesCall };
+  return { matchesCallCount: () => matchesCall, rpc };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("EMC: the CAS-miss code reflects what actually happened", () => {
+describe("EMC: the complete-RPC refusal code reflects what actually happened", () => {
   it("EMC-1: a concurrent cancel yields match_cancelled, not already_scored", async () => {
-    const { matchesCallCount } = setup("cancelled");
+    const { matchesCallCount, rpc } = setup({ settledStatus: "cancelled" });
 
     const result = await endMatchAction(MATCH_ID, 21, 15);
 
     expect(result.success).toBe(false);
     expect(result.code).toBe("match_cancelled");
-    // Never claim a score survived — that is the sentence that makes an
-    // organizer skip re-running a game that was never recorded.
     expect(result.message).not.toMatch(/scored/i);
-    // The re-read happened; the code was not guessed from the pre-check row.
-    expect(matchesCallCount()).toBe(3);
+    expect(matchesCallCount()).toBe(1);
+    expect(rpc).toHaveBeenCalledWith(
+      "complete_match_with_score",
+      expect.objectContaining({
+        p_match_id: MATCH_ID,
+        p_actor_type: "organizer",
+        p_via: "organizer_end",
+      })
+    );
   });
 
   it("EMC-2: a concurrent complete yields already_scored", async () => {
-    setup("completed");
+    setup({ settledStatus: "completed" });
 
     const result = await endMatchAction(MATCH_ID, 21, 15);
 
@@ -133,15 +129,24 @@ describe("EMC: the CAS-miss code reflects what actually happened", () => {
   });
 
   it("EMC-3: an unreadable status falls back to already_scored", async () => {
-    setup(null);
+    setup({ settledStatus: null });
 
     const result = await endMatchAction(MATCH_ID, 21, 15);
 
-    // Asymmetric on purpose. The cancel copy states that no score was recorded;
-    // an organizer reading that re-runs the game, and re-running one that was in
-    // fact scored is exactly how a second row for the same match gets created —
-    // the defect this whole change set exists for.
     expect(result.success).toBe(false);
     expect(result.code).toBe("already_scored");
+  });
+
+  it("EMC-4: a missing RPC fails closed and does not write a score", async () => {
+    const { rpc } = setup({
+      rpcError: { message: "Could not find the function", code: "PGRST202" },
+    });
+
+    const result = await endMatchAction(MATCH_ID, 21, 15);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/not installed/i);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith("complete_match_with_score", expect.any(Object));
   });
 });
