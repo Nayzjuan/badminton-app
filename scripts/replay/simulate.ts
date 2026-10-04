@@ -14,48 +14,61 @@
 //
 // Deliberate simplifications, all stated so the numbers are read honestly:
 //
-//   1. The draft queue is collapsed. The real engine fills on-deck slots that
-//      an organizer later promotes; the replay composes a match the instant a
-//      court frees and seats it. That is the bypassGate ("Call Next") path —
-//      no soft gate, no pool-diversity cap — which is what an auto-run session
-//      converges to anyway, and it keeps court occupancy at 100% so the
-//      composition metrics are not contaminated by idle courts.
-//   2. Nobody leaves early, and nobody pauses. Finished sessions record every
-//      queue entry as 'left', so departures are not recoverable; is_paused is
-//      likewise only observable live, so it is always false here. This also
-//      tugs the session floor down: production's floor query excludes 'left'
-//      rows, so a low-games player who goes home stops holding it, while in the
-//      replay they hold it all night.
-//   3. No cross-court draft augmentation. Production may pull a body off a
-//      still-playing court to compose a fresher four. The trigger is NOT
-//      forced-repeat-only — it also fires when the reach simply makes the match
-//      fresher — but the whole path is gated on `!bypassGate`, and (1) puts the
-//      replay permanently on the bypassGate branch, so it never runs here.
-//      Forced repeats are counted in the diagnostics; production would have
-//      tried to fix some, and would additionally have improved some matches that
-//      the replay records as merely acceptable.
-//      ⚠️ The replay therefore cannot measure this feature at all — it has no
-//      notion of a HELD draft, so it can neither count reaches nor observe the
-//      hold-age cancel. Do not read "0 cross-court events" off a replay as
-//      evidence about production.
-//   4. Rejection memory is empty: no organizer clears drafts in a replay, so
-//      this measures what the engine does unaided.
+//   1. Default mode collapses the draft queue: a match is composed the instant
+//      a court frees (the bypassGate / "Call Next" path). Pass
+//      `{ draftQueue: true }` to use the same planSlots / softGate /
+//      shouldContinueSlot helpers as runEngineInternal: drafts sit on deck,
+//      drafted players leave the pool, FIFO promote onto a free court. That
+//      is the freshness gate's required mode — production drafts ahead, which
+//      is what pushes a player's last game past the session lookback.
+//   2. Real fixtures have no recoverable departures or pauses. Synthetics may
+//      set `leaveMin`; a player not on court and not drafted then leaves.
+//   3. No cross-court draft augmentation. Stated limitation — the replay has
+//      no notion of a HELD draft.
+//   4. Rejection memory is empty: no organizer clears drafts in a replay.
 //
-// Because of (1) the replay runs the full [0, horizon] window at 100% court
-// occupancy and so plays MORE matches than the night did. Compare rates, not
-// absolute counts, when reading it against the REAL column.
+// Because of (1) the default replay runs the full [0, horizon] window at 100%
+// court occupancy and so plays MORE matches than the night did. Compare rates,
+// not absolute counts, when reading it against the REAL column.
 
-import { runAlgorithm, scoreAndSortPool, type ScoredPlayer } from "../../src/lib/matchmaking-core";
+import {
+  isBackToBackRepeat,
+  isRedZonePlayer,
+  runAlgorithm,
+  runAlgorithmWithFreshness,
+  scoreAndSortPool,
+  type FreshnessResult,
+  type MatchProposal,
+  type ScoredPlayer,
+} from "../../src/lib/matchmaking-core";
 import {
   deriveRecentRosters,
   derivePairCounts,
   deriveOverlapMap,
-  deriveLastOpponents,
+  deriveLastSides,
   type SessionMatchSnapshot,
 } from "../../src/lib/matchmaking-db";
-import { MIN_REST_MINUTES, PLAYERS_PER_MATCH } from "../../src/lib/constants";
+import {
+  isFreshnessRefreshEnabled,
+  planSlots,
+  shouldContinueSlot,
+  softGateDecision,
+} from "../../src/lib/matchmaking-slots";
+import {
+  HARD_CAP_GAMES_CEILING,
+  HARD_WAIT_CAP_MINUTES,
+  MIN_REST_MINUTES,
+  PLAYERS_PER_MATCH,
+} from "../../src/lib/constants";
 import type { QueueWithWaitTime, SkillLevel } from "../../src/types/database";
-import type { PlayedMatch, ReplayDiagnostics, ReplayResult, SessionFixture } from "./types";
+import { hasAdmissibleFresherFour } from "./freshness-brute";
+import type {
+  PlayedMatch,
+  ReplayDiagnostics,
+  ReplayOptions,
+  ReplayResult,
+  SessionFixture,
+} from "./types";
 
 type SimPlayer = {
   player_id: string;
@@ -63,11 +76,13 @@ type SimPlayer = {
   skill_level: SkillLevel;
   skill_level_int: number;
   joinMin: number;
+  leaveMin?: number;
   games_played: number;
   /** Minutes from t0 when they (re-)entered the queue — drives wait_minutes. */
   queuedAtMin: number;
   /** Set once joinMin passes; until then the player is not in the session at all. */
   arrived: boolean;
+  left: boolean;
 };
 
 type SimCourt = {
@@ -79,12 +94,77 @@ type SimCourt = {
   occupants: string[] | null;
 };
 
+type Draft = {
+  matchId: string;
+  teamA: ScoredPlayer[];
+  teamB: ScoredPlayer[];
+  composedAtMin: number;
+  forcedRepeat?: boolean;
+  isMixedLevel?: boolean;
+};
+
 /** Floating-point slop tolerated when matching two event times. */
 const EPSILON_MIN = 1e-6;
 
-export function replaySession(fixture: SessionFixture): ReplayResult {
+function mulberry32(seed: number) {
+  return () => {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function emptyDiagnostics(): ReplayDiagnostics {
+  return {
+    noMatchEvents: 0,
+    capSaturationEvents: 0,
+    forcedRepeats: 0,
+    thinPoolEvents: 0,
+    stallEpisodes: 0,
+    backToBackServed: 0,
+    avoidableNearIdentical: 0,
+    refreshAttempts: 0,
+    refreshSuccesses: 0,
+    draftWaits: [],
+    redZoneEntries: 0,
+    hardCapEntries: 0,
+    mixedLevelMatches: 0,
+    skillSpread2Matches: 0,
+    teamSkillGaps: [],
+    wrapperMs: [],
+  };
+}
+
+function isHardCapPlayer(p: ScoredPlayer): boolean {
+  if (p.isPulled) return false;
+  return (p.wait_minutes ?? 0) >= HARD_WAIT_CAP_MINUTES && p.games_played < HARD_CAP_GAMES_CEILING;
+}
+
+function skillSpread(four: ScoredPlayer[]): number {
+  let max = 0;
+  for (let i = 0; i < four.length; i++) {
+    for (let j = i + 1; j < four.length; j++) {
+      max = Math.max(max, Math.abs(four[i].skill_level_int - four[j].skill_level_int));
+    }
+  }
+  return max;
+}
+
+function teamSkillGap(teamA: ScoredPlayer[], teamB: ScoredPlayer[]): number {
+  const mean = (side: ScoredPlayer[]) =>
+    side.reduce((s, p) => s + p.skill_level_int, 0) / side.length;
+  return Math.abs(mean(teamA) - mean(teamB));
+}
+
+export function replaySession(fixture: SessionFixture, options: ReplayOptions = {}): ReplayResult {
   const t0Ms = new Date(fixture.t0).getTime();
   const isoAt = (min: number) => new Date(t0Ms + min * 60_000).toISOString();
+  const freshnessOn = options.freshness ?? isFreshnessRefreshEnabled();
+  const draftQueueMode = options.draftQueue === true;
+  const waitSlack = options.waitSlackMinutes;
+  const jitterRnd = options.durationJitter ? mulberry32(options.durationJitter.seed) : null;
+  const jitterPct = options.durationJitter?.pct ?? 0;
 
   const players = new Map<string, SimPlayer>(
     fixture.players.map((p) => [
@@ -95,9 +175,11 @@ export function replaySession(fixture: SessionFixture): ReplayResult {
         skill_level: p.skill_level as SkillLevel,
         skill_level_int: p.skill_level_int,
         joinMin: p.joinMin,
+        leaveMin: p.leaveMin,
         games_played: 0, // stamped at the session floor on arrival — see admitArrivals
         queuedAtMin: p.joinMin,
         arrived: false,
+        left: false,
       },
     ])
   );
@@ -119,12 +201,10 @@ export function replaySession(fixture: SessionFixture): ReplayResult {
   });
 
   const matches: PlayedMatch[] = [];
-  const diagnostics: ReplayDiagnostics = {
-    noMatchEvents: 0,
-    capSaturationEvents: 0,
-    forcedRepeats: 0,
-    thinPoolEvents: 0,
-  };
+  const diagnostics = emptyDiagnostics();
+  const onDeck: Draft[] = [];
+  let stallOpen = false;
+  let matchSeq = 0;
 
   // ── Snapshot, built incrementally ───────────────────────────
   // Shape-identical to fetchSessionMatchSnapshot's output: matchIds newest-first
@@ -171,8 +251,8 @@ export function replaySession(fixture: SessionFixture): ReplayResult {
     const pending: SimPlayer[] = [];
     let floor = Infinity;
     for (const p of players.values()) {
-      if (p.arrived) floor = Math.min(floor, p.games_played);
-      else if (p.joinMin <= nowMin + EPSILON_MIN) pending.push(p);
+      if (p.arrived && !p.left) floor = Math.min(floor, p.games_played);
+      else if (!p.arrived && p.joinMin <= nowMin + EPSILON_MIN) pending.push(p);
     }
     if (pending.length === 0) return;
     const stamp = Number.isFinite(floor) ? floor : 0; // first arrivals: nobody to inherit from
@@ -182,139 +262,326 @@ export function replaySession(fixture: SessionFixture): ReplayResult {
     }
   }
 
+  function draftedIds(): Set<string> {
+    return new Set(onDeck.flatMap((d) => [...d.teamA, ...d.teamB].map((p) => p.player_id)));
+  }
+
+  function processLeaves(nowMin: number) {
+    const reserved = draftedIds();
+    const onCourt = new Set(courts.flatMap((c) => c.occupants ?? []));
+    for (const p of players.values()) {
+      if (!p.arrived || p.left || p.leaveMin === undefined) continue;
+      if (p.leaveMin > nowMin + EPSILON_MIN) continue;
+      if (onCourt.has(p.player_id) || reserved.has(p.player_id)) continue;
+      p.left = true;
+    }
+  }
+
+  /** Everyone waiting — no rest filter. Production's waitingRows for planSlots / soft gate. */
+  function waitingQueue(nowMin: number): QueueWithWaitTime[] {
+    const onCourt = new Set(courts.flatMap((c) => c.occupants ?? []));
+    const reserved = draftedIds();
+    const waiting: QueueWithWaitTime[] = [];
+    for (const p of players.values()) {
+      if (!p.arrived || p.left) continue;
+      if (onCourt.has(p.player_id) || reserved.has(p.player_id)) continue;
+      waiting.push(queueRow(p, nowMin));
+    }
+    return waiting;
+  }
+
   /** fetchActivePool's in-memory half: arrived, not on court, rested (or waived). */
   function activePool(nowMin: number): QueueWithWaitTime[] {
-    const onCourt = new Set(courts.flatMap((c) => c.occupants ?? []));
-    const active: QueueWithWaitTime[] = [];
-    for (const p of players.values()) {
-      if (!p.arrived) continue;
-      if (onCourt.has(p.player_id)) continue;
-      active.push(queueRow(p, nowMin));
-    }
+    const active = waitingQueue(nowMin);
     const rested = active.filter(
       (p) => p.games_played === 0 || (p.wait_minutes ?? 0) >= MIN_REST_MINUTES
     );
     return rested.length >= PLAYERS_PER_MATCH ? rested : active;
   }
 
-  function commit(court: SimCourt, teamA: ScoredPlayer[], teamB: ScoredPlayer[], nowMin: number) {
-    const duration = court.durations[court.nextDuration % court.durations.length];
+  function takeDuration(court: SimCourt): number {
+    const base = court.durations[court.nextDuration % court.durations.length];
     court.nextDuration++;
+    if (!jitterRnd || jitterPct === 0) return base;
+    return Math.max(1, base * (1 + (jitterRnd() - 0.5) * 2 * jitterPct));
+  }
 
-    const seq = matches.length + 1;
-    const matchId = `sim-${String(seq).padStart(4, "0")}`;
-    const rosterIds = [...teamA, ...teamB].map((p) => p.player_id);
-
-    court.occupants = rosterIds;
-    court.freeAtMin = nowMin + duration;
-
-    // Newest-first, matching the snapshot's created_at DESC contract.
+  function recordSnapshot(matchId: string, teamA: ScoredPlayer[], teamB: ScoredPlayer[]) {
     snapshot.matchIds.unshift(matchId);
     snapshot.rowsByMatch.set(matchId, [
-      ...teamA.map((p) => ({ player_id: p.player_id, team: "a" })),
-      ...teamB.map((p) => ({ player_id: p.player_id, team: "b" })),
+      ...teamA.map((p) => ({ player_id: p.player_id, team: "a" as const })),
+      ...teamB.map((p) => ({ player_id: p.player_id, team: "b" as const })),
     ]);
+  }
 
-    return { seq, matchId, duration, rosterIds };
+  function recordServedQuality(proposal: MatchProposal) {
+    const four = [...proposal.teamA, ...proposal.teamB];
+    for (const p of four) {
+      diagnostics.draftWaits.push(p.wait_minutes ?? 0);
+      if (isRedZonePlayer(p)) diagnostics.redZoneEntries++;
+      if (isHardCapPlayer(p)) diagnostics.hardCapEntries++;
+    }
+    if (proposal.isMixedLevel) diagnostics.mixedLevelMatches++;
+    if (skillSpread(four) === 2) diagnostics.skillSpread2Matches++;
+    diagnostics.teamSkillGaps.push(teamSkillGap(proposal.teamA, proposal.teamB));
+  }
+
+  function compose(nowMin: number): Draft | null {
+    const rawPool = activePool(nowMin);
+    if (rawPool.length < PLAYERS_PER_MATCH) {
+      diagnostics.thinPoolEvents++;
+      return null;
+    }
+
+    const pool = scoreAndSortPool(rawPool);
+    const recentRosters = deriveRecentRosters(snapshot);
+    const { partnershipCounts, opponentCounts } = derivePairCounts(snapshot);
+    const overlapMap = deriveOverlapMap(snapshot, pool[0].player_id);
+    // REPLAY_NO_LAST_OPPONENTS=true feeds the engine an empty map, which
+    // disables the split-preview search entirely (buildCombinationGroup gates
+    // on a NON-EMPTY map). That is the A/B control: it must reproduce the
+    // pre-freshness baseline exactly, so any drift in the "before" column is a
+    // porting bug rather than a measurement.
+    const lastSides =
+      process.env.REPLAY_NO_LAST_OPPONENTS === "true"
+        ? {
+            lastOpponents: new Map<string, Set<string>>(),
+            lastPartners: new Map<string, Set<string>>(),
+          }
+        : deriveLastSides(snapshot);
+    const { lastOpponents, lastPartners } = lastSides;
+    const bruteArgs = {
+      partnershipCounts,
+      overlapMap,
+      recentRosters,
+      opponentCounts,
+      rejectedRosters: [] as string[][],
+      lastOpponents,
+      lastPartners,
+      waitSlackMinutes: waitSlack,
+    };
+
+    const started = performance.now();
+    const result: FreshnessResult = freshnessOn
+      ? runAlgorithmWithFreshness(
+          pool,
+          partnershipCounts,
+          overlapMap,
+          recentRosters,
+          opponentCounts,
+          [],
+          lastOpponents,
+          lastPartners,
+          { waitSlackMinutes: waitSlack }
+        )
+      : runAlgorithm(
+          pool,
+          partnershipCounts,
+          overlapMap,
+          recentRosters,
+          opponentCounts,
+          [],
+          lastOpponents,
+          lastPartners
+        );
+    if (freshnessOn) diagnostics.wrapperMs.push(performance.now() - started);
+
+    if (!result.proposal) {
+      diagnostics.noMatchEvents++;
+      if (result.capSaturation) diagnostics.capSaturationEvents++;
+      if (rawPool.length >= PLAYERS_PER_MATCH) {
+        if (!stallOpen) {
+          diagnostics.stallEpisodes++;
+          stallOpen = true;
+        }
+      }
+      return null;
+    }
+    stallOpen = false;
+    if (result.forcedRepeat) diagnostics.forcedRepeats++;
+    if (freshnessOn && (result.refreshed || result.backToBackRepeat || result.forcedRepeat)) {
+      diagnostics.refreshAttempts++;
+      if (result.refreshed) diagnostics.refreshSuccesses++;
+    }
+
+    const servedIds = [...result.proposal.teamA, ...result.proposal.teamB].map((p) => p.player_id);
+    if (isBackToBackRepeat(servedIds, lastOpponents, lastPartners)) {
+      diagnostics.backToBackServed++;
+      if (hasAdmissibleFresherFour(pool, result.proposal, bruteArgs)) {
+        diagnostics.avoidableNearIdentical++;
+      }
+    }
+
+    recordServedQuality(result.proposal);
+    matchSeq++;
+    const matchId = `sim-${String(matchSeq).padStart(4, "0")}`;
+    recordSnapshot(matchId, result.proposal.teamA, result.proposal.teamB);
+    return {
+      matchId,
+      teamA: result.proposal.teamA,
+      teamB: result.proposal.teamB,
+      composedAtMin: nowMin,
+      forcedRepeat: result.forcedRepeat ?? false,
+      isMixedLevel: result.proposal.isMixedLevel,
+    };
+  }
+
+  function seatOnCourt(court: SimCourt, draft: Draft, nowMin: number) {
+    const duration = takeDuration(court);
+    const rosterIds = [...draft.teamA, ...draft.teamB].map((p) => p.player_id);
+    court.occupants = rosterIds;
+    court.freeAtMin = nowMin + duration;
+    matches.push({
+      seq: matches.length + 1,
+      courtId: court.id,
+      startMin: nowMin,
+      endMin: nowMin + duration,
+      teamA: draft.teamA.map((p) => p.player_id),
+      teamB: draft.teamB.map((p) => p.player_id),
+      forcedRepeat: draft.forcedRepeat ?? false,
+      isMixedLevel: draft.isMixedLevel,
+    });
+  }
+
+  function releaseFinishedCourts(nowMin: number) {
+    for (const court of courts) {
+      if (court.occupants === null) continue;
+      if (court.freeAtMin > nowMin + EPSILON_MIN) continue;
+      for (const pid of court.occupants) {
+        const p = players.get(pid);
+        if (!p) continue;
+        p.games_played++;
+        if (p.leaveMin !== undefined && p.leaveMin <= nowMin + EPSILON_MIN) {
+          p.left = true;
+        } else {
+          p.queuedAtMin = nowMin;
+        }
+      }
+      court.occupants = null;
+    }
+  }
+
+  function promoteDrafts(nowMin: number) {
+    for (const court of courts) {
+      if (court.occupants !== null) continue;
+      const next = onDeck.shift();
+      if (!next) break;
+      seatOnCourt(court, next, nowMin);
+    }
   }
 
   /** One engine run per free court, mirroring a bypassGate ("Call Next") fill. */
   function fillFreeCourts(nowMin: number) {
     admitArrivals(nowMin);
+    processLeaves(nowMin);
     for (const court of courts) {
       if (court.occupants !== null) continue;
-
-      const rawPool = activePool(nowMin);
-      if (rawPool.length < PLAYERS_PER_MATCH) {
-        diagnostics.thinPoolEvents++;
-        // Every court sees the same pool at this instant — one short pool means
-        // no further court can be filled either.
-        break;
-      }
-
-      const pool = scoreAndSortPool(rawPool);
-      const recentRosters = deriveRecentRosters(snapshot);
-      const { partnershipCounts, opponentCounts } = derivePairCounts(snapshot);
-      const overlapMap = deriveOverlapMap(snapshot, pool[0].player_id);
-      // REPLAY_NO_LAST_OPPONENTS=true feeds the engine an empty map, which
-      // disables the split-preview search entirely (buildCombinationGroup gates
-      // on a NON-EMPTY map). That is the A/B control: it must reproduce the
-      // pre-freshness baseline exactly, so any drift in the "before" column is a
-      // porting bug rather than a measurement.
-      const lastOpponents =
-        process.env.REPLAY_NO_LAST_OPPONENTS === "true"
-          ? new Map<string, Set<string>>()
-          : deriveLastOpponents(snapshot);
-
-      const result = runAlgorithm(
-        pool,
-        partnershipCounts,
-        overlapMap,
-        recentRosters,
-        opponentCounts,
-        [], // rejectedRosters: none — no organizer in a replay.
-        lastOpponents
-      );
-
-      if (!result.proposal) {
-        diagnostics.noMatchEvents++;
-        if (result.capSaturation) diagnostics.capSaturationEvents++;
-        break;
-      }
-      if (result.forcedRepeat) diagnostics.forcedRepeats++;
-
-      const { teamA, teamB, isMixedLevel } = result.proposal;
-      const { seq, duration } = commit(court, teamA, teamB, nowMin);
-
-      matches.push({
-        seq,
-        courtId: court.id,
-        startMin: nowMin,
-        endMin: nowMin + duration,
-        teamA: teamA.map((p) => p.player_id),
-        teamB: teamB.map((p) => p.player_id),
-        forcedRepeat: result.forcedRepeat ?? false,
-        isMixedLevel,
-      });
+      const draft = compose(nowMin);
+      if (!draft) break;
+      seatOnCourt(court, draft, nowMin);
     }
   }
 
+  /** Production-shaped on-deck fill: shared slot helpers, FIFO promote. */
+  function fillDraftSlots(nowMin: number) {
+    admitArrivals(nowMin);
+    processLeaves(nowMin);
+    const waiting = waitingQueue(nowMin);
+    const waitingCount = waiting.length;
+    const pendingRows = onDeck.map(() => ({
+      is_published: true,
+      is_held: false,
+      held_ready_at: null,
+    }));
+    const { slotsAvailable } = planSlots({
+      waitingCount,
+      override: null,
+      autoPublish: true,
+      pendingRows,
+    });
+    if (slotsAvailable <= 0) return;
+
+    const maxWait = waitingCount > 0 ? Math.max(...waiting.map((p) => p.wait_minutes ?? 0)) : 0;
+    const inProgress = courts.filter((c) => c.occupants !== null).length;
+    if (
+      softGateDecision({ bypassGate: false, waitingCount, maxWait }) === "needs-active-count" &&
+      inProgress > 0
+    ) {
+      return;
+    }
+
+    let estimatedWaiting = waitingCount;
+    for (let i = 0; i < slotsAvailable; i++) {
+      if (!shouldContinueSlot({ slotIndex: i, estimatedWaiting, bypassGate: false })) break;
+      const draft = compose(nowMin);
+      if (!draft) break;
+      onDeck.push(draft);
+      estimatedWaiting -= PLAYERS_PER_MATCH;
+    }
+  }
+
+  function tickDraftQueue(nowMin: number) {
+    releaseFinishedCourts(nowMin);
+    promoteDrafts(nowMin);
+    fillDraftSlots(nowMin);
+    promoteDrafts(nowMin);
+  }
+
   // ── Event loop ──────────────────────────────────────────────
-  // Events are court-free instants and player arrivals, processed in time
-  // order. Ties resolve arrivals first so a player who lands exactly as a court
-  // frees is eligible for that fill.
+  // Events are court-free instants, player arrivals, and (synthetics) leaves,
+  // processed in time order. Ties resolve arrivals first so a player who lands
+  // exactly as a court frees is eligible for that fill.
   const arrivals = [...new Set(fixture.players.map((p) => p.joinMin))]
     .filter((m) => m > 0)
     .sort((a, b) => a - b);
+  const departures = [
+    ...new Set(
+      fixture.players.map((p) => p.leaveMin).filter((m): m is number => m !== undefined && m > 0)
+    ),
+  ].sort((a, b) => a - b);
 
-  fillFreeCourts(0);
+  if (draftQueueMode) {
+    tickDraftQueue(0);
+  } else {
+    fillFreeCourts(0);
+  }
 
   while (true) {
     const busy = courts.filter((c) => c.occupants !== null);
     const nextCourtFree = busy.length > 0 ? Math.min(...busy.map((c) => c.freeAtMin)) : Infinity;
     const nextArrival = arrivals.length > 0 ? arrivals[0] : Infinity;
-    const next = Math.min(nextCourtFree, nextArrival);
+    const nextLeave = departures.length > 0 ? departures[0] : Infinity;
+    const next = Math.min(nextCourtFree, nextArrival, nextLeave);
 
     if (!Number.isFinite(next) || next > fixture.horizonMin) break;
 
-    if (nextArrival <= nextCourtFree) {
+    if (
+      nextArrival <= next + EPSILON_MIN &&
+      nextArrival <= nextCourtFree &&
+      nextArrival <= nextLeave
+    ) {
       arrivals.shift();
-      fillFreeCourts(nextArrival);
+      if (draftQueueMode) tickDraftQueue(nextArrival);
+      else fillFreeCourts(nextArrival);
       continue;
     }
 
-    for (const court of courts) {
-      if (court.occupants === null) continue;
-      if (court.freeAtMin > next + EPSILON_MIN) continue;
-      for (const pid of court.occupants) {
-        const p = players.get(pid);
-        if (!p) continue;
-        p.games_played++;
-        p.queuedAtMin = next; // re-enters the queue the moment the game ends
+    if (nextLeave <= next + EPSILON_MIN && nextLeave < nextCourtFree) {
+      departures.shift();
+      if (draftQueueMode) tickDraftQueue(nextLeave);
+      else {
+        processLeaves(nextLeave);
+        fillFreeCourts(nextLeave);
       }
-      court.occupants = null;
+      continue;
     }
-    fillFreeCourts(next);
+
+    if (draftQueueMode) {
+      tickDraftQueue(next);
+    } else {
+      releaseFinishedCourts(next);
+      fillFreeCourts(next);
+    }
   }
 
   return { fixture, matches, diagnostics };

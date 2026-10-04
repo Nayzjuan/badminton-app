@@ -374,6 +374,16 @@ export const GAMES_AHEAD_PENALTY_RED_ZONE = 100;
 export const CONSECUTIVE_OPPONENT_PENALTY = 3;
 
 /**
+ * Extra waiting minutes the freshness refresh may spend, summed across the
+ * three non-anchor seats, when replacing today's four with a fresher one.
+ * 10 means the replacement three may have waited 10 minutes less in total
+ * than the original three. It is NOT added onto anyone's wait, and it does
+ * not move the 20-minute Red Zone threshold. A Red Zone player in today's
+ * four cannot be dropped by this search; organizers can still swap anyone.
+ */
+export const FRESHNESS_WAIT_SLACK_MINUTES = 10;
+
+/**
  * Structural maximum of `countConsecutiveOpponentRepeats` for one foursome: the
  * term is charged once per SEAT, and there are four seats, so no split can score
  * above 4. Two things lean on that ceiling:

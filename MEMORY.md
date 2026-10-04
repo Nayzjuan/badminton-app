@@ -17,6 +17,10 @@
 
 ---
 
+## 2026-10-04 — back-to-back freshness refresh
+
+`runAlgorithm` is unchanged. `runAlgorithmWithFreshness` may replace a stale four (`forcedRepeat` or `isBackToBackRepeat`). Guard: ±2, keep Red Zone players already in today's four, games-ahead and anchor-overlap cannot rise, wait slack 10, consecutive-opponent staleness cannot rise. Fail-open. Kill switch `MATCHMAKING_FRESHNESS_REFRESH=false`. Organizer swaps unrestricted. Gate: `npx tsx scripts/replay-freshness-gate.ts` (draft-queue, independent brute, 50 synthetics, K=5). Ship bar is G-1 (avoidable 223→0, Oct 3 9.4→0). Option 2 stays at 3. Rollback = env `false`. Watch first live session for refresh success vs fail-open.
+
 ## 2026-10-04 — score + start actor logging
 
 Phantom 14–31 `ca0d02ef` (session `1b7f5a32`) completed with no scorer. Cleanup already applied in prod. TypeScript requires `complete_match_with_score` / `start_match_on_court` (fail-closed, no JS fallback). Repo `20261004000000`. Prod stamp `20261003185541` / `score_and_start_actor_logging`. EXECUTE is `service_role` + owner only. Incident: `docs/incidents/2026-10-03-phantom-14-31-unattributed-score.md`.

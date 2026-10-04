@@ -341,3 +341,105 @@ test.describe("Engine Diversity — [H-2] Forced repeat triggers rotatedDraft", 
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Test [H-3] — Lookback-gap freshness
+// ─────────────────────────────────────────────────────────────
+
+test.describe("Engine Diversity — [H-3] back-to-back lookback gap", () => {
+  test("Auto ON drafts a four that shares ≤2 with the previous near-identical game", async ({
+    browser,
+  }) => {
+    seeded = await seedSession("back_to_back_lookback_gap");
+    const previous = new Set([
+      seeded.players.alice.userId,
+      seeded.players.bob.userId,
+      seeded.players.cara.userId,
+      seeded.extraPlayers.frank.userId,
+    ]);
+
+    const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
+    const page = await context.newPage();
+    try {
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
+      await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
+      const toggleBtn = page.getByTestId("toggle-auto-matchmaking");
+      await expect(toggleBtn).toHaveText(/Auto Off/i, { timeout: 5_000 });
+      await toggleBtn.click();
+      await expect(toggleBtn).toHaveText(/Auto On/i, { timeout: 8_000 });
+
+      const db = adminDb();
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("id")
+              .eq("session_id", seeded.sessionId)
+              .eq("status", "pending");
+            return data?.length ?? 0;
+          },
+          { timeout: 10_000, intervals: [500, 500, 500, 1_000, 1_000] }
+        )
+        .toBeGreaterThan(0);
+
+      const { data: pending } = await db
+        .from("matches")
+        .select("id")
+        .eq("session_id", seeded.sessionId)
+        .eq("status", "pending")
+        .order("created_at", { ascending: true })
+        .limit(1);
+      const { data: matchPlayers } = await db
+        .from("match_players")
+        .select("player_id")
+        .eq("match_id", pending![0].id);
+      const playerIds = (matchPlayers ?? []).map((p) => p.player_id);
+      expect(playerIds).toContain(seeded.players.dan.userId);
+      expect(playerIds.filter((id) => previous.has(id)).length).toBeLessThanOrEqual(2);
+    } finally {
+      await context.close();
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Test [H-4] — Thin band fail-open
+// ─────────────────────────────────────────────────────────────
+
+test.describe("Engine Diversity — [H-4] thin band still drafts", () => {
+  test("Auto ON produces a draft when no fresher four exists", async ({ browser }) => {
+    seeded = await seedSession("back_to_back_thin_band");
+    const context = await browser.newContext({ storageState: ORGANIZER_STORAGE_STATE });
+    const page = await context.newPage();
+    try {
+      await page.goto(
+        `${process.env.TEST_BASE_URL}${clubOrganizer(seeded.clubSlug, seeded.sessionId)}`
+      );
+      await page.waitForSelector('[id="tabpanel-courts"]', { timeout: 15_000 });
+      const toggleBtn = page.getByTestId("toggle-auto-matchmaking");
+      await toggleBtn.click();
+      await expect(toggleBtn).toHaveText(/Auto On/i, { timeout: 8_000 });
+
+      const db = adminDb();
+      await expect
+        .poll(
+          async () => {
+            const { data } = await db
+              .from("matches")
+              .select("id")
+              .eq("session_id", seeded.sessionId)
+              .eq("status", "pending");
+            return data?.length ?? 0;
+          },
+          { timeout: 10_000, intervals: [500, 500, 500, 1_000, 1_000] }
+        )
+        .toBeGreaterThan(0);
+      await expect(page.getByText(/cap saturation|cannot form/i)).toHaveCount(0);
+    } finally {
+      await context.close();
+    }
+  });
+});

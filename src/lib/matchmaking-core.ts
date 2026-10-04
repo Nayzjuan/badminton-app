@@ -19,6 +19,7 @@
 
 import {
   CONSECUTIVE_OPPONENT_PENALTY,
+  FRESHNESS_WAIT_SLACK_MINUTES,
   MAX_CONSECUTIVE_OPPONENT_REPEATS,
   CRITICAL_WAIT_MINUTES,
   CROSS_COURT_REST_FALLBACK_MINUTES,
@@ -757,6 +758,45 @@ export function isDiversityViolation(playerIds: string[], recentRosters: string[
   return false;
 }
 
+/**
+ * Reconstruct one player's last roster from the two last-sides maps.
+ * Empty sets (malformed roster) and a missing player both mean "no last game"
+ * — fail-open, same contract as deriveLastSides.
+ */
+export function lastRosterOf(
+  playerId: string,
+  lastOpponents: LastOpponents = new Map(),
+  lastPartners: LastPartners = new Map()
+): string[] | null {
+  const opponents = lastOpponents.get(playerId);
+  const partners = lastPartners.get(playerId);
+  if (opponents === undefined && partners === undefined) return null;
+  const opp = opponents ?? new Set<string>();
+  const par = partners ?? new Set<string>();
+  if (opp.size === 0 && par.size === 0) return null;
+  return [playerId, ...par, ...opp];
+}
+
+/**
+ * True when any of the four would replay ≥3 people from their own last game
+ * (themselves plus ≥2 of their last co-players). Session-window diversity
+ * (`isDiversityViolation`) is a separate check and is not replaced by this.
+ */
+export function isBackToBackRepeat(
+  fourIds: string[],
+  lastOpponents: LastOpponents = new Map(),
+  lastPartners: LastPartners = new Map()
+): boolean {
+  if (lastOpponents.size === 0 && lastPartners.size === 0) return false;
+  const fourSet = new Set(fourIds);
+  for (const id of fourIds) {
+    const roster = lastRosterOf(id, lastOpponents, lastPartners);
+    if (!roster) continue;
+    if (roster.filter((pid) => fourSet.has(pid)).length >= 3) return true;
+  }
+  return false;
+}
+
 // ─────────────────────────────────────────────────────────────
 // EXPORT: isRejectedRoster
 // ─────────────────────────────────────────────────────────────
@@ -1443,6 +1483,11 @@ export function buildCrossCourtProposal(
      * legal four clears it, while the freshness path demands a strict drop.
      */
     forcedRepeat: boolean | undefined;
+    /**
+     * When true, skip any four that is a per-player back-to-back repeat.
+     * Flag-gated so MATCHMAKING_FRESHNESS_REFRESH=false is today's code.
+     */
+    backToBackFilter?: boolean;
   }
 ): CrossCourtPick | null {
   if (pool.length < 3 || bodies.length === 0) return null;
@@ -1518,6 +1563,12 @@ export function buildCrossCourtProposal(
 
         if (isDiversityViolation(fourIds, activeRosters)) continue;
         if (isRejectedRoster(fourIds, args.rejectedRosters)) continue;
+        if (
+          args.backToBackFilter &&
+          isBackToBackRepeat(fourIds, args.lastOpponents, args.lastPartners ?? new Map())
+        ) {
+          continue;
+        }
 
         const staleness = countConsecutiveOpponentRepeats(result.proposal, args.lastOpponents);
         if (!pullImprovesFreshness(args.forcedRepeat, args.baseStaleness, staleness)) continue;
@@ -2123,5 +2174,203 @@ export function runAlgorithm(
       : lastPartnerBlocked
         ? { capSaturationReason: "consecutive" as const }
         : {}),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// EXPORT: findFresherFour / runAlgorithmWithFreshness
+// ─────────────────────────────────────────────────────────────
+// Wrapper around runAlgorithm. Today's ladder is untouched. When the
+// served four is stale (forcedRepeat or a per-player back-to-back
+// repeat), search for a fresher ±2 four that is at least as fair.
+// No accepted replacement → serve today's four. Cannot create stalls.
+
+export type FreshnessResult = AlgorithmResult & {
+  /** True when the SERVED four is a per-player back-to-back repeat. */
+  backToBackRepeat?: boolean;
+  /** True when this wrapper replaced today's four. */
+  refreshed?: boolean;
+};
+
+export type FresherFourDiagnostics = {
+  triplesEnumerated: number;
+  snakeDraftCalls: number;
+};
+
+function gamesAheadOf(player: ScoredPlayer, poolMinGames: number): number {
+  if (player.isPulled) return 0;
+  return Math.max(0, player.games_played - poolMinGames);
+}
+
+export function findFresherFour(
+  pool: ScoredPlayer[],
+  served: MatchProposal,
+  args: {
+    partnershipCounts: Map<string, number>;
+    overlapMap: Map<string, number>;
+    recentRosters: string[][];
+    opponentCounts: Map<string, number>;
+    rejectedRosters: string[][];
+    lastOpponents: LastOpponents;
+    lastPartners: LastPartners;
+    waitSlackMinutes?: number;
+  },
+  diagnostics?: FresherFourDiagnostics
+): MatchProposal | null {
+  if (pool.length < 4) return null;
+  const anchor = pool[0];
+  const servedFour = [...served.teamA, ...served.teamB];
+  const servedIdSet = new Set(servedFour.map((p) => p.player_id));
+
+  const poolMinGames = pool.reduce(
+    (min, p) => (p.isPulled ? min : Math.min(min, p.games_played)),
+    Infinity
+  );
+  const baselineGames = Number.isFinite(poolMinGames) ? poolMinGames : 0;
+
+  const candidates = pool
+    .slice(1)
+    .filter(
+      (c) =>
+        (args.partnershipCounts.get(pairKey(anchor.player_id, c.player_id)) ?? 0) <
+        MAX_PARTNERSHIP_REPEATS
+    )
+    .filter((c) => Math.abs(c.skill_level_int - anchor.skill_level_int) <= SKILL_VARIANCE_MAX);
+
+  const n = candidates.length;
+  if (n < 3) return null;
+
+  const activeRosters = args.recentRosters.slice(0, getEffectiveLookback(n + 1));
+  const servedCompanions = servedFour.filter((p) => p.player_id !== anchor.player_id);
+  const servedRedZone = servedFour.filter((p) => isRedZonePlayer(p));
+  const servedGamesAhead = servedCompanions.reduce((s, p) => s + gamesAheadOf(p, baselineGames), 0);
+  const servedOverlap = servedCompanions.reduce(
+    (s, p) => s + (args.overlapMap.get(p.player_id) ?? 0),
+    0
+  );
+  const servedWait = servedCompanions.reduce((s, p) => s + (p.wait_minutes ?? 0), 0);
+  const servedStaleness = countConsecutiveOpponentRepeats(served, args.lastOpponents);
+  const slack = args.waitSlackMinutes ?? FRESHNESS_WAIT_SLACK_MINUTES;
+
+  const scored = scoreCandidates(
+    candidates,
+    args.overlapMap,
+    Number.isFinite(poolMinGames) ? poolMinGames : undefined
+  );
+  const scoreById = new Map(scored.map((s) => [s.candidate.player_id, s.score]));
+
+  let best: { proposal: MatchProposal; cost: number } | null = null;
+
+  for (let i = 0; i < n - 2; i++) {
+    for (let j = i + 1; j < n - 1; j++) {
+      for (let k = j + 1; k < n; k++) {
+        if (diagnostics) diagnostics.triplesEnumerated++;
+        const triple = [candidates[i], candidates[j], candidates[k]];
+        const four = [anchor, ...triple];
+        if (triple.filter((c) => c.isPulled).length > 1) continue;
+        if (!isGroupValid(four, SKILL_VARIANCE_MAX)) continue;
+
+        const fourIds = four.map((p) => p.player_id);
+        const fourIdSet = new Set(fourIds);
+        if (fourIds.every((id) => servedIdSet.has(id))) continue;
+        if (!servedRedZone.every((p) => fourIdSet.has(p.player_id))) continue;
+        if (triple.reduce((s, p) => s + gamesAheadOf(p, baselineGames), 0) > servedGamesAhead) {
+          continue;
+        }
+        if (
+          triple.reduce((s, p) => s + (args.overlapMap.get(p.player_id) ?? 0), 0) > servedOverlap
+        ) {
+          continue;
+        }
+        if (triple.reduce((s, p) => s + (p.wait_minutes ?? 0), 0) < servedWait - slack) {
+          continue;
+        }
+        if (isDiversityViolation(fourIds, activeRosters)) continue;
+        if (isBackToBackRepeat(fourIds, args.lastOpponents, args.lastPartners)) continue;
+        if (isRejectedRoster(fourIds, args.rejectedRosters)) continue;
+
+        if (diagnostics) diagnostics.snakeDraftCalls++;
+        const draft = snakeDraft(
+          four,
+          args.partnershipCounts,
+          MAX_PARTNERSHIP_REPEATS,
+          args.opponentCounts,
+          MAX_OPPONENT_REPEATS,
+          args.lastOpponents,
+          args.lastPartners
+        );
+        if (!draft || draft.usedCapOverride) continue;
+
+        const staleness = countConsecutiveOpponentRepeats(draft, args.lastOpponents);
+        if (staleness > servedStaleness) continue;
+
+        const fairness =
+          (scoreById.get(triple[0].player_id) ?? 0) +
+          (scoreById.get(triple[1].player_id) ?? 0) +
+          (scoreById.get(triple[2].player_id) ?? 0);
+        const cost = fairness + CONSECUTIVE_OPPONENT_PENALTY * staleness;
+        if (!best || cost < best.cost) {
+          best = {
+            proposal: { teamA: draft.teamA, teamB: draft.teamB, isMixedLevel: false },
+            cost,
+          };
+        }
+      }
+    }
+  }
+
+  return best?.proposal ?? null;
+}
+
+export function runAlgorithmWithFreshness(
+  pool: ScoredPlayer[],
+  partnershipCounts: Map<string, number>,
+  overlapMap: Map<string, number>,
+  recentRosters: string[][],
+  opponentCounts: Map<string, number> = new Map(),
+  rejectedRosters: string[][] = [],
+  lastOpponents: LastOpponents = new Map(),
+  lastPartners: LastPartners = new Map(),
+  options: { waitSlackMinutes?: number } = {}
+): FreshnessResult {
+  const result = runAlgorithm(
+    pool,
+    partnershipCounts,
+    overlapMap,
+    recentRosters,
+    opponentCounts,
+    rejectedRosters,
+    lastOpponents,
+    lastPartners
+  );
+  if (!result.proposal) return result;
+
+  const servedIds = [...result.proposal.teamA, ...result.proposal.teamB].map((p) => p.player_id);
+  const isB2B = isBackToBackRepeat(servedIds, lastOpponents, lastPartners);
+  if (result.forcedRepeat !== true && !isB2B) {
+    return { ...result, backToBackRepeat: isB2B };
+  }
+
+  const fresher = findFresherFour(pool, result.proposal, {
+    partnershipCounts,
+    overlapMap,
+    recentRosters,
+    opponentCounts,
+    rejectedRosters,
+    lastOpponents,
+    lastPartners,
+    waitSlackMinutes: options.waitSlackMinutes,
+  });
+  if (!fresher) {
+    console.warn(
+      "[matchmaking] freshness refresh: no fresher four within guard — serving original"
+    );
+    return { ...result, backToBackRepeat: isB2B };
+  }
+  return {
+    proposal: fresher,
+    capSaturation: false,
+    backToBackRepeat: false,
+    refreshed: true,
   };
 }
