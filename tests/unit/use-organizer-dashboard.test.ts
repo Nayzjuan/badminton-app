@@ -58,6 +58,11 @@ vi.mock("@/app/actions/sessions", () => ({
   applyDraftCapOverride: vi.fn(),
 }));
 
+vi.mock("@/lib/courtside-action", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/courtside-action")>();
+  return { ...actual, isBrowserOffline: vi.fn(() => false) };
+});
+
 // ── Mock queue actions ────────────────────────────────────────
 vi.mock("@/app/actions/queue", () => ({
   joinQueueAction: vi.fn(),
@@ -69,8 +74,14 @@ import {
   renotifySessionClosed,
   getPlayerSessionStatus,
   toggleAutoMatchmaking,
+  toggleAutoPublish,
   applyDraftCapOverride,
 } from "@/app/actions/sessions";
+import {
+  COURTSIDE_OFFLINE_COPY,
+  COURTSIDE_TIMEOUT_COPY,
+  isBrowserOffline,
+} from "@/lib/courtside-action";
 import type { ApplyDraftCapResult } from "@/app/actions/sessions";
 import { joinQueueAction } from "@/app/actions/queue";
 
@@ -111,6 +122,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 beforeEach(() => {
   vi.clearAllMocks();
   mockPathname = "/organizer";
+  vi.mocked(isBrowserOffline).mockReturnValue(false);
 });
 
 describe("useOrganizerDashboard", () => {
@@ -1359,5 +1371,161 @@ describe("OD-C4: courtside busy flags survive tab switch", () => {
     expect([...result.current.clearingMatchIds]).toEqual(["match-1"]);
     expect([...result.current.publishingMatchIds]).toEqual(["match-2"]);
     expect(result.current.publishingAll).toBe(true);
+  });
+});
+
+describe("OD-CS: courtside Auto / Auto-publish", () => {
+  it("OD-CS-1: offline Auto does not call the action", async () => {
+    vi.mocked(isBrowserOffline).mockReturnValue(true);
+    const { result } = renderHook(() =>
+      useOrganizerDashboard(makeParams({ liveAutoMatchmaking: false }))
+    );
+
+    await act(async () => {
+      await result.current.handleToggleAuto();
+    });
+
+    expect(toggleAutoMatchmaking).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(COURTSIDE_OFFLINE_COPY);
+  });
+
+  it("OD-CS-2: Auto timeout toasts and stays locked until live flips", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(toggleAutoMatchmaking).mockImplementation(() => new Promise(() => {}));
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ liveAutoMatchmaking: false }))
+      );
+
+      act(() => {
+        void result.current.handleToggleAuto();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(12_000);
+      });
+      expect(toast.error).toHaveBeenCalledWith(COURTSIDE_TIMEOUT_COPY);
+      expect(result.current.togglingAuto).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("OD-CS-3: Auto transport error unlocks and toasts", async () => {
+    vi.mocked(toggleAutoMatchmaking).mockRejectedValue(new Error("network down"));
+    const { result } = renderHook(() =>
+      useOrganizerDashboard(makeParams({ liveAutoMatchmaking: false }))
+    );
+
+    await act(async () => {
+      await result.current.handleToggleAuto();
+    });
+
+    expect(result.current.togglingAuto).toBe(false);
+    expect(toast.error).toHaveBeenCalledWith("network down");
+  });
+
+  it("OD-CS-4: Auto-publish ON with cleared drafts", async () => {
+    vi.mocked(toggleAutoPublish).mockResolvedValue({
+      success: true,
+      isOn: true,
+      clearedCount: 2,
+      message: "",
+    });
+    const { result } = renderHook(() =>
+      useOrganizerDashboard(makeParams({ liveAutoPublish: false }))
+    );
+
+    await act(async () => {
+      await result.current.handleToggleAutoPublish(true);
+    });
+
+    expect(toggleAutoPublish).toHaveBeenCalledWith(SESSION_ID, true);
+    expect(result.current.togglingAutoPublish).toBe(false);
+    expect(result.current.autoPublish).toBe(true);
+    expect(toast.success).toHaveBeenCalled();
+  });
+
+  it("OD-CS-5: Auto-publish OFF", async () => {
+    vi.mocked(toggleAutoPublish).mockResolvedValue({
+      success: true,
+      isOn: false,
+      message: "",
+    });
+    const { result } = renderHook(() =>
+      useOrganizerDashboard(makeParams({ liveAutoPublish: true }))
+    );
+
+    await act(async () => {
+      await result.current.handleToggleAutoPublish(false);
+    });
+
+    expect(result.current.autoPublish).toBe(false);
+    expect(toast).toHaveBeenCalled();
+  });
+
+  it("OD-CS-6: Auto-publish failure clears pending", async () => {
+    vi.mocked(toggleAutoPublish).mockResolvedValue({
+      success: false,
+      isOn: false,
+      message: "Publish toggle failed",
+    });
+    const { result } = renderHook(() =>
+      useOrganizerDashboard(makeParams({ liveAutoPublish: false }))
+    );
+
+    await act(async () => {
+      await result.current.handleToggleAutoPublish(true);
+    });
+
+    expect(result.current.autoPublish).toBe(false);
+    expect(toast.error).toHaveBeenCalledWith("Publish toggle failed");
+  });
+
+  it("OD-CS-7: offline Auto-publish does not call the action", async () => {
+    vi.mocked(isBrowserOffline).mockReturnValue(true);
+    const { result } = renderHook(() =>
+      useOrganizerDashboard(makeParams({ liveAutoPublish: false }))
+    );
+
+    await act(async () => {
+      await result.current.handleToggleAutoPublish(true);
+    });
+
+    expect(toggleAutoPublish).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(COURTSIDE_OFFLINE_COPY);
+  });
+
+  it("OD-CS-8: Auto-publish timeout toasts", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(toggleAutoPublish).mockImplementation(() => new Promise(() => {}));
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ liveAutoPublish: false }))
+      );
+
+      act(() => {
+        void result.current.handleToggleAutoPublish(true);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(12_000);
+      });
+      expect(toast.error).toHaveBeenCalledWith(COURTSIDE_TIMEOUT_COPY);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("OD-CS-9: Auto-publish transport error unlocks", async () => {
+    vi.mocked(toggleAutoPublish).mockRejectedValue(new Error("socket closed"));
+    const { result } = renderHook(() =>
+      useOrganizerDashboard(makeParams({ liveAutoPublish: false }))
+    );
+
+    await act(async () => {
+      await result.current.handleToggleAutoPublish(true);
+    });
+
+    expect(result.current.togglingAutoPublish).toBe(false);
+    expect(toast.error).toHaveBeenCalledWith("socket closed");
   });
 });

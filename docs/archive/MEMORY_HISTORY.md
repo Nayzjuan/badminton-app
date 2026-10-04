@@ -15,6 +15,10 @@
 
 ## Part 0 — sessions 2026-09-18, 2026-09-15, 2026-09-13, 2026-09-11, and 2026-08-22
 
+## 2026-10-04 — held-draft RESTING publish + skip-rest
+
+Archived from `MEMORY.md` after #100. Publish stays hidden until `held_ready_at`. End/cancel recompute after promote. `refreshHeldReadiness` + `unlockHeldDraftReadiness` (stamp only). Card: Holding / Resting / Ready. Pins: UH-1–5, UI-HELD-2/2b, XC-5.
+
 ## 2026-10-04 — back-to-back freshness refresh
 
 Archived from `MEMORY.md` after #99. `runAlgorithmWithFreshness` may replace a stale four. Kill switch `MATCHMAKING_FRESHNESS_REFRESH=false`. Gate: `npx tsx scripts/replay-freshness-gate.ts`.

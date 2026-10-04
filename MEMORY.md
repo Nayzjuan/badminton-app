@@ -17,9 +17,9 @@
 
 ---
 
-## 2026-10-04 — UNCOMMITTED: held-draft RESTING publish + skip-rest
+## 2026-10-04 — CI follow-up after #100
 
-Option A: Publish stays hidden until `held_ready_at`. End/cancel run `recomputeHeldReadiness` after promote so a same-action promotion can stamp (auto-OFF used to skip the only second pass). `refreshHeldReadiness` on REST 0:00 and `HELD_READINESS_REFRESH_MS` while RESTING cards show. `unlockHeldDraftReadiness` stamps only — no publish; HOLDING refused. Card: Holding / Resting + `REST m:ss` / Ready. Queue: `Held · waiting on {name}` / `Held · resting`. Pins: UH-1–5, UI-HELD-2/2b, CC-DHS-09–11, XC-5. Not committed.
+`use-organizer-dashboard.ts` was below the perFile floor (lines 78 / statements 75 / branches 70) because Auto-publish and courtside offline/timeout were never driven. OD-CS covers those. I-3 used 8 waiters; after the first four, `shouldContinueSlot` sees 4 and stops (`PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK`). Fixture is 12 so slot 2 can fire. Branch `fix/ci-after-held-readiness`.
 
 ## 2026-10-04 — organizer mutation resilience (slow net)
 

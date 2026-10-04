@@ -157,7 +157,7 @@ describe("I-2 thin band fail-open", () => {
 describe("I-3 / I-4 sibling draft is last game for the next slot", () => {
   it("the second draft in a burst shares ≤2 players with the first", async () => {
     const { session } = await setupSession();
-    const people = await Promise.all(Array.from({ length: 8 }, () => player("intermediate")));
+    const people = await Promise.all(Array.from({ length: 12 }, () => player("intermediate")));
     await waiters(
       session.id,
       people.map((p, i) => ({ id: p.id, minutes: 16 - i, games: 1 }))
