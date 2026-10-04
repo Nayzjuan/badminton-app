@@ -99,7 +99,7 @@ export function useOrganizerCourts(
     async (name: string) => {
       const result = await addCourtAction(sessionId, name);
       if (!result.success) return { error: result.message };
-      await fetchCourts();
+      void fetchCourts();
       return {};
     },
     [sessionId, fetchCourts]
@@ -109,7 +109,7 @@ export function useOrganizerCourts(
     async (courtId: string, status: Court["status"]) => {
       const result = await updateCourtStatusAction(sessionId, courtId, status);
       if (!result.success) return { error: result.message };
-      await fetchCourts();
+      void fetchCourts();
       return {};
     },
     [sessionId, fetchCourts]
@@ -119,7 +119,7 @@ export function useOrganizerCourts(
     async (courtId: string) => {
       const result = await removeCourtAction(sessionId, courtId);
       if (!result.success) return { error: result.message };
-      await fetchCourts();
+      void fetchCourts();
       return {};
     },
     [sessionId, fetchCourts]

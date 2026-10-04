@@ -14,7 +14,7 @@
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { runEngineForSession } from "@/app/actions/matchmaking";
+import { runEngineForSession, scheduleEngineForSession } from "@/app/actions/matchmaking";
 import {
   broadcastSessionClosed,
   broadcastAutoMatchmakingToggled,
@@ -665,7 +665,7 @@ export async function toggleAutoMatchmaking(
   // If toggled ON, immediately run the engine so the on-deck queue
   // fills up right away without waiting for the next player event.
   if (newValue) {
-    await runEngineForSession(sessionId);
+    await scheduleEngineForSession(sessionId);
   }
 
   // Broadcast the new toggle state to all co-organizers on this session.
@@ -1020,7 +1020,7 @@ export async function toggleAutoPublish(
     return { success: false, isOn: true, message: clearResult.message };
   }
 
-  await runEngineForSession(sessionId);
+  await scheduleEngineForSession(sessionId);
 
   return {
     success: true,

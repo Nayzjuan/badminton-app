@@ -11,17 +11,38 @@
 //   never calls useSortable.
 // ============================================================
 
+import { useEffect, useRef, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AlertTriangle, CheckCircle, Clock, GripVertical, Trash2, Users, X } from "lucide-react";
 import { TeamsGrid, type RosterPlayer } from "@/components/organizer/match-roster";
 import { H2HStrip } from "@/components/organizer/h2h-strip";
 import { MatchOriginTag } from "@/components/organizer/match-origin-tag";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { ReuseNotice } from "@/lib/derive-reuse-notice";
 import type { CapSaturationPayload } from "@/lib/broadcast";
-import { CRITICAL_WAIT_MINUTES, MAX_PARTNERSHIP_REPEATS } from "@/lib/constants";
-import { isHeldAwaitingReadiness } from "@/lib/cross-court/derive-held-state";
+import {
+  CRITICAL_WAIT_MINUTES,
+  CROSS_COURT_REST_FALLBACK_MINUTES,
+  MAX_PARTNERSHIP_REPEATS,
+} from "@/lib/constants";
+import {
+  deriveHeldState,
+  formatRestCountdown,
+  isHeldAwaitingReadiness,
+  restRemainingMs,
+  type HeldState,
+} from "@/lib/cross-court/derive-held-state";
 import type { SwapContext } from "./on-deck-panel";
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -134,24 +155,36 @@ export function CapSaturationNotice({
 // A stamped held_ready_at flips it to a solid READY chip. Icon + text on every
 // state (never colour-only — a11y). Names the pulled body so the organizer knows
 // which player is still finishing on a court.
-function HeldBadge({ match }: { match: EnrichedMatch }) {
-  if (!match.is_held) return null;
-  const ready = match.held_ready_at !== null;
+function pulledNameOf(match: EnrichedMatch): string | null {
   const pulledId = match.pulled_player_ids[0];
-  const pulledName = match.players.find((p) => p.player_id === pulledId)?.profile?.display_name;
+  return match.players.find((p) => p.player_id === pulledId)?.profile?.display_name ?? null;
+}
+
+function HeldBadge({ match, heldState }: { match: EnrichedMatch; heldState: HeldState }) {
+  if (heldState === "none") return null;
+  const pulledName = pulledNameOf(match);
+  const ready = heldState === "ready";
+  const aria =
+    heldState === "ready"
+      ? "Held cross-court draft — ready to promote"
+      : heldState === "holding"
+        ? `Held cross-court draft — ${pulledName ?? "a player"} still on court`
+        : `Held cross-court draft — ${pulledName ?? "a player"} just finished, resting`;
+  const sub =
+    heldState === "holding" && pulledName
+      ? `· ${pulledName} on court`
+      : heldState === "resting" && pulledName
+        ? `· ${pulledName} just finished`
+        : null;
   return (
     <span
       role="status"
-      aria-label={
-        ready
-          ? "Held cross-court draft — ready to promote"
-          : `Held cross-court draft — waiting on ${pulledName ?? "a court"} to finish`
-      }
+      aria-label={aria}
       className={[
-        "clip-cut-badge border px-2 py-0.5 inline-flex items-center gap-1",
+        "clip-cut-badge border px-2 py-0.5 inline-flex items-center gap-1 min-w-0 max-w-full",
         "font-command text-[9px] uppercase tracking-[0.10em]",
         ready
-          ? "bg-cc-violet border-cc-violet text-cc-btn-on-accent"
+          ? "bg-emerald-600 border-emerald-500 text-white"
           : "bg-cc-violet-dim border-cc-violet/40 text-cc-violet",
       ].join(" ")}
     >
@@ -160,11 +193,112 @@ function HeldBadge({ match }: { match: EnrichedMatch }) {
       ) : (
         <Clock className="h-2.5 w-2.5 shrink-0" />
       )}
-      {ready ? "Ready" : "Held"}
-      {pulledName && !ready && (
-        <span className="normal-case tracking-normal opacity-80">· {pulledName} finishing</span>
+      <span className="shrink-0">
+        {heldState === "ready" ? "Ready" : heldState === "holding" ? "Holding" : "Resting"}
+      </span>
+      {sub && (
+        <span className="min-w-0 truncate normal-case tracking-normal opacity-80 @max-[340px]/card:hidden">
+          {sub}
+        </span>
       )}
     </span>
+  );
+}
+
+function RestCountdownButton({
+  sourceCompletedAt,
+  pulledName,
+  disabled,
+  onExpired,
+  onUnlock,
+}: {
+  sourceCompletedAt: string | null;
+  pulledName: string | null;
+  disabled: boolean;
+  onExpired: () => void;
+  onUnlock: () => Promise<{ error?: string }>;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+  const expiredFired = useRef(false);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const remaining = restRemainingMs({
+    sourceCompletedAt,
+    now,
+    restFallbackMs: CROSS_COURT_REST_FALLBACK_MINUTES * 60_000,
+  });
+
+  useEffect(() => {
+    if (remaining === 0 && !expiredFired.current) {
+      expiredFired.current = true;
+      onExpired();
+    }
+  }, [remaining, onExpired]);
+
+  async function confirmUnlock() {
+    setUnlocking(true);
+    setUnlockError(null);
+    const result = await onUnlock();
+    setUnlocking(false);
+    if (result.error) {
+      setUnlockError(result.error);
+      return;
+    }
+    setConfirmOpen(false);
+  }
+
+  const label = remaining == null ? "REST" : `REST ${formatRestCountdown(remaining)}`;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setConfirmOpen(true)}
+        disabled={disabled || unlocking}
+        aria-label="Skip rest to unlock Publish"
+        className="flex min-w-0 items-center justify-center gap-1.5 clip-cut-sm
+                   bg-cc-violet-dim hover:bg-cc-violet/20
+                   border border-cc-violet/40
+                   transition-colors px-3 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-cc-violet
+                   disabled:opacity-50 disabled:cursor-not-allowed
+                   @max-[380px]/card:flex-1"
+      >
+        <Clock className="h-3.5 w-3.5 shrink-0" />
+        <span className="tabular-nums whitespace-nowrap">{unlocking ? "Unlocking…" : label}</span>
+      </button>
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent className="w-[calc(100%-1.5rem)] max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Skip rest for this draft?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pulledName ?? "This player"} just finished. Skipping the{" "}
+              {CROSS_COURT_REST_FALLBACK_MINUTES}-minute rest unlocks Publish now. They can be
+              called to a court as soon as you publish.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {unlockError && <p className="px-6 text-sm text-cc-red">{unlockError}</p>}
+          <AlertDialogFooter className="flex-col sm:flex-row sm:justify-end [&>button]:min-h-11 [&>button]:w-full sm:[&>button]:w-auto">
+            <AlertDialogCancel disabled={unlocking}>Wait</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmUnlock();
+              }}
+              disabled={unlocking}
+            >
+              {unlocking ? "Unlocking…" : "Unlock Publish"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 
@@ -183,7 +317,7 @@ function ReuseBadge({ notice }: { notice: ReuseNotice | null | undefined }) {
         `${notice.overMinCount} player${notice.overMinCount !== 1 ? "s" : ""} in this draft ` +
         `played more games than ${notice.fresherWaiting} fresher waiting player${notice.fresherWaiting !== 1 ? "s" : ""}`
       }
-      className="clip-cut-badge border px-2 py-0.5 inline-flex items-center gap-1
+      className="clip-cut-badge inline-flex min-w-0 max-w-full items-center gap-1 border px-2 py-0.5
                  font-command text-[9px] uppercase tracking-[0.10em]
                  bg-cc-amber-dim border-cc-amber/40 text-cc-amber"
     >
@@ -213,8 +347,14 @@ interface SortableCardProps {
    * wait (deriveReuseNotice). Renders the amber ReuseBadge in the header.
    */
   reuseNotice?: ReuseNotice | null;
+  /** In-progress match ids — used to tell HOLDING from RESTING. */
+  inProgressMatchIds?: ReadonlySet<string>;
+  /** Source match completed_at for RESTING countdown. */
+  sourceCompletedAt?: string | null;
   onClear: (id: string) => void;
   onPublish: (id: string) => void;
+  onUnlockHold?: (id: string) => Promise<{ error?: string }>;
+  onHeldRefresh?: () => void;
   onPlayerTap: (ctx: Omit<SwapContext, "mode">) => void;
 }
 
@@ -228,8 +368,12 @@ export function SortableCard({
   error,
   swapContext,
   reuseNotice = null,
+  inProgressMatchIds,
+  sourceCompletedAt = null,
   onClear,
   onPublish,
+  onUnlockHold,
+  onHeldRefresh,
   onPlayerTap,
 }: SortableCardProps) {
   const {
@@ -269,6 +413,15 @@ export function SortableCard({
   // could only fail (CONFLICT) or produce a stuck on-deck match. Clear stays
   // available: abandoning the hold is the one thing they CAN legitimately do.
   const awaitingHold = isHeldAwaitingReadiness(match);
+  const heldState = deriveHeldState({
+    isHeld: match.is_held,
+    heldReadyAt: match.held_ready_at,
+    sourceStillPlaying:
+      match.pulled_from_match_id != null &&
+      (inProgressMatchIds?.has(match.pulled_from_match_id) ?? false),
+  });
+  const pulledId = match.pulled_player_ids[0] ?? null;
+  const pulledName = pulledNameOf(match);
 
   // Build SwapContext from a player row tap.
   function handlePlayerTap(player: RosterPlayer, team: "a" | "b") {
@@ -302,7 +455,7 @@ export function SortableCard({
     >
       <div
         className={[
-          "relative clip-cut border-2 overflow-hidden",
+          "relative @container/card clip-cut border-2 overflow-hidden",
           // Animate the border/bg change for the publish transition
           "transition-colors duration-[250ms] ease-out",
           // Draft: dashed slate border — indicates "hidden from players"
@@ -345,12 +498,14 @@ export function SortableCard({
           </div>
 
           {/* Label + badges + origin tag */}
-          <div className="pointer-events-none select-none flex flex-1 items-center justify-between min-w-0 pl-1">
-            <div className="flex items-center gap-2 min-w-0">
+          <div className="pointer-events-none select-none flex flex-1 items-center justify-between gap-1 min-w-0 pl-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               {effectivelyDraft ? (
-                <span className="text-sm font-bold text-cc-t2">Draft #{sectionIndex + 1}</span>
+                <span className="shrink-0 text-sm font-bold text-cc-t2">
+                  Draft #{sectionIndex + 1}
+                </span>
               ) : (
-                <span className="font-command text-[11px] uppercase tracking-[0.16em] text-cc-accent-text">
+                <span className="shrink-0 font-command text-[11px] uppercase tracking-[0.16em] text-cc-accent-text">
                   On Deck #{sectionIndex + 1}
                 </span>
               )}
@@ -363,8 +518,13 @@ export function SortableCard({
                   Mixed Level
                 </span>
               )}
-              <MatchOriginTag classification={match.final_classification} />
-              <HeldBadge match={match} />
+              {!match.is_held && <MatchOriginTag classification={match.final_classification} />}
+              <HeldBadge match={match} heldState={heldState} />
+              {match.is_held && match.final_classification.endsWith("_modified") && (
+                <span className="font-command text-[9px] uppercase tracking-[0.10em] text-cc-t3">
+                  Edited
+                </span>
+              )}
               <ReuseBadge notice={reuseNotice} />
             </div>
             <span
@@ -385,6 +545,7 @@ export function SortableCard({
           onPlayerTap={handlePlayerTap}
           selectedPlayerId={selectedPlayerId}
           isSwapModeActive={isSwapModeActive}
+          heldPlayerId={match.is_held ? pulledId : null}
           labelA="Your Team"
           labelB="Opponents"
         />
@@ -397,28 +558,40 @@ export function SortableCard({
         />
 
         {/* ── Footer ──────────────────────────────────────────── */}
-        <div className="px-3 py-2 bg-cc-bg-3 border-t border-cc-border flex items-center justify-between gap-2">
-          <p className="text-xs text-cc-t3 min-w-0 truncate">
+        <div className="flex items-center justify-between gap-2 border-t border-cc-border bg-cc-bg-3 px-3 py-2 @max-[380px]/card:flex-col @max-[380px]/card:items-stretch">
+          <p className="min-w-0 truncate text-xs text-cc-t3 @max-[380px]/card:whitespace-normal">
             {effectivelyDraft
-              ? awaitingHold
-                ? "Hidden from players — publish unlocks when this hold is ready"
-                : "Hidden from players — publish to reveal"
+              ? heldState === "holding"
+                ? `Hidden from players — waiting for ${pulledName ?? "the pulled player"} to finish`
+                : heldState === "resting"
+                  ? "Publish unlocks after rest — tap the timer to skip"
+                  : "Hidden from players — publish to reveal"
               : isPickingMode && selectedPlayerId
                 ? "Tap another player to swap"
                 : "Tap any player to start a swap"}
           </p>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex shrink-0 items-center gap-2 @max-[380px]/card:w-full">
+            {effectivelyDraft && heldState === "resting" && onUnlockHold && (
+              <RestCountdownButton
+                sourceCompletedAt={sourceCompletedAt}
+                pulledName={pulledName}
+                disabled={isPickingMode}
+                onExpired={() => onHeldRefresh?.()}
+                onUnlock={() => onUnlockHold(match.id)}
+              />
+            )}
             {/* Publish button — drafts only, and never while a hold is unready. */}
             {effectivelyDraft && !awaitingHold && (
               <button
                 onClick={() => onPublish(match.id)}
                 disabled={isPublishing || isPickingMode}
-                className="flex items-center gap-1.5 clip-cut-sm
+                className="flex min-w-0 items-center justify-center gap-1.5 clip-cut-sm
                          bg-cc-accent hover:bg-cc-accent/90
                          border border-cc-accent/50
                          transition-colors px-3 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-cc-btn-on-accent
-                         disabled:opacity-50 disabled:cursor-not-allowed"
+                         disabled:opacity-50 disabled:cursor-not-allowed
+                         @max-[380px]/card:flex-1"
               >
                 <CheckCircle className="h-3.5 w-3.5 shrink-0" />
                 {isPublishing ? "Publishing…" : "Publish"}
@@ -429,10 +602,11 @@ export function SortableCard({
             <button
               onClick={() => onClear(match.id)}
               disabled={isClearing || isPickingMode}
-              className="flex shrink-0 items-center gap-1.5 clip-cut-sm border border-cc-red/30
+              className="flex min-w-0 shrink-0 items-center justify-center gap-1.5 clip-cut-sm border border-cc-red/30
                        bg-cc-red-dim px-3 min-h-[44px] font-command text-[10px] uppercase tracking-[0.10em] text-cc-red
                        hover:bg-cc-red/20
-                       disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                       disabled:opacity-50 disabled:cursor-not-allowed transition-colors
+                       @max-[380px]/card:flex-1"
             >
               <Trash2 className="h-4 w-4 shrink-0" />
               {isClearing ? "Clearing…" : "Clear"}

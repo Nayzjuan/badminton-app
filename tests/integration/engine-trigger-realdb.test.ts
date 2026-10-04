@@ -29,6 +29,7 @@ import {
   enableAutoMatchmaking,
 } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
+import { flushAfterCallbacks } from "./helpers/after-queue";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
 import { endMatchAction } from "@/app/actions/match-lifecycle";
 import { clearOnDeckMatch } from "@/app/actions/match-drafts";
@@ -114,6 +115,7 @@ describe("Engine Trigger (Real DB) — Suite ET", () => {
 
     // ── Assert ─────────────────────────────────────────────────
     expect(result!.success).toBe(true);
+    await flushAfterCallbacks();
 
     // After endMatchAction, p1-p4 transition from "playing" → "waiting" and
     // the engine sees 8 waiting players (p1-p4 restored + p5-p8 already waiting).
@@ -187,6 +189,7 @@ describe("Engine Trigger (Real DB) — Suite ET", () => {
 
     // ── Assert ─────────────────────────────────────────────────
     expect(result!.success).toBe(true);
+    await flushAfterCallbacks();
 
     // After clearing, p1-p4 are restored to "waiting" by clearOnDeckMatch; combined
     // with p5-p8 (already waiting) the engine sees 8 players and creates a new draft.
@@ -265,6 +268,7 @@ describe("Engine Trigger (Real DB) — Suite ET", () => {
 
     // ── Assert ─────────────────────────────────────────────────
     expect(result!.success).toBe(true);
+    await flushAfterCallbacks();
 
     // With auto=OFF the engine short-circuits on the toggle check — no new draft.
     // .neq("id", draft.id) is redundant (the cleared draft row is deleted) but kept

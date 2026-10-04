@@ -17,7 +17,7 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("@/utils/supabase/server", () => ({ createServerSupabaseClient: vi.fn() }));
 vi.mock("@/utils/supabase/service", () => ({ createServiceClient: vi.fn() }));
-vi.mock("@/app/actions/matchmaking", () => ({ runEngineForSession: vi.fn() }));
+vi.mock("@/app/actions/matchmaking", () => ({ scheduleEngineForSession: vi.fn() }));
 vi.mock("@/app/actions/match-drafts", () => ({ clearAllUnpublishedDrafts: vi.fn() }));
 vi.mock("@/app/actions/_shared", () => ({ isSessionOrganizer: vi.fn() }));
 vi.mock("@/lib/broadcast", () => ({
@@ -26,7 +26,7 @@ vi.mock("@/lib/broadcast", () => ({
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { runEngineForSession } from "@/app/actions/matchmaking";
+import { scheduleEngineForSession } from "@/app/actions/matchmaking";
 import { clearAllUnpublishedDrafts } from "@/app/actions/match-drafts";
 import { isSessionOrganizer } from "@/app/actions/_shared";
 import { broadcastAutoPublishToggled } from "@/lib/broadcast";
@@ -93,7 +93,7 @@ describe("toggleAutoPublish — server action orchestration", () => {
     expect(result.isOn).toBe(true);
     expect(result.clearedCount).toBe(2);
     expect(clearAllUnpublishedDrafts).toHaveBeenCalledWith(SESSION_ID);
-    expect(runEngineForSession).toHaveBeenCalledWith(SESSION_ID);
+    expect(scheduleEngineForSession).toHaveBeenCalledWith(SESSION_ID);
     expect(broadcastAutoPublishToggled).toHaveBeenCalledWith(SESSION_ID, true);
   });
 
@@ -110,7 +110,7 @@ describe("toggleAutoPublish — server action orchestration", () => {
     expect(result.success).toBe(true);
     expect(result.isOn).toBe(false);
     expect(clearAllUnpublishedDrafts).not.toHaveBeenCalled();
-    expect(runEngineForSession).not.toHaveBeenCalled();
+    expect(scheduleEngineForSession).not.toHaveBeenCalled();
     expect(broadcastAutoPublishToggled).toHaveBeenCalledWith(SESSION_ID, false);
   });
 
@@ -128,7 +128,7 @@ describe("toggleAutoPublish — server action orchestration", () => {
     expect(result.isOn).toBe(true);
     expect(result.message).toMatch(/auto-matchmaking/i);
     expect(clearAllUnpublishedDrafts).not.toHaveBeenCalled();
-    expect(runEngineForSession).not.toHaveBeenCalled();
+    expect(scheduleEngineForSession).not.toHaveBeenCalled();
   });
 
   it("TAP-4: non-organizer → rejected, no session write", async () => {
@@ -161,7 +161,7 @@ describe("toggleAutoPublish — server action orchestration", () => {
 
     expect(result.success).toBe(false);
     expect(result.message).toBe("clear failed");
-    expect(runEngineForSession).not.toHaveBeenCalled();
+    expect(scheduleEngineForSession).not.toHaveBeenCalled();
   });
 
   it("TAP-6: invalid session id → rejected before any auth/DB work", async () => {

@@ -14,7 +14,7 @@ import { after } from "next/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import {
   promoteOnDeckMatchInternal,
-  runEngineForSession,
+  scheduleEngineForSession,
   recomputeHeldReadiness,
 } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention } from "@/lib/broadcast";
@@ -399,6 +399,11 @@ async function endMatchInternal(
       triggerActorId: actor.id,
       triggerActorName: actor.name,
     });
+    // Second pass is the useful one: the first run almost always answers
+    // "not yet" because promotionsSinceFreed is counted AFTER this promote.
+    // The engine heartbeat used to be the only second pass, and it is skipped
+    // when auto-matchmaking is OFF — which left RESTING holds without a stamp.
+    await recomputeHeldReadiness(db, match.session_id);
 
     if (!promoted.success && promoted.code !== "start_logging_missing") {
       // No on-deck match — free the court immediately.
@@ -409,7 +414,7 @@ async function endMatchInternal(
     }
     if (promoted.code !== "start_logging_missing") {
       // Either way, run the engine to refill on-deck from the queue.
-      await runEngineForSession(match.session_id);
+      await scheduleEngineForSession(match.session_id);
     }
   }
 
@@ -918,6 +923,7 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
       triggerActorId: cancelActor.id,
       triggerActorName: cancelActor.name,
     });
+    await recomputeHeldReadiness(db, match.session_id);
     startLoggingMissing = promoted.code === "start_logging_missing";
     if (!promoted.success && !startLoggingMissing) {
       // Nothing on deck — free the court for manual use.
@@ -930,7 +936,7 @@ export async function cancelMatchAction(matchId: string): Promise<MatchActionRes
 
   // 5. Refill on-deck pool (engine exits silently if toggle is OFF).
   if (!startLoggingMissing) {
-    await runEngineForSession(match.session_id);
+    await scheduleEngineForSession(match.session_id);
   }
 
   // 6. Notify affected players AND co-organizers via Realtime Broadcast so

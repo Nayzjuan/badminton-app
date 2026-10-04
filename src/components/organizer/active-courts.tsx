@@ -20,8 +20,23 @@
 //   TeamsGrid roster (from match-roster.tsx).
 // ============================================================
 
-import { useMemo, useRef, useEffect, useState } from "react";
+import {
+  useMemo,
+  useRef,
+  useEffect,
+  useState,
+  useCallback,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { TOAST_DISMISS_MS } from "@/lib/constants";
+import {
+  COURTSIDE_OFFLINE_COPY,
+  COURTSIDE_SLOW_COPY,
+  COURTSIDE_TIMEOUT_COPY,
+  isBrowserOffline,
+  runCourtsideAction,
+} from "@/lib/courtside-action";
 import { Swords } from "lucide-react";
 import { toast } from "sonner";
 import { ScoreModal } from "./score-modal";
@@ -63,6 +78,9 @@ interface ActiveCourtsProps {
   ) => Promise<{ error?: string; code?: MatchActionCode }>;
   onCancelMatch: (matchId: string) => Promise<{ error?: string }>;
   onClearOnDeckMatch: (matchId: string) => Promise<{ error?: string }>;
+  addingCourt?: boolean;
+  onAddingCourtChange?: Dispatch<SetStateAction<boolean>>;
+  onRefreshCourts?: () => Promise<void>;
 }
 
 type Toast = {
@@ -88,10 +106,29 @@ export function ActiveCourts({
   onEndMatch,
   onCancelMatch,
   onClearOnDeckMatch,
+  addingCourt,
+  onAddingCourtChange,
+  onRefreshCourts,
 }: ActiveCourtsProps) {
   // ── Add-court form ──────────────────────────────────────────
   const [newCourtName, setNewCourtName] = useState("");
-  const [adding, setAdding] = useState(false);
+  const [addingLocal, setAddingLocal] = useState(false);
+  const adding = addingCourt ?? addingLocal;
+  const setAdding = useCallback(
+    (value: boolean) => {
+      if (onAddingCourtChange) onAddingCourtChange(value);
+      else setAddingLocal(value);
+    },
+    [onAddingCourtChange]
+  );
+  const [addWatchName, setAddWatchName] = useState<string | null>(null);
+  const [addRefreshDone, setAddRefreshDone] = useState(false);
+
+  function stopIfOffline(): boolean {
+    if (!isBrowserOffline()) return false;
+    toast.error(COURTSIDE_OFFLINE_COPY);
+    return true;
+  }
 
   // ── Per-court async states ──────────────────────────────────
   const [matchmakingCourt, setMatchmakingCourt] = useState<string | null>(null);
@@ -211,20 +248,69 @@ export function ActiveCourts({
   }
 
   // ── Handlers ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!addWatchName) return;
+    if (courts.some((c) => c.name === addWatchName)) {
+      setNewCourtName("");
+      setAdding(false);
+      setAddWatchName(null);
+      setAddRefreshDone(false);
+      return;
+    }
+    if (!addRefreshDone) return;
+    toast.error("Court was not added. You can try again.");
+    setAdding(false);
+    setAddWatchName(null);
+    setAddRefreshDone(false);
+  }, [addWatchName, addRefreshDone, courts, setAdding]);
+
   async function handleAddCourt() {
     const name = newCourtName.trim();
-    if (!name) return;
+    if (!name || adding) return;
+    if (stopIfOffline()) return;
     setAdding(true);
-    const result = await onAddCourt(name);
-    if (!result.error) setNewCourtName("");
-    setAdding(false);
+    const outcome = await runCourtsideAction(onAddCourt(name), {
+      onSlow: () => toast(COURTSIDE_SLOW_COPY),
+    });
+    if (outcome.status === "ok" && !outcome.value.error) {
+      setNewCourtName("");
+      setAdding(false);
+      setAddWatchName(null);
+      return;
+    }
+    if (outcome.status === "ok" && outcome.value.error) {
+      toast.error(outcome.value.error);
+      setAdding(false);
+      return;
+    }
+    if (outcome.status === "error") {
+      toast.error(outcome.error);
+      setAdding(false);
+      return;
+    }
+    toast.error(COURTSIDE_TIMEOUT_COPY);
+    setAddWatchName(name);
+    setAddRefreshDone(false);
+    void Promise.resolve(onRefreshCourts?.()).finally(() => setAddRefreshDone(true));
   }
 
   async function handleCallNextMatch(courtId: string) {
+    if (stopIfOffline()) return;
     setMatchmakingCourt(courtId);
     setCourtError(courtId, null);
-    const result = await onCallNextMatch(courtId);
+    const outcome = await runCourtsideAction(onCallNextMatch(courtId), {
+      onSlow: () => toast(COURTSIDE_SLOW_COPY),
+    });
     setMatchmakingCourt(null);
+    if (outcome.status === "timeout") {
+      toast.error(COURTSIDE_TIMEOUT_COPY);
+      return;
+    }
+    if (outcome.status === "error") {
+      showToast({ type: "error", title: "No Match Found", body: outcome.error });
+      return;
+    }
+    const result = outcome.value;
     if (result.success) {
       showToast({
         type: "success",
@@ -250,6 +336,7 @@ export function ActiveCourts({
   }
 
   async function handleCancelConfirm(courtId: string, matchId: string) {
+    if (stopIfOffline()) return;
     setConfirmingCancel((prev) => {
       const s = new Set(prev);
       s.delete(courtId);
@@ -258,7 +345,13 @@ export function ActiveCourts({
     setCancellingCourt((prev) => new Set(prev).add(courtId));
     setCourtError(courtId, null);
 
-    const result = await onCancelMatch(matchId);
+    const outcome = await runCourtsideAction(onCancelMatch(matchId), {
+      onSlow: () => toast(COURTSIDE_SLOW_COPY),
+    });
+    const result =
+      outcome.status === "ok"
+        ? outcome.value
+        : { error: outcome.status === "timeout" ? COURTSIDE_TIMEOUT_COPY : outcome.error };
 
     setCancellingCourt((prev) => {
       const s = new Set(prev);
@@ -274,10 +367,17 @@ export function ActiveCourts({
   }
 
   async function handleClearOnDeckMatch(courtId: string, matchId: string) {
+    if (stopIfOffline()) return;
     setClearingMatch((prev) => new Set(prev).add(matchId));
     setCourtError(courtId, null);
 
-    const result = await onClearOnDeckMatch(matchId);
+    const outcome = await runCourtsideAction(onClearOnDeckMatch(matchId), {
+      onSlow: () => toast(COURTSIDE_SLOW_COPY),
+    });
+    const result =
+      outcome.status === "ok"
+        ? outcome.value
+        : { error: outcome.status === "timeout" ? COURTSIDE_TIMEOUT_COPY : outcome.error };
 
     setClearingMatch((prev) => {
       const s = new Set(prev);
@@ -301,9 +401,16 @@ export function ActiveCourts({
   }
 
   async function handleUpdateCourtStatus(courtId: string, status: Court["status"]) {
+    if (stopIfOffline()) return;
     setUpdatingStatusCourt((prev) => new Set(prev).add(courtId));
     setCourtError(courtId, null);
-    const result = await onUpdateCourtStatus(courtId, status);
+    const outcome = await runCourtsideAction(onUpdateCourtStatus(courtId, status), {
+      onSlow: () => toast(COURTSIDE_SLOW_COPY),
+    });
+    const result =
+      outcome.status === "ok"
+        ? outcome.value
+        : { error: outcome.status === "timeout" ? COURTSIDE_TIMEOUT_COPY : outcome.error };
     setUpdatingStatusCourt((prev) => {
       const next = new Set(prev);
       next.delete(courtId);
@@ -316,9 +423,16 @@ export function ActiveCourts({
   }
 
   async function handleRemoveCourt(courtId: string) {
+    if (stopIfOffline()) return;
     setRemovingCourt((prev) => new Set(prev).add(courtId));
     setCourtError(courtId, null);
-    const result = await onRemoveCourt(courtId);
+    const outcome = await runCourtsideAction(onRemoveCourt(courtId), {
+      onSlow: () => toast(COURTSIDE_SLOW_COPY),
+    });
+    const result =
+      outcome.status === "ok"
+        ? outcome.value
+        : { error: outcome.status === "timeout" ? COURTSIDE_TIMEOUT_COPY : outcome.error };
     setRemovingCourt((prev) => {
       const next = new Set(prev);
       next.delete(courtId);
@@ -389,7 +503,7 @@ export function ActiveCourts({
 
       {/* ── Add court bar ──────────────────────────────────────── */}
       <div className="flex flex-col gap-2">
-        <div className="flex gap-3">
+        <div className="flex flex-col gap-2 min-[480px]:flex-row min-[480px]:items-stretch">
           <input
             type="text"
             value={newCourtName}
@@ -397,22 +511,23 @@ export function ActiveCourts({
             onKeyDown={(e) => e.key === "Enter" && handleAddCourt()}
             placeholder="Court name (e.g. Court 3)"
             maxLength={40}
-            className="flex-1 clip-cut border border-cc-border bg-cc-bg-2 px-4 py-2.5
+            className="min-h-[44px] min-w-0 w-full flex-1 clip-cut border border-cc-border bg-cc-bg-2 px-4
                        font-command text-sm text-cc-t1 placeholder:text-cc-t3
                        focus:outline-none focus:border-cc-accent transition-colors"
           />
           <button
             onClick={handleAddCourt}
             disabled={adding || !newCourtName.trim()}
-            className="whitespace-nowrap clip-cut-sm bg-cc-accent hover:brightness-110 px-5 py-2.5
+            className="min-h-[44px] w-full shrink-0 whitespace-nowrap clip-cut-sm bg-cc-accent hover:brightness-110 px-5
                        font-command text-[10px] uppercase tracking-[0.12em] text-cc-btn-on-accent
-                       disabled:cursor-not-allowed disabled:opacity-50 transition-all"
+                       disabled:cursor-not-allowed disabled:opacity-50 transition-all
+                       min-[480px]:w-auto"
           >
             {adding ? "Adding…" : "+ Add Court"}
           </button>
         </div>
         {/* Time limit picker */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="font-command text-[10px] uppercase tracking-[0.18em] text-cc-t3">
             Court time limit:
           </span>
@@ -498,10 +613,19 @@ export function ActiveCourts({
         match={scoringMatch}
         onClose={() => setScoringMatchId(null)}
         onSubmit={async (teamAScore, teamBScore) => {
+          if (stopIfOffline()) return { error: COURTSIDE_OFFLINE_COPY };
           if (!scoringMatchId) return { error: "No match selected." };
           endingMatchIdRef.current = scoringMatchId;
           try {
-            const result = await onEndMatch(scoringMatchId, teamAScore, teamBScore);
+            const outcome = await runCourtsideAction(
+              onEndMatch(scoringMatchId, teamAScore, teamBScore),
+              { onSlow: () => toast(COURTSIDE_SLOW_COPY) }
+            );
+            if (outcome.status !== "ok") {
+              const message = outcome.status === "timeout" ? COURTSIDE_TIMEOUT_COPY : outcome.error;
+              return { error: message };
+            }
+            const result = outcome.value;
             const settledToast = settledMatchToast(result.code);
             if (settledToast) {
               // The match is settled — by someone else, one way or another. The

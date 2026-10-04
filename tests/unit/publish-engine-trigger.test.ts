@@ -2,7 +2,7 @@
 // Integration tests: engine trigger after draft publish actions
 // ============================================================
 // Verifies that publishMatchAction and publishAllDraftMatchesAction
-// call runEngineForSession after a successful publish, and that the
+// call scheduleEngineForSession after a successful publish, and that the
 // engine is NOT called when nothing was actually published.
 // ============================================================
 
@@ -16,7 +16,7 @@ vi.mock("next/server", () => ({ after: (cb: () => unknown) => cb() }));
 vi.mock("@/lib/notifications/push-server", () => ({
   pushToPlayers: vi.fn().mockResolvedValue({ sent: 0, errors: 0 }),
 }));
-vi.mock("@/app/actions/matchmaking", () => ({ runEngineForSession: vi.fn() }));
+vi.mock("@/app/actions/matchmaking", () => ({ scheduleEngineForSession: vi.fn() }));
 vi.mock("@/app/actions/_shared", () => ({
   getAuthenticatedUser: vi.fn(),
   isSessionOrganizer: vi.fn(),
@@ -36,7 +36,7 @@ vi.mock("@/lib/broadcast", () => ({
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { runEngineForSession } from "@/app/actions/matchmaking";
+import { scheduleEngineForSession } from "@/app/actions/matchmaking";
 import { getAuthenticatedUser, isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
 import { publishMatchAction, publishAllDraftMatchesAction } from "@/app/actions/match-drafts";
 import { broadcastDraftsPublished } from "@/lib/broadcast";
@@ -118,7 +118,7 @@ function makeServerClient(fromResponses: MockResponse[]) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(runEngineForSession).mockResolvedValue(undefined);
+  vi.mocked(scheduleEngineForSession).mockResolvedValue(undefined);
   vi.mocked(getAuthenticatedUser).mockResolvedValue({
     id: "user-1",
     email: "org@test.com",
@@ -130,7 +130,7 @@ beforeEach(() => {
 // ── PE-1 ───────────────────────────────────────────────────────
 
 describe("publishMatchAction — engine trigger", () => {
-  it("PE-1: calls runEngineForSession when RPC returns SUCCESS", async () => {
+  it("PE-1: calls scheduleEngineForSession when RPC returns SUCCESS", async () => {
     // Server client for the initial match fetch
     const serverClient = makeServerClient([{ data: { session_id: SESSION_ID }, error: null }]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(serverClient as never);
@@ -142,8 +142,8 @@ describe("publishMatchAction — engine trigger", () => {
     const result = await publishMatchAction(MATCH_ID);
 
     expect(result.success).toBe(true);
-    expect(runEngineForSession).toHaveBeenCalledOnce();
-    expect(runEngineForSession).toHaveBeenCalledWith(SESSION_ID);
+    expect(scheduleEngineForSession).toHaveBeenCalledOnce();
+    expect(scheduleEngineForSession).toHaveBeenCalledWith(SESSION_ID);
     expect(broadcastDraftsPublished).toHaveBeenCalledWith(SESSION_ID, {
       actorId: "user-1",
       actorName: "Org",
@@ -153,7 +153,7 @@ describe("publishMatchAction — engine trigger", () => {
 
   // ── PE-2 ───────────────────────────────────────────────────────
 
-  it("PE-2: does NOT call runEngineForSession when RPC returns ALREADY_PUBLISHED", async () => {
+  it("PE-2: does NOT call scheduleEngineForSession when RPC returns ALREADY_PUBLISHED", async () => {
     const serverClient = makeServerClient([{ data: { session_id: SESSION_ID }, error: null }]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(serverClient as never);
 
@@ -163,13 +163,13 @@ describe("publishMatchAction — engine trigger", () => {
     const result = await publishMatchAction(MATCH_ID);
 
     expect(result.success).toBe(true);
-    expect(runEngineForSession).not.toHaveBeenCalled();
+    expect(scheduleEngineForSession).not.toHaveBeenCalled();
     expect(broadcastDraftsPublished).not.toHaveBeenCalled();
   });
 
   // ── PE-3 ───────────────────────────────────────────────────────
 
-  it("PE-3: does NOT call runEngineForSession when RPC returns HAS_LEFT_PLAYERS", async () => {
+  it("PE-3: does NOT call scheduleEngineForSession when RPC returns HAS_LEFT_PLAYERS", async () => {
     const serverClient = makeServerClient([{ data: { session_id: SESSION_ID }, error: null }]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(serverClient as never);
 
@@ -179,12 +179,12 @@ describe("publishMatchAction — engine trigger", () => {
     const result = await publishMatchAction(MATCH_ID);
 
     expect(result.success).toBe(false);
-    expect(runEngineForSession).not.toHaveBeenCalled();
+    expect(scheduleEngineForSession).not.toHaveBeenCalled();
   });
 
   // ── PE-6 ───────────────────────────────────────────────────────
 
-  it("PE-6: calls runEngineForSession when fallback path publishes successfully", async () => {
+  it("PE-6: calls scheduleEngineForSession when fallback path publishes successfully", async () => {
     // Server client for the initial match fetch (used by publishMatchAction)
     const serverClient = makeServerClient([{ data: { session_id: SESSION_ID }, error: null }]);
     vi.mocked(createServerSupabaseClient).mockResolvedValue(serverClient as never);
@@ -209,14 +209,14 @@ describe("publishMatchAction — engine trigger", () => {
     const result = await publishMatchAction(MATCH_ID);
 
     expect(result.success).toBe(true);
-    expect(runEngineForSession).toHaveBeenCalledOnce();
+    expect(scheduleEngineForSession).toHaveBeenCalledOnce();
   });
 });
 
 // ── PE-4 / PE-5 ────────────────────────────────────────────────
 
 describe("publishAllDraftMatchesAction — engine trigger", () => {
-  it("PE-4: calls runEngineForSession when RPC returns publishedCount > 0", async () => {
+  it("PE-4: calls scheduleEngineForSession when RPC returns publishedCount > 0", async () => {
     const svcClient = makeServiceClient({
       data: { success: true, published_count: 3, skipped_count: 0 },
       error: null,
@@ -227,11 +227,11 @@ describe("publishAllDraftMatchesAction — engine trigger", () => {
 
     expect(result.success).toBe(true);
     expect(result.publishedCount).toBe(3);
-    expect(runEngineForSession).toHaveBeenCalledOnce();
-    expect(runEngineForSession).toHaveBeenCalledWith(SESSION_ID);
+    expect(scheduleEngineForSession).toHaveBeenCalledOnce();
+    expect(scheduleEngineForSession).toHaveBeenCalledWith(SESSION_ID);
   });
 
-  it("PE-5: does NOT call runEngineForSession when RPC returns publishedCount === 0", async () => {
+  it("PE-5: does NOT call scheduleEngineForSession when RPC returns publishedCount === 0", async () => {
     const svcClient = makeServiceClient({
       data: { success: true, published_count: 0, skipped_count: 2 },
       error: null,
@@ -241,6 +241,6 @@ describe("publishAllDraftMatchesAction — engine trigger", () => {
     const result = await publishAllDraftMatchesAction(SESSION_ID);
 
     expect(result.success).toBe(true);
-    expect(runEngineForSession).not.toHaveBeenCalled();
+    expect(scheduleEngineForSession).not.toHaveBeenCalled();
   });
 });

@@ -33,6 +33,7 @@ vi.mock("@/utils/supabase/service", () => ({
 
 vi.mock("@/app/actions/matchmaking", () => ({
   runEngineForSession: vi.fn().mockResolvedValue(undefined),
+  scheduleEngineForSession: vi.fn().mockResolvedValue(undefined),
 }));
 
 // joinQueueAction now runs isSessionActive() before any join work (the

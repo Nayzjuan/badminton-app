@@ -35,14 +35,15 @@ vi.mock("next/navigation", () => ({
 }));
 
 // ── Mock sonner ───────────────────────────────────────────────
-vi.mock("sonner", () => ({
-  toast: {
+vi.mock("sonner", () => {
+  const toast = Object.assign(vi.fn(), {
     error: vi.fn(),
     success: vi.fn(),
     info: vi.fn(),
     warning: vi.fn(),
-  },
-}));
+  });
+  return { toast };
+});
 
 // ── Mock session actions ──────────────────────────────────────
 // toggleAutoPublish is mocked even though no test drives it: a vi.mock factory
@@ -1288,5 +1289,75 @@ describe("OD-11 through OD-21: handleCapChange — draft cap override", () => {
         vi.useRealTimers();
       }
     });
+  });
+});
+
+describe("OD-R6: Auto timeout stays locked until live flips", () => {
+  it("togglingAuto stays true 8s after a hung toggle", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(toggleAutoMatchmaking).mockImplementation(() => new Promise(() => {}));
+      const { result } = renderHook(() =>
+        useOrganizerDashboard(makeParams({ liveAutoMatchmaking: false }))
+      );
+
+      act(() => {
+        void result.current.handleToggleAuto();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(12_000);
+      });
+      expect(result.current.togglingAuto).toBe(true);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(8_000);
+      });
+      expect(result.current.togglingAuto).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("unlocks when live flips before the watchdog", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(toggleAutoMatchmaking).mockImplementation(() => new Promise(() => {}));
+      const { result, rerender } = renderHook(
+        ({ live }) => useOrganizerDashboard(makeParams({ liveAutoMatchmaking: live })),
+        { initialProps: { live: false } }
+      );
+
+      act(() => {
+        void result.current.handleToggleAuto();
+      });
+      rerender({ live: true });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(12_000);
+      });
+      expect(result.current.togglingAuto).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("OD-C4: courtside busy flags survive tab switch", () => {
+  it("adding / clearing / publishing stay set after leaving Courts", () => {
+    const { result } = renderHook(() =>
+      useOrganizerDashboard(makeParams({ sessionIsActive: true }))
+    );
+
+    act(() => {
+      result.current.setAddingCourt(true);
+      result.current.setClearingMatchIds(new Set(["match-1"]));
+      result.current.setPublishingMatchIds(new Set(["match-2"]));
+      result.current.setPublishingAll(true);
+      result.current.setActiveTab("queue");
+    });
+
+    expect(result.current.activeTab).toBe("queue");
+    expect(result.current.addingCourt).toBe(true);
+    expect([...result.current.clearingMatchIds]).toEqual(["match-1"]);
+    expect([...result.current.publishingMatchIds]).toEqual(["match-2"]);
+    expect(result.current.publishingAll).toBe(true);
   });
 });

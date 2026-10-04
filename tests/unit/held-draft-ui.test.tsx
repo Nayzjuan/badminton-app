@@ -107,7 +107,15 @@ const readyHold = (over: Partial<EnrichedMatch> = {}) =>
     ...over,
   });
 
-function renderCard(match: EnrichedMatch, isDraft = true) {
+function renderCard(
+  match: EnrichedMatch,
+  isDraft = true,
+  extra: {
+    inProgressMatchIds?: ReadonlySet<string>;
+    sourceCompletedAt?: string | null;
+    onUnlockHold?: (id: string) => Promise<{ error?: string }>;
+  } = {}
+) {
   return render(
     <DndContext>
       <SortableContext items={[match.id]}>
@@ -119,6 +127,9 @@ function renderCard(match: EnrichedMatch, isDraft = true) {
           isPublishing={false}
           isOptimisticPublished={false}
           swapContext={null}
+          inProgressMatchIds={extra.inProgressMatchIds}
+          sourceCompletedAt={extra.sourceCompletedAt}
+          onUnlockHold={extra.onUnlockHold}
           onClear={vi.fn()}
           onPublish={vi.fn()}
           onPlayerTap={vi.fn()}
@@ -151,6 +162,8 @@ function renderPanel(matches: EnrichedMatch[], over: Record<string, unknown> = {
 // SortableCard
 // ─────────────────────────────────────────────────────────────
 
+const holdingHold = () => unreadyHold({ pulled_from_match_id: "src-1" });
+
 describe("SortableCard — publish suppression for unready holds", () => {
   it("UI-HELD-1: an unready hold offers Clear but not Publish", () => {
     renderCard(unreadyHold());
@@ -161,14 +174,49 @@ describe("SortableCard — publish suppression for unready holds", () => {
     expect(screen.getByRole("button", { name: /clear/i })).toBeInTheDocument();
   });
 
-  it("UI-HELD-2: the suppression is explained, not silent", () => {
-    renderCard(unreadyHold());
+  it("UI-HELD-2: HOLDING names the player still on court", () => {
+    renderCard(holdingHold(), true, { inProgressMatchIds: new Set(["src-1"]) });
 
-    // A button that vanishes with no reason reads as a bug. Two things carry the
-    // explanation: the footer copy, and the violet HELD chip naming the player
-    // still finishing. Neither is decorative.
-    expect(screen.getByText(/publish unlocks when this hold is ready/i)).toBeInTheDocument();
-    expect(screen.getByRole("status", { name: /waiting on Dev to finish/i })).toBeInTheDocument();
+    expect(screen.getByText(/waiting for Dev to finish/i)).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /Dev still on court/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /skip rest/i })).toBeNull();
+  });
+
+  it("UI-HELD-2c: a long pulled name still offers skip-rest and hides Publish", () => {
+    const long = unreadyHold({
+      pulled_from_match_id: "src-1",
+      players: [
+        seat("p1", "Ana", "a"),
+        seat("p2", "Ben", "a"),
+        seat("p3", "Cara", "b"),
+        seat("p4", "Christopher-Alexander", "b"),
+      ],
+    });
+    renderCard(long, true, {
+      sourceCompletedAt: new Date(Date.now() - 30_000).toISOString(),
+      onUnlockHold: vi.fn().mockResolvedValue({}),
+    });
+
+    expect(
+      screen.getByRole("button", { name: /skip rest to unlock publish/i })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^publish$/i })).toBeNull();
+    expect(screen.getByRole("status", { name: /Christopher-Alexander/i })).toBeInTheDocument();
+  });
+
+  it("UI-HELD-2b: RESTING does not say finishing, and offers a skip-rest timer", () => {
+    renderCard(unreadyHold({ pulled_from_match_id: "src-1" }), true, {
+      sourceCompletedAt: new Date(Date.now() - 30_000).toISOString(),
+      onUnlockHold: vi.fn().mockResolvedValue({}),
+    });
+
+    expect(screen.getByText(/tap the timer to skip/i)).toBeInTheDocument();
+    expect(screen.queryByText(/finishing/i)).toBeNull();
+    expect(screen.getByRole("status", { name: /just finished, resting/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /skip rest to unlock publish/i })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^publish$/i })).toBeNull();
   });
 
   it("UI-HELD-3: a stamped hold gets its Publish button back", () => {
@@ -231,9 +279,13 @@ describe("OnDeckPanel — draft cap notice", () => {
   });
 
   it("UI-CAP-4: an unready hold does not fill a review slot", () => {
-    renderPanel([makeMatch({ id: "d1" }), unreadyHold({ id: "h1" })], {
-      maxAutoDraftsOverride: 2,
-    });
+    renderPanel(
+      [makeMatch({ id: "d1" }), unreadyHold({ id: "h1", pulled_from_match_id: "src-1" })],
+      {
+        maxAutoDraftsOverride: 2,
+        inProgressMatchIds: new Set(["src-1"]),
+      }
+    );
 
     // Counting it would produce the worst version of this notice: "2/2 draft
     // slots filled — publish the drafts below to resume", pointing at a card
@@ -242,7 +294,7 @@ describe("OnDeckPanel — draft cap notice", () => {
     expect(screen.queryByRole("alert", { name: CAP_NOTICE })).toBeNull();
     // ...and it still RENDERS. It is not hidden — the organizer needs to see
     // that three players are reserved.
-    expect(screen.getByRole("status", { name: /waiting on Dev to finish/i })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /Dev still on court/i })).toBeInTheDocument();
   });
 
   it("UI-CAP-5: a stamped hold DOES fill a review slot", () => {

@@ -109,7 +109,7 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
         if (!isOpen) onClose();
       }}
     >
-      <DialogContent className="max-w-md">
+      <DialogContent className="w-[calc(100%-1.5rem)] max-w-md">
         {/* ── Header ─────────────────────────────────────────── */}
         <DialogHeader>
           <DialogTitle>Input Final Scores</DialogTitle>
@@ -211,20 +211,23 @@ export function ScoreModal({ open, match, onSubmit, onClose }: ScoreModalProps) 
         </div>
 
         {/* ── Footer actions ──────────────────────────────────── */}
-        <DialogFooter>
+        {isPending && (
+          <p className="px-6 pb-2 text-center text-xs leading-snug text-muted-foreground">
+            Saving… you can close this.
+          </p>
+        )}
+        <DialogFooter className="flex-col-reverse sm:flex-row [&>button]:min-h-11 [&>button]:w-full sm:[&>button]:w-auto">
           <button
             onClick={onClose}
-            disabled={isPending}
             className="rounded-lg border border-border px-5 py-2.5 text-sm font-medium
-                       text-foreground hover:bg-muted disabled:opacity-50
-                       disabled:cursor-not-allowed transition-colors"
+                       text-foreground hover:bg-muted transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleSubmit}
             disabled={!canSubmit}
-            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-6 py-2.5
+            className="flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-6 py-2.5
                        text-sm font-semibold text-white hover:bg-indigo-700
                        disabled:opacity-40 disabled:cursor-not-allowed
                        transition-colors shadow-sm"

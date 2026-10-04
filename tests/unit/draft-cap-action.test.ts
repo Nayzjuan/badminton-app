@@ -38,7 +38,10 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 // imports must be listed — an omitted one is `undefined` at import time.
 vi.mock("@/utils/supabase/server", () => ({ createServerSupabaseClient: vi.fn() }));
 vi.mock("@/utils/supabase/service", () => ({ createServiceClient: vi.fn() }));
-vi.mock("@/app/actions/matchmaking", () => ({ runEngineForSession: vi.fn() }));
+vi.mock("@/app/actions/matchmaking", () => ({
+  runEngineForSession: vi.fn(),
+  scheduleEngineForSession: vi.fn(),
+}));
 vi.mock("@/app/actions/match-drafts", () => ({ clearAllUnpublishedDrafts: vi.fn() }));
 // Both _shared helpers are needed here: applyDraftCapOverride resolves the
 // actor for the broadcast payload in the same Promise.all as the gate.

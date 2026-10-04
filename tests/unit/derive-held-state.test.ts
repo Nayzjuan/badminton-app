@@ -10,6 +10,9 @@ import {
   deriveHeldState,
   isHeldAwaitingReadiness,
   HELD_STATE_META,
+  restRemainingMs,
+  formatRestCountdown,
+  heldQueueChipsForDrafts,
   type HeldState,
 } from "@/lib/cross-court/derive-held-state";
 
@@ -137,6 +140,80 @@ describe("isHeldAwaitingReadiness", () => {
   // CCT-FEED-7, and the same reason matchmaking-db.ts:730 refuses to route its
   // unready-hold count through a `is_held: boolean` helper — that would launder
   // the null instead of testing it.
+  it("CC-DHS-09: restRemainingMs is null without a completed_at, 0 after the window", () => {
+    const now = Date.parse("2026-10-03T12:38:47.000Z");
+    const restFallbackMs = 3 * 60_000;
+    expect(restRemainingMs({ sourceCompletedAt: null, now, restFallbackMs })).toBeNull();
+    expect(restRemainingMs({ sourceCompletedAt: "not-a-date", now, restFallbackMs })).toBeNull();
+    expect(
+      restRemainingMs({
+        sourceCompletedAt: "2026-10-03T12:35:47.000Z",
+        now,
+        restFallbackMs,
+      })
+    ).toBe(0);
+    expect(
+      restRemainingMs({
+        sourceCompletedAt: "2026-10-03T12:36:47.000Z",
+        now,
+        restFallbackMs,
+      })
+    ).toBe(60_000);
+  });
+
+  it("CC-DHS-10: formatRestCountdown is mm:ss", () => {
+    expect(formatRestCountdown(0)).toBe("0:00");
+    expect(formatRestCountdown(1000)).toBe("0:01");
+    expect(formatRestCountdown(125_000)).toBe("2:05");
+  });
+
+  it("CC-DHS-11: heldQueueChipsForDrafts marks HOLDING/RESTING seats, skips READY", () => {
+    const holding = heldQueueChipsForDrafts(
+      [
+        {
+          is_held: true,
+          held_ready_at: null,
+          pulled_player_ids: ["frank"],
+          pulled_from_match_id: "src",
+          players: [
+            { player_id: "frank", profile: { display_name: "Frank" } },
+            { player_id: "says", profile: { display_name: "Says" } },
+          ],
+        },
+      ],
+      new Set(["src"])
+    );
+    expect(holding.get("says")).toEqual({ state: "holding", pulledName: "Frank" });
+
+    const resting = heldQueueChipsForDrafts(
+      [
+        {
+          is_held: true,
+          held_ready_at: null,
+          pulled_player_ids: ["frank"],
+          pulled_from_match_id: "src",
+          players: [{ player_id: "says", profile: { display_name: "Says" } }],
+        },
+      ],
+      new Set()
+    );
+    expect(resting.get("says")?.state).toBe("resting");
+
+    const ready = heldQueueChipsForDrafts(
+      [
+        {
+          is_held: true,
+          held_ready_at: "2026-10-03T12:35:48.000Z",
+          pulled_player_ids: ["frank"],
+          pulled_from_match_id: "src",
+          players: [{ player_id: "says", profile: { display_name: "Says" } }],
+        },
+      ],
+      new Set()
+    );
+    expect(ready.size).toBe(0);
+  });
+
   it("CC-DHS-08: a null is_held is not held — it does not block publishing", () => {
     expect(
       isHeldAwaitingReadiness({

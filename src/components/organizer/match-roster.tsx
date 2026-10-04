@@ -114,6 +114,8 @@ interface PlayerRowLightProps {
   onSwapClick?: () => void;
   /** When myPlayerId is set: true = you, false = others (dim others). */
   isMe?: boolean;
+  /** Pulled body of a held draft. */
+  isHeld?: boolean;
 }
 
 function PlayerRowLight({
@@ -122,6 +124,7 @@ function PlayerRowLight({
   isSwapTarget,
   isMe,
   onSwapClick,
+  isHeld = false,
 }: PlayerRowLightProps) {
   const hasTag = !!(player.vip_tag && player.vip_theme);
   const winStreak = player.win_streak ?? 0;
@@ -154,6 +157,14 @@ function PlayerRowLight({
           >
             {player.display_name}
           </span>
+          {isHeld && (
+            <span
+              className="clip-cut-badge shrink-0 border border-cc-violet/40 bg-cc-violet-dim px-1.5 py-0.5
+                         font-command text-[8px] uppercase tracking-[0.10em] text-cc-violet"
+            >
+              Held
+            </span>
+          )}
           {hasTag && (
             <>
               <span
@@ -377,6 +388,8 @@ export interface TeamsGridProps {
   // ── Live swap — active court (dark) mode only ─────────────────
   /** Called after a 500ms long-press on a player name to open the live swap sheet. */
   onLongPress?: (player: RosterPlayer, team: "a" | "b") => void;
+  /** Pulled body on a held draft — violet mark on that seat only. */
+  heldPlayerId?: string | null;
 }
 
 export function TeamsGrid({
@@ -390,6 +403,7 @@ export function TeamsGrid({
   selectedPlayerId,
   isSwapModeActive,
   onLongPress,
+  heldPlayerId = null,
 }: TeamsGridProps) {
   const a0 = teamA[0];
   const a1 = teamA[1];
@@ -447,6 +461,7 @@ export function TeamsGrid({
             isSelected={selectedPlayerId === a0.player_id}
             isSwapTarget={isSwapModeActive && selectedPlayerId !== a0.player_id}
             isMe={myPlayerId ? myPlayerId === a0.player_id : undefined}
+            isHeld={heldPlayerId === a0.player_id}
             onSwapClick={onPlayerTap ? () => onPlayerTap(a0, "a") : undefined}
           />
         )}
@@ -464,6 +479,7 @@ export function TeamsGrid({
             isSelected={selectedPlayerId === b0.player_id}
             isSwapTarget={isSwapModeActive && selectedPlayerId !== b0.player_id}
             isMe={myPlayerId ? myPlayerId === b0.player_id : undefined}
+            isHeld={heldPlayerId === b0.player_id}
             onSwapClick={onPlayerTap ? () => onPlayerTap(b0, "b") : undefined}
           />
         )}
@@ -483,6 +499,7 @@ export function TeamsGrid({
             isSelected={selectedPlayerId === a1.player_id}
             isSwapTarget={isSwapModeActive && selectedPlayerId !== a1.player_id}
             isMe={myPlayerId ? myPlayerId === a1.player_id : undefined}
+            isHeld={heldPlayerId === a1.player_id}
             onSwapClick={onPlayerTap ? () => onPlayerTap(a1, "a") : undefined}
           />
         )}
@@ -500,6 +517,7 @@ export function TeamsGrid({
             isSelected={selectedPlayerId === b1.player_id}
             isSwapTarget={isSwapModeActive && selectedPlayerId !== b1.player_id}
             isMe={myPlayerId ? myPlayerId === b1.player_id : undefined}
+            isHeld={heldPlayerId === b1.player_id}
             onSwapClick={onPlayerTap ? () => onPlayerTap(b1, "b") : undefined}
           />
         )}

@@ -33,7 +33,7 @@ vi.mock("next/server", () => ({ after: (cb: () => unknown) => cb() }));
 vi.mock("@/lib/notifications/push-server", () => ({
   pushToPlayers: vi.fn().mockResolvedValue({ sent: 0, errors: 0 }),
 }));
-vi.mock("@/app/actions/matchmaking", () => ({ runEngineForSession: vi.fn() }));
+vi.mock("@/app/actions/matchmaking", () => ({ scheduleEngineForSession: vi.fn() }));
 vi.mock("@/app/actions/_shared", () => ({
   getAuthenticatedUser: vi.fn(),
   isSessionOrganizer: vi.fn(),
@@ -55,7 +55,7 @@ vi.mock("@/lib/broadcast", () => ({
 
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { runEngineForSession } from "@/app/actions/matchmaking";
+import { scheduleEngineForSession } from "@/app/actions/matchmaking";
 import { getAuthenticatedUser, isSessionOrganizer, getActorContext } from "@/app/actions/_shared";
 import { pushToPlayers } from "@/lib/notifications/push-server";
 import { publishMatchAction, publishAllDraftMatchesAction } from "@/app/actions/match-drafts";
@@ -151,7 +151,7 @@ const draft = (id: string, isHeld = false, readyAt: string | null = null) => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(runEngineForSession).mockResolvedValue(undefined);
+  vi.mocked(scheduleEngineForSession).mockResolvedValue(undefined);
   vi.mocked(getAuthenticatedUser).mockResolvedValue({
     id: "user-1",
     email: "org@test.com",
@@ -181,7 +181,7 @@ describe("publishMatchAction — held guard", () => {
     // CONFLICT's copy ends in "Clear this draft and let the engine regenerate."
     expect(result.message).not.toMatch(CLEAR_AND_REGENERATE);
     // Nothing moved, so nothing to refill — and no premature on-deck push.
-    expect(runEngineForSession).not.toHaveBeenCalled();
+    expect(scheduleEngineForSession).not.toHaveBeenCalled();
     expect(pushToPlayers).not.toHaveBeenCalled();
   });
 
@@ -215,7 +215,7 @@ describe("publishMatchAction — held guard", () => {
     expect(svc.from).toHaveBeenCalledTimes(1);
     expect(svc.tables).toEqual(["matches"]);
     expect(findCall(svc.calls, "matches", "update")).toBeUndefined();
-    expect(runEngineForSession).not.toHaveBeenCalled();
+    expect(scheduleEngineForSession).not.toHaveBeenCalled();
   });
 
   it("PUB-HELD-3: a READY hold publishes through the fallback like any other draft", async () => {
@@ -249,7 +249,7 @@ describe("publishMatchAction — held guard", () => {
     expect(result.success).toBe(true);
     expect(result.message).toBe("Match published.");
     expect(findCall(svc.calls, "matches", "update")).toBeDefined();
-    expect(runEngineForSession).toHaveBeenCalledWith(SESSION_ID);
+    expect(scheduleEngineForSession).toHaveBeenCalledWith(SESSION_ID);
   });
 
   it("PUB-HELD-4: the fallback's match read carries the two held columns", async () => {
@@ -389,7 +389,7 @@ describe("publishAllDraftMatchesAction — held guard", () => {
     // ...but the exclusion set must NOT, or the hold reads back as an "other
     // active match" containing its own pulled body and taints d1 into a skip.
     expect(findCall(svc.calls, "matches", "not")?.args).toEqual(["id", "in", "(d1,h1)"]);
-    expect(runEngineForSession).toHaveBeenCalledWith(SESSION_ID);
+    expect(scheduleEngineForSession).toHaveBeenCalledWith(SESSION_ID);
   });
 
   it("PUB-HELD-9: a fallback with nothing but unready holds publishes nothing and reports no failure", async () => {
@@ -406,7 +406,7 @@ describe("publishAllDraftMatchesAction — held guard", () => {
     expect(result.message).toBe("No drafts to publish.");
     expect(result.publishedCount).toBe(0);
     expect(findCall(svc.calls, "matches", "update")).toBeUndefined();
-    expect(runEngineForSession).not.toHaveBeenCalled();
+    expect(scheduleEngineForSession).not.toHaveBeenCalled();
   });
 
   it("PUB-HELD-10: a READY hold is a fallback candidate and publishes", async () => {

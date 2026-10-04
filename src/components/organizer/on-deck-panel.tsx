@@ -29,7 +29,16 @@
 //   organizer can freely reorder across draft/published boundaries.
 // ============================================================
 
-import { memo, useState, useEffect, useMemo, useRef, useCallback } from "react";
+import {
+  memo,
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  useCallback,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import {
   DndContext,
   DragOverlay,
@@ -58,10 +67,19 @@ import {
   DND_ACTIVATION_DISTANCE_PX,
   DND_TOUCH_DELAY_MS,
   DND_TOUCH_TOLERANCE_PX,
+  HELD_READINESS_REFRESH_MS,
   PLAYERS_PER_MATCH,
 } from "@/lib/constants";
 import { getDynamicDraftCap } from "@/lib/matchmaking-core";
-import { isHeldAwaitingReadiness } from "@/lib/cross-court/derive-held-state";
+import { deriveHeldState, isHeldAwaitingReadiness } from "@/lib/cross-court/derive-held-state";
+import {
+  COURTSIDE_OFFLINE_COPY,
+  COURTSIDE_SLOW_COPY,
+  COURTSIDE_TIMEOUT_COPY,
+  isBrowserOffline,
+  runCourtsideAction,
+} from "@/lib/courtside-action";
+import { toast } from "sonner";
 
 // ── DraftCapNotice ────────────────────────────────────────────
 // Shown when auto-matchmaking is ON, there are enough waiting players,
@@ -217,6 +235,19 @@ interface OnDeckPanelProps {
    * (early-session diversity, organizer-facing signal).
    */
   queue?: ReuseQueueRow[];
+  /** Parent-owned so tab unmount does not drop an in-flight Clear. */
+  clearingIds?: Set<string>;
+  onClearingIdsChange?: Dispatch<SetStateAction<Set<string>>>;
+  publishingIds?: Set<string>;
+  onPublishingIdsChange?: Dispatch<SetStateAction<Set<string>>>;
+  isPublishingAll?: boolean;
+  onPublishingAllChange?: Dispatch<SetStateAction<boolean>>;
+  /** In-progress match ids — HOLDING vs RESTING on held draft cards. */
+  inProgressMatchIds?: ReadonlySet<string>;
+  /** pulled_from_match_id → source.completed_at for RESTING countdowns. */
+  sourceCompletedAtById?: ReadonlyMap<string, string>;
+  onUnlockHold?: (matchId: string) => Promise<{ error?: string }>;
+  onHeldRefresh?: () => void;
 }
 
 // ── Main panel ────────────────────────────────────────────────
@@ -237,13 +268,29 @@ function OnDeckPanelInner({
   maxAutoDraftsOverride,
   hasNewDraft,
   queue,
+  clearingIds: clearingIdsProp,
+  onClearingIdsChange,
+  publishingIds: publishingIdsProp,
+  onPublishingIdsChange,
+  isPublishingAll: isPublishingAllProp,
+  onPublishingAllChange,
+  inProgressMatchIds,
+  sourceCompletedAtById,
+  onUnlockHold,
+  onHeldRefresh,
 }: OnDeckPanelProps) {
-  const [clearingIds, setClearingIds] = useState<Set<string>>(new Set());
-  const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
+  const [clearingIdsLocal, setClearingIdsLocal] = useState<Set<string>>(new Set());
+  const [publishingIdsLocal, setPublishingIdsLocal] = useState<Set<string>>(new Set());
+  const clearingIds = clearingIdsProp ?? clearingIdsLocal;
+  const setClearingIds = onClearingIdsChange ?? setClearingIdsLocal;
+  const publishingIds = publishingIdsProp ?? publishingIdsLocal;
+  const setPublishingIds = onPublishingIdsChange ?? setPublishingIdsLocal;
   // Optimistic set: matchIds that have been published client-side
   // before the server round-trip completes. Used for transition animation.
   const [optimisticPublishedIds, setOptimisticPublishedIds] = useState<Set<string>>(new Set());
-  const [isPublishingAll, setIsPublishingAll] = useState(false);
+  const [isPublishingAllLocal, setIsPublishingAllLocal] = useState(false);
+  const isPublishingAll = isPublishingAllProp ?? isPublishingAllLocal;
+  const setIsPublishingAll = onPublishingAllChange ?? setIsPublishingAllLocal;
   const [publishAllError, setPublishAllError] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -345,7 +392,14 @@ function OnDeckPanelInner({
 
   // ── Clear handler ─────────────────────────────────────────
 
+  function stopIfOffline(): boolean {
+    if (!isBrowserOffline()) return false;
+    toast.error(COURTSIDE_OFFLINE_COPY);
+    return true;
+  }
+
   async function handleClear(matchId: string) {
+    if (stopIfOffline()) return;
     setClearingIds((prev) => new Set(prev).add(matchId));
     setErrors((prev) => {
       const e = { ...prev };
@@ -353,7 +407,13 @@ function OnDeckPanelInner({
       return e;
     });
 
-    const result = await onClearOnDeckMatch(matchId);
+    const outcome = await runCourtsideAction(onClearOnDeckMatch(matchId), {
+      onSlow: () => toast(COURTSIDE_SLOW_COPY),
+    });
+    const result =
+      outcome.status === "ok"
+        ? outcome.value
+        : { error: outcome.status === "timeout" ? COURTSIDE_TIMEOUT_COPY : outcome.error };
 
     setClearingIds((prev) => {
       const s = new Set(prev);
@@ -369,6 +429,7 @@ function OnDeckPanelInner({
   // ── Publish handler ────────────────────────────────────────
 
   async function handlePublish(matchId: string) {
+    if (stopIfOffline()) return;
     setPublishingIds((prev) => new Set(prev).add(matchId));
     // Optimistic: immediately animate the card to published state
     setOptimisticPublishedIds((prev) => new Set(prev).add(matchId));
@@ -378,7 +439,13 @@ function OnDeckPanelInner({
       return e;
     });
 
-    const result = await onPublishMatch(matchId);
+    const outcome = await runCourtsideAction(onPublishMatch(matchId), {
+      onSlow: () => toast(COURTSIDE_SLOW_COPY),
+    });
+    const result =
+      outcome.status === "ok"
+        ? outcome.value
+        : { error: outcome.status === "timeout" ? COURTSIDE_TIMEOUT_COPY : outcome.error };
 
     setPublishingIds((prev) => {
       const s = new Set(prev);
@@ -433,6 +500,36 @@ function OnDeckPanelInner({
   );
   const draftCount = publishableDraftMatches.length;
 
+  const hasRestingHold = useMemo(
+    () =>
+      draftMatches.some((m) => {
+        if (!isHeldAwaitingReadiness(m)) return false;
+        return (
+          deriveHeldState({
+            isHeld: m.is_held,
+            heldReadyAt: m.held_ready_at,
+            sourceStillPlaying:
+              m.pulled_from_match_id != null &&
+              (inProgressMatchIds?.has(m.pulled_from_match_id) ?? false),
+          }) === "resting"
+        );
+      }),
+    [draftMatches, inProgressMatchIds]
+  );
+
+  const onHeldRefreshRef = useRef(onHeldRefresh);
+  useEffect(() => {
+    onHeldRefreshRef.current = onHeldRefresh;
+  }, [onHeldRefresh]);
+
+  useEffect(() => {
+    if (!hasRestingHold || !onHeldRefresh) return;
+    const id = window.setInterval(() => {
+      onHeldRefreshRef.current?.();
+    }, HELD_READINESS_REFRESH_MS);
+    return () => window.clearInterval(id);
+  }, [hasRestingHold, onHeldRefresh]);
+
   // Per-draft equity signal: which drafts seat played players while an
   // equal-or-larger fresher cohort waits. Memoised — recomputes only when
   // the draft set or queue rows change. Drafts only: published matches
@@ -484,6 +581,10 @@ function OnDeckPanelInner({
   // ── Publish All handler ────────────────────────────────────
 
   const handlePublishAll = useCallback(async () => {
+    if (isBrowserOffline()) {
+      toast.error(COURTSIDE_OFFLINE_COPY);
+      return;
+    }
     setIsPublishingAll(true);
     setPublishAllError(null);
     // publishableDraftMatches is already memoised to (!is_published &&
@@ -498,8 +599,16 @@ function OnDeckPanelInner({
       return next;
     });
 
-    const result = await onPublishAllDrafts();
+    const outcome = await runCourtsideAction(onPublishAllDrafts(), {
+      onSlow: () => toast(COURTSIDE_SLOW_COPY),
+    });
     setIsPublishingAll(false);
+    const result =
+      outcome.status === "ok"
+        ? outcome.value
+        : {
+            error: outcome.status === "timeout" ? COURTSIDE_TIMEOUT_COPY : outcome.error,
+          };
 
     if (result.error) {
       // Revert all optimistic entries for drafts that failed to publish
@@ -531,7 +640,7 @@ function OnDeckPanelInner({
     }
     // On full success, realtime will resolve final is_published=true state;
     // optimistic IDs will be cleaned up naturally by the useEffect above.
-  }, [publishableDraftMatches, onPublishAllDrafts]);
+  }, [publishableDraftMatches, onPublishAllDrafts, setIsPublishingAll]);
 
   // ── Empty state ──────────────────────────────────────────────
   // NOTE: still wraps in space-y-4 so the cap saturation notice can
@@ -654,8 +763,16 @@ function OnDeckPanelInner({
                     error={errors[match.id]}
                     swapContext={swapContext}
                     reuseNotice={reuseNotices.get(match.id) ?? null}
+                    inProgressMatchIds={inProgressMatchIds}
+                    sourceCompletedAt={
+                      match.pulled_from_match_id
+                        ? (sourceCompletedAtById?.get(match.pulled_from_match_id) ?? null)
+                        : null
+                    }
                     onClear={handleClear}
                     onPublish={handlePublish}
+                    onUnlockHold={onUnlockHold}
+                    onHeldRefresh={onHeldRefresh}
                     onPlayerTap={onPlayerTap}
                   />
                 ))}

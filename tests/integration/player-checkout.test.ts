@@ -25,6 +25,7 @@ import { vi, describe, it, expect, afterEach, beforeEach } from "vitest";
 
 vi.mock("@/app/actions/matchmaking", () => ({
   runEngineForSession: vi.fn().mockResolvedValue(undefined),
+  scheduleEngineForSession: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { Faker, en } from "@faker-js/faker";

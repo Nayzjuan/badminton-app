@@ -8,12 +8,14 @@
 // reorderOnDeckMatches        — drag-reorder sort_order
 // publishMatchAction          — publish a single draft
 // publishAllDraftMatchesAction — publish all drafts at once
+// refreshHeldReadiness        — organizer recompute for RESTING holds
+// unlockHeldDraftReadiness    — skip rest; stamps held_ready_at, does not publish
 // ============================================================
 
 import { after } from "next/server";
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
-import { runEngineForSession } from "@/app/actions/matchmaking";
+import { recomputeHeldReadiness, scheduleEngineForSession } from "@/app/actions/matchmaking";
 import { broadcastOrganizerIntervention, broadcastDraftsPublished } from "@/lib/broadcast";
 import { pushToPlayers } from "@/lib/notifications/push-server";
 import { isValidUUID } from "@/lib/validate";
@@ -201,7 +203,7 @@ export async function clearOnDeckMatch(matchId: string): Promise<MatchActionResu
   }
 
   // 4. Engine hook: a slot just opened up — refill on-deck if toggle is ON.
-  await runEngineForSession(match.session_id);
+  await scheduleEngineForSession(match.session_id);
 
   return { success: true, message: "On-deck match cleared. Players returned to queue." };
 }
@@ -329,6 +331,29 @@ export async function clearAllUnpublishedDrafts(sessionId: string): Promise<Clea
   };
 }
 
+/**
+ * Organizer-facing Clear unpublished. Inner clear stays engine-free so
+ * applyDraftCapOverride can keep awaiting the engine itself. Auto ON
+ * refill is scheduled, not awaited.
+ */
+export async function clearUnpublishedDraftsAction(
+  sessionId: string
+): Promise<ClearAllDraftsResult> {
+  const result = await clearAllUnpublishedDrafts(sessionId);
+  if (!result.success) return result;
+
+  const db = createServiceClient();
+  const { data: session } = await db
+    .from("sessions")
+    .select("is_auto_matchmaking_on")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (session?.is_auto_matchmaking_on) {
+    await scheduleEngineForSession(sessionId);
+  }
+  return result;
+}
+
 // ============================================================
 // reorderOnDeckMatches — persist drag-and-drop sort order
 // ============================================================
@@ -453,7 +478,7 @@ export async function publishMatchAction(
 
       // Engine hook: publishing moves this draft out of the review queue,
       // opening a slot. Refill immediately so the organizer has fresh drafts.
-      await runEngineForSession(match.session_id);
+      await scheduleEngineForSession(match.session_id);
       return { success: true, message: "Match published." };
     }
     case "NOT_ORGANIZER":
@@ -611,7 +636,7 @@ async function publishMatchFallback(
   // Engine hook: publishing a draft moves it out of the review queue,
   // opening a slot for a new draft. Refill immediately so the organizer
   // always has a fresh set of drafts ready to review.
-  await runEngineForSession(sessionId);
+  await scheduleEngineForSession(sessionId);
 
   return { success: true, message: "Match published." };
 }
@@ -743,7 +768,7 @@ export async function publishAllDraftMatchesAction(
   // Engine hook: all drafts were just moved to on-deck, emptying the review
   // queue. Refill immediately so new drafts are ready for the next review cycle.
   if (publishedCount > 0) {
-    await runEngineForSession(sessionId);
+    await scheduleEngineForSession(sessionId);
   }
 
   return {
@@ -918,7 +943,7 @@ async function publishAllDraftsFallback(
 
   // Engine hook: refill the review queue after publishing.
   if (publishedCount > 0) {
-    await runEngineForSession(sessionId);
+    await scheduleEngineForSession(sessionId);
   }
 
   return {
@@ -930,4 +955,105 @@ async function publishAllDraftsFallback(
     publishedCount,
     skippedCount,
   };
+}
+
+// ============================================================
+// refreshHeldReadiness
+// ============================================================
+// Organizer-gated wrapper around recomputeHeldReadiness. Used when a
+// RESTING countdown hits 0:00, and on a short poll while unready holds
+// sit on the board with auto-matchmaking OFF (no engine heartbeat).
+
+export async function refreshHeldReadiness(sessionId: string): Promise<MatchActionResult> {
+  if (!isValidUUID(sessionId)) return { success: false, message: "Invalid session ID." };
+
+  const user = await getAuthenticatedUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+  if (!(await isSessionOrganizer(user.id, sessionId))) {
+    return { success: false, message: "Forbidden" };
+  }
+
+  await recomputeHeldReadiness(createServiceClient(), sessionId);
+  return { success: true, message: "Held readiness refreshed." };
+}
+
+// ============================================================
+// unlockHeldDraftReadiness
+// ============================================================
+// Organizer skip-rest: stamps held_ready_at on a RESTING hold so Publish
+// appears. Does not publish. Refuses HOLDING (source still in_progress).
+
+export async function unlockHeldDraftReadiness(
+  matchId: string,
+  sessionId: string
+): Promise<MatchActionResult> {
+  if (!isValidUUID(matchId) || !isValidUUID(sessionId)) {
+    return { success: false, message: "Invalid match ID." };
+  }
+
+  const user = await getAuthenticatedUser();
+  if (!user) return { success: false, message: "Not authenticated." };
+  if (!(await isSessionOrganizer(user.id, sessionId))) {
+    return { success: false, message: "Forbidden" };
+  }
+
+  const db = createServiceClient();
+  const { data: match, error: matchErr } = await db
+    .from("matches")
+    .select("id, session_id, status, is_published, is_held, held_ready_at, pulled_from_match_id")
+    .eq("id", matchId)
+    .eq("session_id", sessionId)
+    .maybeSingle();
+
+  if (matchErr) {
+    console.warn(`[unlockHeldDraftReadiness] match read failed: ${matchErr.message}`);
+    return { success: false, message: "Could not unlock this hold." };
+  }
+  if (!match) return { success: false, message: "Match not found." };
+  if (match.status !== "pending" || match.is_published) {
+    return { success: false, message: "Only unpublished drafts can skip rest." };
+  }
+  if (!match.is_held) {
+    return { success: false, message: "This draft is not held." };
+  }
+  if (match.held_ready_at !== null) {
+    return { success: true, message: "Already unlocked." };
+  }
+  if (!match.pulled_from_match_id) {
+    return { success: false, message: "This hold cannot be unlocked — its source match is gone." };
+  }
+
+  const { data: source, error: srcErr } = await db
+    .from("matches")
+    .select("id, status")
+    .eq("id", match.pulled_from_match_id)
+    .maybeSingle();
+
+  if (srcErr) {
+    console.warn(`[unlockHeldDraftReadiness] source read failed: ${srcErr.message}`);
+    return { success: false, message: "Could not unlock this hold." };
+  }
+  if (!source) {
+    return { success: false, message: "This hold cannot be unlocked — its source match is gone." };
+  }
+  if (source.status !== "completed" && source.status !== "cancelled") {
+    return {
+      success: false,
+      message: "Still on court — skip rest after that game is scored.",
+    };
+  }
+
+  const { error: stampErr } = await db
+    .from("matches")
+    .update({ held_ready_at: new Date().toISOString() })
+    .eq("id", matchId)
+    .eq("session_id", sessionId)
+    .is("held_ready_at", null);
+
+  if (stampErr) {
+    console.warn(`[unlockHeldDraftReadiness] stamp failed: ${stampErr.message}`);
+    return { success: false, message: "Could not unlock this hold." };
+  }
+
+  return { success: true, message: "Publish is unlocked." };
 }
