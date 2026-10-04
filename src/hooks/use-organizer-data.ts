@@ -77,6 +77,7 @@ export interface UseOrganizerDataResult {
    */
   realtimeConnected: boolean;
   // -- Court actions --
+  fetchCourts: () => Promise<void>;
   addCourt: (name: string) => Promise<{ error?: string }>;
   updateCourtStatus: (courtId: string, status: Court["status"]) => Promise<{ error?: string }>;
   removeCourt: (courtId: string) => Promise<{ error?: string }>;
@@ -113,6 +114,9 @@ export interface UseOrganizerDataResult {
     bPlayerId: string,
     sessionId: string
   ) => Promise<SwapMatchPlayersResult>;
+  sourceCompletedAtById: ReadonlyMap<string, string>;
+  unlockHold: (matchId: string) => Promise<{ error?: string }>;
+  refreshHeld: () => Promise<void>;
   // -- Queue actions --
   removeFromQueue: (playerId: string) => Promise<{ error?: string }>;
   pausePlayer: (playerId: string, isPaused: boolean) => Promise<{ error?: string }>;
@@ -231,6 +235,9 @@ export function useOrganizerData(
     publishAllDrafts,
     swapPlayer,
     swapMatchPlayers,
+    sourceCompletedAtById,
+    unlockHold,
+    refreshHeld,
   } = useOrganizerMatches(
     sessionId,
     supabase,
@@ -335,6 +342,7 @@ export function useOrganizerData(
     loading,
     matchesRevision,
     realtimeConnected,
+    fetchCourts,
     addCourt,
     updateCourtStatus,
     removeCourt,
@@ -348,6 +356,9 @@ export function useOrganizerData(
     publishAllDrafts,
     swapPlayer,
     swapMatchPlayers,
+    sourceCompletedAtById,
+    unlockHold,
+    refreshHeld,
     removeFromQueue,
     pausePlayer,
     updateTimeLimit,

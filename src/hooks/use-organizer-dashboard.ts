@@ -43,6 +43,13 @@ import { joinQueueAction } from "@/app/actions/queue";
 import { useClubSlug } from "@/hooks/use-club-slug";
 import { clubBase, clubWrapped } from "@/lib/club-paths";
 import { withTimeout } from "@/lib/with-timeout";
+import {
+  COURTSIDE_OFFLINE_COPY,
+  COURTSIDE_SLOW_COPY,
+  COURTSIDE_TIMEOUT_COPY,
+  isBrowserOffline,
+  runCourtsideAction,
+} from "@/lib/courtside-action";
 import type { CapPhase, CapPhaseSignal } from "@/hooks/use-organizer-session";
 
 // ── Constants ────────────────────────────────────────────────
@@ -205,6 +212,16 @@ export interface UseOrganizerDashboardResult {
 
   // Derived
   isClosed: boolean;
+
+  // Courtside mutation chrome — lives here so tab unmount cannot drop it
+  addingCourt: boolean;
+  setAddingCourt: React.Dispatch<React.SetStateAction<boolean>>;
+  clearingMatchIds: Set<string>;
+  setClearingMatchIds: React.Dispatch<React.SetStateAction<Set<string>>>;
+  publishingMatchIds: Set<string>;
+  setPublishingMatchIds: React.Dispatch<React.SetStateAction<Set<string>>>;
+  publishingAll: boolean;
+  setPublishingAll: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 // ── Hook ─────────────────────────────────────────────────────
@@ -256,10 +273,20 @@ export function useOrganizerDashboard({
   const [pendingAuto, setPendingAuto] = useState<boolean | null>(null);
   const [togglingAuto, setTogglingAuto] = useState(false);
   const seenLiveAutoRef = useRef<boolean | null>(null);
+  const autoLockFromRef = useRef<boolean | null>(null);
+  const liveAutoRef = useRef(liveAutoMatchmaking);
+  liveAutoRef.current = liveAutoMatchmaking;
 
   // ── Auto-publish optimistic toggle (mirrors auto-matchmaking) ──
   const [pendingAutoPublish, setPendingAutoPublish] = useState<boolean | null>(null);
   const [togglingAutoPublish, setTogglingAutoPublish] = useState(false);
+  const autoPublishLockFromRef = useRef<boolean | null>(null);
+  const liveAutoPublishRef = useRef(liveAutoPublish);
+  liveAutoPublishRef.current = liveAutoPublish;
+  const [addingCourt, setAddingCourt] = useState(false);
+  const [clearingMatchIds, setClearingMatchIds] = useState<Set<string>>(new Set());
+  const [publishingMatchIds, setPublishingMatchIds] = useState<Set<string>>(new Set());
+  const [publishingAll, setPublishingAll] = useState(false);
 
   // ── Click-outside refs ────────────────────────────────────
   const switcherRef = useRef<HTMLDivElement>(null);
@@ -334,6 +361,24 @@ export function useOrganizerDashboard({
       setPendingAutoPublish(null);
     }
   }, [liveAutoPublish, pendingAutoPublish]);
+
+  // Timeout lock: stay disabled until live confirms a flip. Do not unlock
+  // on a timer — a second tap would double-write while the POST is in FIFO.
+  useEffect(() => {
+    if (autoLockFromRef.current === null) return;
+    if (liveAutoMatchmaking === autoLockFromRef.current) return;
+    autoLockFromRef.current = null;
+    setPendingAuto(null);
+    setTogglingAuto(false);
+  }, [liveAutoMatchmaking]);
+
+  useEffect(() => {
+    if (autoPublishLockFromRef.current === null) return;
+    if (liveAutoPublish === autoPublishLockFromRef.current) return;
+    autoPublishLockFromRef.current = null;
+    setPendingAutoPublish(null);
+    setTogglingAutoPublish(false);
+  }, [liveAutoPublish]);
 
   // ── Esc key cancels swap picking mode ────────────────────
   useEffect(() => {
@@ -482,79 +527,112 @@ export function useOrganizerDashboard({
   }, [sessionId, organizerId, router, clubSlug, suppressCloseWatcher]);
 
   const handleToggleAuto = useCallback(async () => {
+    if (isBrowserOffline()) {
+      toast.error(COURTSIDE_OFFLINE_COPY);
+      return;
+    }
+    const from = liveAutoMatchmaking;
+    autoLockFromRef.current = from;
     setTogglingAuto(true);
-    setPendingAuto(!liveAutoMatchmaking); // optimistic
-    try {
-      const result = await toggleAutoMatchmaking(sessionId);
+    setPendingAuto(!from);
+    const outcome = await runCourtsideAction(toggleAutoMatchmaking(sessionId), {
+      onSlow: () => toast(COURTSIDE_SLOW_COPY),
+    });
+    if (outcome.status === "timeout") {
+      toast.error(COURTSIDE_TIMEOUT_COPY);
+      setPendingAuto(null);
+      if (liveAutoRef.current !== from) {
+        autoLockFromRef.current = null;
+        setTogglingAuto(false);
+      }
+      return;
+    }
+    if (outcome.status === "error") {
+      autoLockFromRef.current = null;
+      setPendingAuto(null);
+      setTogglingAuto(false);
+      toast.error(outcome.error);
+      return;
+    }
+    const result = outcome.value;
+    if (result.success) {
+      setPendingAuto(result.isOn);
+      if (result.isOn) {
+        toast.success("Engine running", {
+          description: "Auto-matchmaking is ON — drafts will appear as courts open.",
+          position: "bottom-right",
+          duration: 3_000,
+        });
+      } else {
+        toast("Engine paused", {
+          description: "Auto-matchmaking is OFF — create matches manually.",
+          position: "bottom-right",
+          duration: 3_000,
+        });
+      }
+    } else {
+      setPendingAuto(null);
+      toast.error(result.message ?? "Failed to toggle auto-matchmaking.");
+    }
+    autoLockFromRef.current = null;
+    setTogglingAuto(false);
+  }, [sessionId, liveAutoMatchmaking]);
+
+  const handleToggleAutoPublish = useCallback(
+    async (enabled: boolean) => {
+      if (isBrowserOffline()) {
+        toast.error(COURTSIDE_OFFLINE_COPY);
+        return;
+      }
+      const from = liveAutoPublishRef.current;
+      autoPublishLockFromRef.current = from;
+      setTogglingAutoPublish(true);
+      setPendingAutoPublish(enabled);
+      const outcome = await runCourtsideAction(toggleAutoPublish(sessionId, enabled), {
+        onSlow: () => toast(COURTSIDE_SLOW_COPY),
+      });
+      if (outcome.status === "timeout") {
+        toast.error(COURTSIDE_TIMEOUT_COPY);
+        setPendingAutoPublish(null);
+        if (liveAutoPublishRef.current !== from) {
+          autoPublishLockFromRef.current = null;
+          setTogglingAutoPublish(false);
+        }
+        return;
+      }
+      if (outcome.status === "error") {
+        autoPublishLockFromRef.current = null;
+        setPendingAutoPublish(null);
+        setTogglingAutoPublish(false);
+        toast.error(outcome.error);
+        return;
+      }
+      const result = outcome.value;
       if (result.success) {
-        // Hold the server-confirmed value as authoritative until the broadcast
-        // updates liveAutoMatchmaking. This prevents the toggle from flickering
-        // while waiting for the realtime broadcast to arrive.
-        setPendingAuto(result.isOn);
+        setPendingAutoPublish(result.isOn);
         if (result.isOn) {
-          toast.success("Engine running", {
-            description: "Auto-matchmaking is ON — drafts will appear as courts open.",
-            // Position bottom-right so the toast never overlaps the header
-            // toggle button (which sits at top-center behind the default toaster).
+          const clearedNote =
+            result.clearedCount && result.clearedCount > 0
+              ? ` Cleared ${result.clearedCount} draft${result.clearedCount !== 1 ? "s" : ""}.`
+              : "";
+          toast.success("Auto-publish ON", {
+            description: `New matches will skip review and go straight to On Deck as they generate.${clearedNote}`,
             position: "bottom-right",
             duration: 3_000,
           });
         } else {
-          toast("Engine paused", {
-            description: "Auto-matchmaking is OFF — create matches manually.",
+          toast("Auto-publish OFF", {
+            description: "New matches return to draft review. On-deck matches stay live.",
             position: "bottom-right",
             duration: 3_000,
           });
         }
       } else {
-        setPendingAuto(null);
-        toast.error(result.message ?? "Failed to toggle auto-matchmaking.");
-      }
-    } catch (err) {
-      console.error("[handleToggleAuto] unexpected throw:", err);
-      setPendingAuto(null);
-      toast.error("Failed to toggle auto-matchmaking. Please try again.");
-    } finally {
-      setTogglingAuto(false);
-    }
-  }, [sessionId, liveAutoMatchmaking]);
-
-  const handleToggleAutoPublish = useCallback(
-    async (enabled: boolean) => {
-      setTogglingAutoPublish(true);
-      setPendingAutoPublish(enabled); // optimistic
-      try {
-        const result = await toggleAutoPublish(sessionId, enabled);
-        if (result.success) {
-          setPendingAutoPublish(result.isOn);
-          if (result.isOn) {
-            const clearedNote =
-              result.clearedCount && result.clearedCount > 0
-                ? ` Cleared ${result.clearedCount} draft${result.clearedCount !== 1 ? "s" : ""}.`
-                : "";
-            toast.success("Auto-publish ON", {
-              description: `New matches skip review and go straight to On Deck.${clearedNote}`,
-              position: "bottom-right",
-              duration: 3_000,
-            });
-          } else {
-            toast("Auto-publish OFF", {
-              description: "New matches return to draft review. On-deck matches stay live.",
-              position: "bottom-right",
-              duration: 3_000,
-            });
-          }
-        } else {
-          setPendingAutoPublish(null);
-          toast.error(result.message ?? "Failed to toggle auto-publish.");
-        }
-      } catch (err) {
-        console.error("[handleToggleAutoPublish] unexpected throw:", err);
         setPendingAutoPublish(null);
-        toast.error("Failed to toggle auto-publish. Please try again.");
-      } finally {
-        setTogglingAutoPublish(false);
+        toast.error(result.message ?? "Failed to toggle auto-publish.");
       }
+      autoPublishLockFromRef.current = null;
+      setTogglingAutoPublish(false);
     },
     [sessionId]
   );
@@ -708,5 +786,13 @@ export function useOrganizerDashboard({
     handleCapChange,
     joinQueue,
     isClosed,
+    addingCourt,
+    setAddingCourt,
+    clearingMatchIds,
+    setClearingMatchIds,
+    publishingMatchIds,
+    setPublishingMatchIds,
+    publishingAll,
+    setPublishingAll,
   };
 }

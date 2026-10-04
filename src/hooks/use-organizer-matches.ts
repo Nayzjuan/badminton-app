@@ -12,6 +12,7 @@ import { useEnrichedMatches, type EnrichedMatch } from "@/hooks/use-enriched-mat
 import { subscribeToMatches, subscribeToMatchPlayers } from "@/lib/realtime";
 import { trailingDebounce } from "@/lib/trailing-debounce";
 import { REALTIME_REFETCH_DEBOUNCE_MS } from "@/lib/constants";
+import { isHeldAwaitingReadiness } from "@/lib/cross-court/derive-held-state";
 import {
   callNextMatch as callNextMatchAction,
   type MatchmakingResult,
@@ -27,6 +28,8 @@ import {
   reorderOnDeckMatches as reorderOnDeckMatchesAction,
   publishMatchAction,
   publishAllDraftMatchesAction,
+  refreshHeldReadiness,
+  unlockHeldDraftReadiness,
 } from "@/app/actions/match-drafts";
 import {
   swapPlayerInMatch as swapPlayerInMatchAction,
@@ -46,10 +49,14 @@ function useAction<TArgs extends unknown[]>(
 ): (...args: TArgs) => Promise<{ error?: string }> {
   return useCallback(
     async (...args: TArgs): Promise<{ error?: string }> => {
-      const result = await action(...args);
-      if (!result.success) return { error: result.message ?? result.error ?? "Action failed" };
-      await Promise.all(refreshers.map((r) => r()));
-      return {};
+      try {
+        const result = await action(...args);
+        if (!result.success) return { error: result.message ?? result.error ?? "Action failed" };
+        await Promise.all(refreshers.map((r) => r()));
+        return {};
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "Action failed" };
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     deps
@@ -135,6 +142,9 @@ export function useOrganizerMatches(
     bPlayerId: string,
     sessionId: string
   ) => Promise<SwapMatchPlayersResult>;
+  sourceCompletedAtById: ReadonlyMap<string, string>;
+  unlockHold: (matchId: string) => Promise<{ error?: string }>;
+  refreshHeld: () => Promise<void>;
 } {
   const { activeMatches, setActiveMatches, fetchActiveMatches } = useEnrichedMatches(
     supabase,
@@ -232,6 +242,45 @@ export function useOrganizerMatches(
     () => activeMatches.filter((m) => m.status === "in_progress"),
     [activeMatches]
   );
+
+  const [sourceCompletedAtById, setSourceCompletedAtById] = React.useState<Map<string, string>>(
+    () => new Map()
+  );
+
+  useEffect(() => {
+    const inProgressIds = new Set(inProgressMatches.map((m) => m.id));
+    const sourceIds = [
+      ...new Set(
+        draftMatches
+          .filter(
+            (m) =>
+              isHeldAwaitingReadiness(m) &&
+              m.pulled_from_match_id &&
+              !inProgressIds.has(m.pulled_from_match_id)
+          )
+          .map((m) => m.pulled_from_match_id as string)
+      ),
+    ];
+    if (sourceIds.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    void supabase
+      .from("matches")
+      .select("id, completed_at")
+      .in("id", sourceIds)
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return;
+        const next = new Map<string, string>();
+        for (const row of data) {
+          if (row.completed_at) next.set(row.id, row.completed_at);
+        }
+        setSourceCompletedAtById(next);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [draftMatches, inProgressMatches, supabase]);
 
   // ── Match actions ─────────────────────────────────────────────
 
@@ -353,6 +402,21 @@ export function useOrganizerMatches(
     [fetchActiveMatches, bumpMatchesRevision]
   );
 
+  const unlockHold = useCallback(
+    async (matchId: string): Promise<{ error?: string }> => {
+      const result = await unlockHeldDraftReadiness(matchId, sessionId);
+      if (!result.success) return { error: result.message ?? "Unlock failed" };
+      await fetchActiveMatches();
+      return {};
+    },
+    [sessionId, fetchActiveMatches]
+  );
+
+  const refreshHeld = useCallback(async () => {
+    const result = await refreshHeldReadiness(sessionId);
+    if (result.success) await fetchActiveMatches();
+  }, [sessionId, fetchActiveMatches]);
+
   return {
     activeMatches,
     setActiveMatches,
@@ -373,5 +437,8 @@ export function useOrganizerMatches(
     publishAllDrafts,
     swapPlayer,
     swapMatchPlayers,
+    sourceCompletedAtById,
+    unlockHold,
+    refreshHeld,
   };
 }

@@ -215,7 +215,7 @@ export async function callNextMatch(
     // Refill the on-deck slot we just consumed — only if toggle is ON.
     // runEngineForSession checks is_auto_matchmaking_on before running,
     // preventing draft generation when the organizer has paused auto-matchmaking.
-    await runEngineForSession(sessionId);
+    await scheduleEngineForSession(sessionId);
     return promoted;
   }
   if (promoted.code === "start_logging_missing") return promoted;
@@ -326,6 +326,20 @@ export async function runEngineForSession(sessionId: string): Promise<void> {
   } finally {
     engineRunningFor.delete(sessionId);
   }
+}
+
+/**
+ * Schedule a refill after a write whose return value does not include the
+ * new drafts. `after()` so the action can return; the engine is best-effort
+ * (same bet as every `queue.ts` join). Must be `export async function` —
+ * US-2 forbids a sync export from a `"use server"` module.
+ */
+export async function scheduleEngineForSession(sessionId: string): Promise<void> {
+  after(() =>
+    runEngineForSession(sessionId).catch((err) =>
+      console.error("[engine] after() unhandled failure:", err)
+    )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────

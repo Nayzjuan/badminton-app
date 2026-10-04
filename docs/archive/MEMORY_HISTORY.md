@@ -15,6 +15,19 @@
 
 ## Part 0 — sessions 2026-09-18, 2026-09-15, 2026-09-13, 2026-09-11, and 2026-08-22
 
+## 2026-10-04 — back-to-back freshness refresh
+
+Archived from `MEMORY.md` after #99. `runAlgorithmWithFreshness` may replace a stale four. Kill switch `MATCHMAKING_FRESHNESS_REFRESH=false`. Gate: `npx tsx scripts/replay-freshness-gate.ts`.
+
+## 2026-10-04 — score + start actor logging
+
+Archived from `MEMORY.md` after #98. Prod stamp `20261003185541` / `score_and_start_actor_logging`. Incident: `docs/incidents/2026-10-03-phantom-14-31-unattributed-score.md`.
+
+## 2026-09-20 — held-swap queue status (Darwin stuck Drafted)
+
+Archived from `MEMORY.md`. Prod `20260920121809` / `queue_status_follows_roster`. Incident: `docs/incidents/2026-09-20-held-swap-stuck-drafted.md`.
+
+
 ## 2026-09-29 — MATCHMAKING.md rewrite
 
 Archived from `MEMORY.md` when score-actor logging shipped. Current engine reference is `MATCHMAKING.md`; PDF via `npm run docs:matchmaking-pdf`.

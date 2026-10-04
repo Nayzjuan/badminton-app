@@ -77,3 +77,66 @@ export const HELD_STATE_META: Record<
   resting: { label: "RESTING", tone: "violet" },
   ready: { label: "READY", tone: "emerald" },
 };
+
+/**
+ * Milliseconds remaining on the rest fallback. Null when we have no
+ * source.completed_at (do not invent a clock). 0 once the window has elapsed.
+ */
+export function restRemainingMs(input: {
+  sourceCompletedAt: string | null;
+  now: number;
+  restFallbackMs: number;
+}): number | null {
+  if (!input.sourceCompletedAt) return null;
+  const done = new Date(input.sourceCompletedAt).getTime();
+  if (Number.isNaN(done)) return null;
+  return Math.max(0, done + input.restFallbackMs - input.now);
+}
+
+/** mm:ss for the RESTING countdown chip. */
+export function formatRestCountdown(remainingMs: number): string {
+  const totalSec = Math.ceil(remainingMs / 1000);
+  const clamped = Math.max(0, totalSec);
+  const mins = Math.floor(clamped / 60);
+  const secs = clamped % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+export type HeldQueueChip = {
+  state: "holding" | "resting";
+  pulledName: string | null;
+};
+
+/**
+ * Queue-row chips for players parked on an unpublished unready hold.
+ * READY holds stay the ordinary "Drafted" chip.
+ */
+export function heldQueueChipsForDrafts(
+  drafts: Array<{
+    is_held: boolean;
+    held_ready_at: string | null;
+    pulled_player_ids: string[] | null;
+    pulled_from_match_id: string | null;
+    players: Array<{ player_id: string; profile?: { display_name?: string | null } | null }>;
+  }>,
+  inProgressMatchIds: ReadonlySet<string>
+): Map<string, HeldQueueChip> {
+  const map = new Map<string, HeldQueueChip>();
+  for (const draft of drafts) {
+    if (!draft.is_held || draft.held_ready_at !== null) continue;
+    const state = deriveHeldState({
+      isHeld: true,
+      heldReadyAt: null,
+      sourceStillPlaying:
+        draft.pulled_from_match_id != null && inProgressMatchIds.has(draft.pulled_from_match_id),
+    });
+    if (state !== "holding" && state !== "resting") continue;
+    const pulledId = draft.pulled_player_ids?.[0] ?? null;
+    const pulledName =
+      draft.players.find((p) => p.player_id === pulledId)?.profile?.display_name ?? null;
+    for (const seat of draft.players) {
+      map.set(seat.player_id, { state, pulledName });
+    }
+  }
+  return map;
+}

@@ -138,6 +138,8 @@ vi.mock("@/app/actions/match-drafts", () => ({
   reorderOnDeckMatches: noop,
   publishMatchAction: noop,
   publishAllDraftMatchesAction: noop,
+  refreshHeldReadiness: noop,
+  unlockHeldDraftReadiness: noop,
 }));
 vi.mock("@/app/actions/swap-player", () => ({
   swapPlayerInMatch: noop,

@@ -35,6 +35,7 @@ import { useSessionClosedWatcher } from "@/hooks/use-session-closed-watcher";
 import { clubBase } from "@/lib/club-paths";
 import type { Profile, Session } from "@/types/database";
 import { DASHBOARD_GRID_SIZE_PX, TOAST_DISMISS_MS } from "@/lib/constants";
+import { heldQueueChipsForDrafts } from "@/lib/cross-court/derive-held-state";
 import { useOrganizerAlerts } from "@/hooks/use-organizer-alerts";
 import { OrganizerCenterAlert } from "@/components/organizer/organizer-center-alert";
 import { OrganizerSessionHeader } from "@/components/organizer/session-header";
@@ -42,6 +43,16 @@ import { EditMatchDialog } from "@/components/organizer/edit-match-dialog";
 import type { QueueNoticePayload } from "@/lib/broadcast";
 import type { SessionNotification } from "@/types/database";
 import { isPendingCorrectionStatus } from "@/lib/session-notifications";
+import { clearUnpublishedDraftsAction } from "@/app/actions/match-drafts";
+import {
+  COURTSIDE_OFFLINE_COPY,
+  COURTSIDE_SLOW_COPY,
+  COURTSIDE_TIMEOUT_COPY,
+  isBrowserOffline,
+  runCourtsideAction,
+} from "@/lib/courtside-action";
+import { clearUnpublishedConfirmCopy, draftStripView } from "@/lib/draft-strip";
+import { OrganizerDraftStrip, OrganizerOfflineBanner } from "./courtside-chrome";
 
 // ── Design token constants ───────────────────────────────────
 // Command-center surface tokens (theme-aware via cc-* tokens in globals.css).
@@ -90,10 +101,15 @@ export function OrganizerDashboard({
     activeMatches,
     onDeckMatches,
     draftMatches,
+    inProgressMatches,
+    sourceCompletedAtById,
+    unlockHold,
+    refreshHeld,
     profiles,
     loading,
     matchesRevision,
     realtimeConnected,
+    fetchCourts,
     addCourt,
     updateCourtStatus,
     removeCourt,
@@ -134,6 +150,14 @@ export function OrganizerDashboard({
   // Declared before useOrganizerDashboard since bottleneckCount is passed as a prop.
   const bottleneckCount = useMemo(() => queue.filter((q) => q.is_bottleneck).length, [queue]);
   const waitingCount = useMemo(() => queue.filter((q) => q.status === "waiting").length, [queue]);
+  const inProgressMatchIds = useMemo(
+    () => new Set(inProgressMatches.map((m) => m.id)),
+    [inProgressMatches]
+  );
+  const heldQueueChips = useMemo(
+    () => heldQueueChipsForDrafts(draftMatches, inProgressMatchIds),
+    [draftMatches, inProgressMatchIds]
+  );
 
   const {
     activeTab,
@@ -165,6 +189,14 @@ export function OrganizerDashboard({
     handleCapChange,
     joinQueue,
     isClosed,
+    addingCourt,
+    setAddingCourt,
+    clearingMatchIds,
+    setClearingMatchIds,
+    publishingMatchIds,
+    setPublishingMatchIds,
+    publishingAll,
+    setPublishingAll,
   } = useOrganizerDashboard({
     sessionId: session.id,
     // `liveSession`, not the `session` RSC prop: that prop is frozen at the
@@ -218,6 +250,59 @@ export function OrganizerDashboard({
   const hasNewDraft = draftNotice !== null;
   // Confirm dialog for enabling auto-publish while unreviewed drafts exist (D9).
   const [autoPublishConfirmOpen, setAutoPublishConfirmOpen] = useState(false);
+  const [clearUnpublishedOpen, setClearUnpublishedOpen] = useState(false);
+  const [clearingUnpublished, setClearingUnpublished] = useState(false);
+  const [browserOnline, setBrowserOnline] = useState(
+    () => typeof navigator === "undefined" || navigator.onLine
+  );
+
+  useEffect(() => {
+    const on = () => setBrowserOnline(true);
+    const off = () => setBrowserOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+    };
+  }, []);
+
+  const visibleDraftCount = draftMatches.length;
+  const clearableDraftCount = draftMatches.filter((m) => !m.is_held).length;
+  const draftStrip = draftStripView({
+    visibleCount: visibleDraftCount,
+    clearableCount: clearableDraftCount,
+    activeTab,
+    sessionActive: liveSession.is_active,
+  });
+
+  const handleClearUnpublished = useCallback(async () => {
+    if (isBrowserOffline()) {
+      toast.error(COURTSIDE_OFFLINE_COPY);
+      return;
+    }
+    setClearingUnpublished(true);
+    const outcome = await runCourtsideAction(clearUnpublishedDraftsAction(session.id), {
+      onSlow: () => toast(COURTSIDE_SLOW_COPY),
+    });
+    setClearingUnpublished(false);
+    setClearUnpublishedOpen(false);
+    if (outcome.status === "timeout") {
+      toast.error(COURTSIDE_TIMEOUT_COPY);
+      return;
+    }
+    if (outcome.status === "error") {
+      toast.error(outcome.error);
+      return;
+    }
+    if (!outcome.value.success) {
+      toast.error(outcome.value.message);
+      return;
+    }
+    toast.success(
+      `Cleared ${clearableDraftCount} unpublished draft${clearableDraftCount !== 1 ? "s" : ""}.`
+    );
+  }, [session.id, clearableDraftCount]);
 
   // The toast is a real external side effect, so it stays in an effect — and
   // the badge-reset timer rides with it. Keying on the notice (not on the
@@ -406,6 +491,29 @@ export function OrganizerDashboard({
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
+
+          <AlertDialog open={clearUnpublishedOpen} onOpenChange={setClearUnpublishedOpen}>
+            <AlertDialogContent className="w-[calc(100%-1.5rem)]">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Clear unpublished drafts?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {clearUnpublishedConfirmCopy(clearableDraftCount)}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter className="flex-col-reverse sm:flex-row sm:justify-end [&>button]:min-h-11 [&>button]:w-full sm:[&>button]:w-auto">
+                <AlertDialogCancel>Keep drafts</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={clearingUnpublished}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void handleClearUnpublished();
+                  }}
+                >
+                  {clearingUnpublished ? "Clearing…" : "Clear unpublished"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </>
       )}
 
@@ -493,9 +601,36 @@ export function OrganizerDashboard({
         className="max-w-7xl mx-auto px-3 lg:px-6 py-4 lg:py-6"
         style={isDashboardLocked ? { pointerEvents: "none", userSelect: "none" } : undefined}
       >
+        {!browserOnline && <OrganizerOfflineBanner />}
+        {draftStrip && (
+          <OrganizerDraftStrip
+            message={draftStrip.message}
+            showClear={draftStrip.showClear}
+            onReview={() => setActiveTab("courts")}
+            onClear={() => setClearUnpublishedOpen(true)}
+          />
+        )}
         <div role="tabpanel" id={`tabpanel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
           {activeTab === "courts" && (
             <div className="space-y-6">
+              {clearableDraftCount > 0 && (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setClearUnpublishedOpen(true)}
+                    className="inline-flex min-h-[44px] w-full items-center justify-center
+                               clip-cut-sm border border-cc-amber/40 px-3
+                               font-command text-[10px] uppercase tracking-[0.10em] text-cc-amber
+                               sm:w-auto"
+                  >
+                    <span className="sm:hidden">Clear {clearableDraftCount} unpublished</span>
+                    <span className="hidden sm:inline">
+                      Clear {clearableDraftCount} unpublished draft
+                      {clearableDraftCount !== 1 ? "s" : ""}
+                    </span>
+                  </button>
+                </div>
+              )}
               {/* On-deck panel — always visible, collapses to empty state when no matches */}
               <OnDeckPanel
                 matches={onDeckMatches}
@@ -513,6 +648,18 @@ export function OrganizerDashboard({
                 maxAutoDraftsOverride={liveSession.max_auto_drafts_override}
                 hasNewDraft={hasNewDraft}
                 queue={queue}
+                clearingIds={clearingMatchIds}
+                onClearingIdsChange={setClearingMatchIds}
+                publishingIds={publishingMatchIds}
+                onPublishingIdsChange={setPublishingMatchIds}
+                isPublishingAll={publishingAll}
+                onPublishingAllChange={setPublishingAll}
+                inProgressMatchIds={inProgressMatchIds}
+                sourceCompletedAtById={sourceCompletedAtById}
+                onUnlockHold={unlockHold}
+                onHeldRefresh={() => {
+                  void refreshHeld();
+                }}
               />
 
               <ActiveCourts
@@ -530,6 +677,9 @@ export function OrganizerDashboard({
                 onCancelMatch={cancelMatch}
                 onClearOnDeckMatch={clearOnDeckMatch}
                 onUpdateTimeLimit={updateTimeLimit}
+                addingCourt={addingCourt}
+                onAddingCourtChange={setAddingCourt}
+                onRefreshCourts={fetchCourts}
               />
             </div>
           )}
@@ -549,6 +699,7 @@ export function OrganizerDashboard({
                  override manually — a repeat warning on top of it would
                  fire hardest exactly when they have no alternative. */
               capSaturationActive={capSaturation !== null}
+              heldQueueChips={heldQueueChips}
             />
           )}
 

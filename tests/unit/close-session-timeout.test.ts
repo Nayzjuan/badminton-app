@@ -25,7 +25,10 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("@/utils/supabase/server", () => ({ createServerSupabaseClient: vi.fn() }));
 vi.mock("@/utils/supabase/service", () => ({ createServiceClient: vi.fn() }));
-vi.mock("@/app/actions/matchmaking", () => ({ runEngineForSession: vi.fn() }));
+vi.mock("@/app/actions/matchmaking", () => ({
+  runEngineForSession: vi.fn(),
+  scheduleEngineForSession: vi.fn(),
+}));
 vi.mock("@/app/actions/match-drafts", () => ({ clearAllUnpublishedDrafts: vi.fn() }));
 vi.mock("@/app/actions/_shared", () => ({
   isSessionOrganizer: vi.fn(),

@@ -33,10 +33,12 @@
 //           body untouched at 'playing' — the physical-truth rule
 //           clear_on_deck_match_atomic has, applied to the path that bypasses it
 //   XC-4  the FULL lifecycle against a real database: Holding → the source
-//           match ends → RESTING (still not ready, which is the production
-//           defect) → the rest elapses → READY (held_ready_at stamped by
+//           match ends with NOTHING to promote → RESTING (still not ready)
+//           → the rest elapses → READY (held_ready_at stamped by
 //           recomputeHeldReadiness itself) → published. Nothing here is
 //           hand-stamped.
+//   XC-5  source end that ALSO promotes an on-deck match stamps the hold
+//           in the same action (the second recompute after promote).
 //
 // Isolation: Layer B — truncateTracked() in afterEach.
 // ============================================================
@@ -54,6 +56,7 @@ import {
   enableAutoMatchmaking,
 } from "./factories";
 import { serviceClient, truncateTracked } from "./helpers/truncate";
+import { flushAfterCallbacks } from "./helpers/after-queue";
 import { queryCommitted } from "./helpers/withTx";
 import { mockAuthAs, clearMockAuth } from "./helpers/mock-auth";
 import { cancelMatchAction, endMatchAction } from "@/app/actions/match-lifecycle";
@@ -261,6 +264,7 @@ describe("Cross-Court Held Drafts (Real DB) — Suite XC", () => {
 
     // ── Assert ─────────────────────────────────────────────────
     expect(result!.success).toBe(true);
+    await flushAfterCallbacks();
 
     const { data: held, error } = await serviceClient()
       .from("matches")
@@ -703,5 +707,37 @@ describe("Cross-Court Held Drafts (Real DB) — Suite XC", () => {
       expect(await queueStatusOf(session.id, m.id)).toBe("on_deck");
     }
     expect(await queueStatusOf(session.id, body.id)).toBe("on_deck");
+  });
+
+  it("XC-5: scoring the source stamps the hold when that end also promotes", async () => {
+    const { organizer, session, sourceMatch, heldId } = await seedHeldDraft();
+    const [d1, d2, d3, d4] = await makePlayers(4);
+    await Promise.all(
+      [d1, d2, d3, d4].map((p) =>
+        makeQueueEntry({ sessionId: session.id, playerId: p.id, status: "on_deck" })
+      )
+    );
+    await makeMatch({
+      sessionId: session.id,
+      teamA: [d1.id, d2.id],
+      teamB: [d3.id, d4.id],
+      status: "pending",
+      isPublished: true,
+    });
+
+    const restore = mockAuthAs(organizer.id);
+    try {
+      expect(await endMatchAction(sourceMatch.id, 21, 18)).toMatchObject({ success: true });
+    } finally {
+      restore();
+    }
+
+    const { data } = await serviceClient()
+      .from("matches")
+      .select("held_ready_at, is_published")
+      .eq("id", heldId)
+      .maybeSingle();
+    expect(data!.held_ready_at).not.toBeNull();
+    expect(data!.is_published).toBe(false);
   });
 });

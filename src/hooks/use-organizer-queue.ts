@@ -30,10 +30,14 @@ function useAction<TArgs extends unknown[]>(
 ): (...args: TArgs) => Promise<{ error?: string }> {
   return useCallback(
     async (...args: TArgs): Promise<{ error?: string }> => {
-      const result = await action(...args);
-      if (!result.success) return { error: result.message ?? result.error ?? "Action failed" };
-      await Promise.all(refreshers.map((r) => r()));
-      return {};
+      try {
+        const result = await action(...args);
+        if (!result.success) return { error: result.message ?? result.error ?? "Action failed" };
+        await Promise.all(refreshers.map((r) => r()));
+        return {};
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "Action failed" };
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     deps

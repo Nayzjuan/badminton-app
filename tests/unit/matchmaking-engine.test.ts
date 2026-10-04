@@ -1593,9 +1593,12 @@ describe("callNextMatch", () => {
 
   it("toggle respected: after successful promotion, engine refills via runEngineForSession (checks toggle)", async () => {
     // Fix ded7697: callNextMatch previously called runEngineInternal directly after promotion,
-    // bypassing the is_auto_matchmaking_on toggle. It now calls runEngineForSession, which
-    // checks the toggle first. The first post-promotion service query is therefore "sessions"
-    // (toggle read), NOT "courts" as it was before the fix.
+    // bypassing the is_auto_matchmaking_on toggle. Successful promote now
+    // scheduleEngineForSession → after() → runEngineForSession, which checks
+    // the toggle first. The first post-promotion service query is therefore
+    // "sessions" (toggle read), NOT "courts" as it was before the fix.
+    // The after() stub invokes but does not await, so the refill queries
+    // land after callNextMatch returns.
     //
     // Gates + promotion are [0]-[9] (see the fixture labels below), so:
     //  [10] sessions → runEngineForSession toggle check → ON
@@ -1639,6 +1642,9 @@ describe("callNextMatch", () => {
     vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
 
     await callNextMatch(SESSION_ID, COURT_ID);
+    await vi.waitFor(() => {
+      expect(serviceMock.queriedTables.length).toBeGreaterThanOrEqual(14);
+    });
 
     // [8] must be "sessions" — confirms runEngineForSession (not runEngineInternal) was called.
     // (isSessionOrganizer adds sessions + session_organizers, the TWO court gates add

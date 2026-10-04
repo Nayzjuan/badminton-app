@@ -17,19 +17,13 @@
 
 ---
 
-## 2026-10-04 — back-to-back freshness refresh
+## 2026-10-04 — UNCOMMITTED: held-draft RESTING publish + skip-rest
 
-`runAlgorithm` is unchanged. `runAlgorithmWithFreshness` may replace a stale four (`forcedRepeat` or `isBackToBackRepeat`). Guard: ±2, keep Red Zone players already in today's four, games-ahead and anchor-overlap cannot rise, wait slack 10, consecutive-opponent staleness cannot rise. Fail-open. Kill switch `MATCHMAKING_FRESHNESS_REFRESH=false`. Organizer swaps unrestricted. Gate: `npx tsx scripts/replay-freshness-gate.ts` (draft-queue, independent brute, 50 synthetics, K=5). Ship bar is G-1 (avoidable 223→0, Oct 3 9.4→0). Option 2 stays at 3. Rollback = env `false`. Watch first live session for refresh success vs fail-open.
+Option A: Publish stays hidden until `held_ready_at`. End/cancel run `recomputeHeldReadiness` after promote so a same-action promotion can stamp (auto-OFF used to skip the only second pass). `refreshHeldReadiness` on REST 0:00 and `HELD_READINESS_REFRESH_MS` while RESTING cards show. `unlockHeldDraftReadiness` stamps only — no publish; HOLDING refused. Card: Holding / Resting + `REST m:ss` / Ready. Queue: `Held · waiting on {name}` / `Held · resting`. Pins: UH-1–5, UI-HELD-2/2b, CC-DHS-09–11, XC-5. Not committed.
 
-## 2026-10-04 — score + start actor logging
+## 2026-10-04 — organizer mutation resilience (slow net)
 
-Phantom 14–31 `ca0d02ef` (session `1b7f5a32`) completed with no scorer. Cleanup already applied in prod. TypeScript requires `complete_match_with_score` / `start_match_on_court` (fail-closed, no JS fallback). Repo `20261004000000`. Prod stamp `20261003185541` / `score_and_start_actor_logging`. EXECUTE is `service_role` + owner only. Incident: `docs/incidents/2026-10-03-phantom-14-31-unattributed-score.md`.
-
----
-
-## 2026-09-20 — held-swap queue status (Darwin stuck Drafted)
-
-`queue_status_after_roster_change` is the single derivation after roster writes: in_progress → playing; unpublished pending → drafted; published pending → on_deck; else waiting. `swap_player_in_match` / `swap_match_players` / live-swap / `requeue_finished_players` (`p_drafted_ids` ignored) apply it. `swap_match_players` rejects a still-playing body. N-2b: `recomputeHeldReadiness` downgrades a hold whose body left the live source court. Cancel restore intersects `pulled_player_ids` with hold `match_players`. Undo only when outgoing is `waiting`. Prod `20260920121809` / `queue_status_follows_roster` (repo `20260920000000`). Pins: HS-1…HS-8, CC-RDY-CC05, CC-RDY-ERR6. Incident: `docs/incidents/2026-09-20-held-swap-stuck-drafted.md`.
+`scheduleEngineForSession` is `export async function` on `matchmaking.ts` only. Courtside chrome uses `runCourtsideAction` (5s / 12s / offline). Engine refill after score/clear/publish/toggle-ON/successful Call Next is scheduled via `after()`. Sticky draft strip + `clearUnpublishedDraftsAction`. Out of this ship: Queue Create / live-swap pending. Plan: `docs/ORGANIZER_MUTATION_RESILIENCE_PLAN.md`.
 
 ## 🔴 OPEN — committed credentials removed from the tree, NOT yet revoked
 

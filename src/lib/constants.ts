@@ -445,6 +445,13 @@ export const SPLIT_PREVIEW_BUDGET = 4_096;
 export const CROSS_COURT_REST_FALLBACK_MINUTES = 3;
 
 /**
+ * How often the organizer board re-runs recomputeHeldReadiness while a
+ * RESTING hold is on screen. Auto-ON already heartbeats via the engine;
+ * this is the auto-OFF / quiet-session path, and the 0:00 countdown flip.
+ */
+export const HELD_READINESS_REFRESH_MS = 15_000;
+
+/**
  * Hold-age cancel: a held draft whose pulled body is STILL PLAYING after this
  * many minutes is cancelled, returning all three parked waiters to the queue.
  *
@@ -578,6 +585,15 @@ export const TOAST_DISMISS_MS = 5_000;
 /** ms before an error message auto-dismisses.
  *  Longer than TOAST_DISMISS_MS — errors need more read time. */
 export const ERROR_AUTO_DISMISS_MS = 8_000;
+
+/** Soft “still working” copy while a courtside mutation is in flight. */
+export const COURTSIDE_ACTION_SLOW_MS = 5_000;
+
+/**
+ * Hard ceiling on waiting for a courtside server action. Unlocks chrome;
+ * does not cancel the POST. See `runCourtsideAction`.
+ */
+export const COURTSIDE_ACTION_WATCHDOG_MS = 12_000;
 
 // ── Court timer constants ─────────────────────────────────────────────────────
 

@@ -68,6 +68,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import type { QueueFullWithWaitTime, SkillLevel, Profile } from "@/types/database";
+import type { HeldQueueChip } from "@/lib/cross-court/derive-held-state";
 
 // Re-export constant for clarity in this file.
 const REQUIRED_PLAYERS = PLAYERS_PER_MATCH; // 4
@@ -105,6 +106,8 @@ interface QueueControlProps {
    * repeat warning is suppressed entirely for its duration.
    */
   capSaturationActive?: boolean;
+  /** Players parked on an unpublished unready hold — violet chip instead of Drafted. */
+  heldQueueChips?: ReadonlyMap<string, HeldQueueChip>;
 }
 
 export function QueueControl({
@@ -118,6 +121,7 @@ export function QueueControl({
   onJoinQueue,
   matchesRevision = 0,
   capSaturationActive = false,
+  heldQueueChips,
 }: QueueControlProps) {
   // Four positional slots: [A1, A2, B1, B2]. null = free.
   const [slots, setSlots] = useState<Slots>(EMPTY_SLOTS);
@@ -779,15 +783,37 @@ export function QueueControl({
                                   On Deck
                                 </span>
                               )}
-                              {entry.status === "drafted" && (
-                                <span
-                                  className="rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5
-                                         text-[10px] font-bold uppercase tracking-wide
-                                         text-slate-500 dark:text-slate-400"
-                                >
-                                  Drafted
-                                </span>
-                              )}
+                              {entry.status === "drafted" &&
+                                (() => {
+                                  const heldChip = heldQueueChips?.get(entry.player_id);
+                                  if (heldChip) {
+                                    const label =
+                                      heldChip.state === "holding"
+                                        ? heldChip.pulledName
+                                          ? `Held · waiting on ${heldChip.pulledName}`
+                                          : "Held · waiting on court"
+                                        : "Held · resting";
+                                    return (
+                                      <span
+                                        title={label}
+                                        className="inline-block max-w-[11rem] truncate rounded-full bg-violet-100 px-2 py-0.5
+                                               align-middle text-[10px] font-bold uppercase tracking-wide
+                                               text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
+                                      >
+                                        {label}
+                                      </span>
+                                    );
+                                  }
+                                  return (
+                                    <span
+                                      className="rounded-full bg-slate-200 dark:bg-slate-700 px-2 py-0.5
+                                             text-[10px] font-bold uppercase tracking-wide
+                                             text-slate-500 dark:text-slate-400"
+                                    >
+                                      Drafted
+                                    </span>
+                                  );
+                                })()}
                               {isPaused && <PausedBadge pausedAt={entry.paused_at} />}
                             </span>
                           </td>

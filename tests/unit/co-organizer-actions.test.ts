@@ -25,6 +25,7 @@ vi.mock("@/app/actions/_shared", async (importOriginal) => {
 });
 vi.mock("@/app/actions/matchmaking", () => ({
   runEngineForSession: vi.fn().mockResolvedValue(undefined),
+  scheduleEngineForSession: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/app/actions/match-drafts", () => ({ clearAllUnpublishedDrafts: vi.fn() }));
 vi.mock("@/lib/broadcast", () => ({
