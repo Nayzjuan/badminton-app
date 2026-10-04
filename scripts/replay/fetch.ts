@@ -39,6 +39,7 @@ export const DEFAULT_SESSION_IDS = [
   "69d8a21b-b685-404c-8111-2ce25dd88ae6", // 07/09 Thursday — 18p / 2ct
   "bcf19499-d5b8-4fba-9dcf-dd9e411621aa", // 06/25 Thursday — 18p / 2ct
   "c1c4439c-8d60-40a9-a41a-a49e76442a21", // 07/25 Saturday — 39p / 4ct (stress)
+  "1b7f5a32-1846-4880-9ca0-3144c6385086", // 10/03 Saturday — 30p / 3ct (back-to-back near-identicals)
 ];
 
 function serviceClient() {

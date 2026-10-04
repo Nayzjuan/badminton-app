@@ -390,7 +390,9 @@ export type QueuePreset =
   | "soft_gate" // alice/bob/cara/dan in active match; eve/frank/grace/henry waiting (4 = GATE_POOL_THRESHOLD)
   | "two_matches_on_deck" // match1: alice/bob vs cara/dan (pending); match2: eve/frank vs grace/henry (pending)
   | "diversity_pool_8" // 8 intermediates waiting + 1 COMPLETED match (alice/bob vs cara/dan); used by scenario-h [H-1]
-  | "diversity_pool_4"; // ONLY alice/bob/cara/dan waiting (mixed skills) + 1 COMPLETED match; used by scenario-h [H-2]
+  | "diversity_pool_4" // ONLY alice/bob/cara/dan waiting (mixed skills) + 1 COMPLETED match; used by scenario-h [H-2]
+  | "back_to_back_lookback_gap" // Oct 3 shape: last game sits past lookback; a ±2 alternative exists
+  | "back_to_back_thin_band"; // last game sits past lookback; no fresh alternative — fail-open
 
 // ── softResetSandboxSession ───────────────────────────────────
 // Clears all match/queue/court data for the sandbox session but
@@ -1212,6 +1214,136 @@ export async function seedSession(
       .in("player_id", [bots.alice.userId, bots.bob.userId, bots.cara.userId, bots.dan.userId]);
     if (gpErr) {
       throw new Error(`[seed:diversity_pool_4] Failed to bump games_played: ${gpErr.message}`);
+    }
+  }
+
+  if (preset === "back_to_back_lookback_gap" || preset === "back_to_back_thin_band") {
+    const extras = [
+      { key: "frank", name: "E2E_Frank", skill: "advanced" as const },
+      { key: "grace", name: "E2E_Grace", skill: "advanced" as const },
+      { key: "henry", name: "E2E_Henry", skill: "advanced" as const },
+      { key: "ivy", name: "E2E_Ivy", skill: "advanced" as const },
+      { key: "jack", name: "E2E_Jack", skill: "advanced" as const },
+      { key: "kate", name: "E2E_Kate", skill: "advanced" as const },
+      { key: "leo", name: "E2E_Leo", skill: "advanced" as const },
+      { key: "mia", name: "E2E_Mia", skill: "advanced" as const },
+    ];
+    for (const def of extras) {
+      const { data: userData, error: userErr } = await db.auth.admin.createUser({
+        email: `${def.name.toLowerCase()}@playwright.local`,
+        email_confirm: true,
+        user_metadata: { display_name: def.name },
+      });
+      if (userErr || !userData.user) {
+        throw new Error(`[seed:${preset}] Failed to create ${def.name}: ${userErr?.message}`);
+      }
+      const { error: profileErr } = await db
+        .from("profiles")
+        .upsert(
+          { id: userData.user.id, display_name: def.name, skill_level: def.skill, pin: "1234" },
+          { onConflict: "id" }
+        );
+      if (profileErr) {
+        throw new Error(`[seed:${preset}] Failed to upsert ${def.name}: ${profileErr.message}`);
+      }
+      extraPlayers[def.key] = {
+        userId: userData.user.id,
+        profileId: userData.user.id,
+        displayName: def.name,
+        skill: def.skill,
+      };
+    }
+
+    await db
+      .from("profiles")
+      .update({ skill_level: "beginner" })
+      .in("id", [bots.alice.userId, bots.bob.userId, bots.cara.userId]);
+    await db
+      .from("profiles")
+      .update({ skill_level: "lower_intermediate" })
+      .eq("id", bots.dan.userId);
+    await db.from("profiles").update({ skill_level: "intermediate" }).eq("id", bots.eve.userId);
+    bots.alice.skill = "beginner";
+    bots.bob.skill = "beginner";
+    bots.cara.skill = "beginner";
+    bots.dan.skill = "lower_intermediate";
+    bots.eve.skill = "intermediate";
+
+    const t = (mins: number) => new Date(Date.now() - mins * 60_000).toISOString();
+    const insertCompleted = async (
+      teamA: [string, string],
+      teamB: [string, string],
+      minsAgo: number
+    ) => {
+      const { data: row, error } = await db
+        .from("matches")
+        .insert({
+          session_id: sessionId,
+          court_id: null,
+          status: "completed",
+          is_mixed_level: false,
+          sort_order: 0,
+          team_a_score: 21,
+          team_b_score: 18,
+          started_at: t(minsAgo + 20),
+          completed_at: t(minsAgo),
+        })
+        .select("id")
+        .single();
+      if (error || !row) throw new Error(`[seed:${preset}] completed match: ${error?.message}`);
+      await db
+        .from("matches")
+        .update({ created_at: t(minsAgo + 25) })
+        .eq("id", row.id);
+      const { error: mpErr } = await db.from("match_players").insert([
+        { match_id: row.id, player_id: teamA[0], team: "a" as const },
+        { match_id: row.id, player_id: teamA[1], team: "a" as const },
+        { match_id: row.id, player_id: teamB[0], team: "b" as const },
+        { match_id: row.id, player_id: teamB[1], team: "b" as const },
+      ]);
+      if (mpErr) throw new Error(`[seed:${preset}] match_players: ${mpErr.message}`);
+      return row.id;
+    };
+
+    matchId = await insertCompleted(
+      [bots.alice.userId, bots.bob.userId],
+      [bots.cara.userId, extraPlayers.frank.userId],
+      80
+    );
+    await insertCompleted(
+      [extraPlayers.frank.userId, extraPlayers.grace.userId],
+      [extraPlayers.henry.userId, extraPlayers.ivy.userId],
+      40
+    );
+    await insertCompleted(
+      [extraPlayers.jack.userId, extraPlayers.kate.userId],
+      [extraPlayers.leo.userId, extraPlayers.mia.userId],
+      10
+    );
+
+    await db
+      .from("queue_entries")
+      .update({ games_played: 3, joined_at: t(12) })
+      .eq("session_id", sessionId)
+      .in("player_id", [bots.alice.userId, bots.bob.userId, bots.cara.userId]);
+    await db
+      .from("queue_entries")
+      .update({ games_played: 3, joined_at: t(16) })
+      .eq("session_id", sessionId)
+      .eq("player_id", bots.dan.userId);
+    await db
+      .from("queue_entries")
+      .update({ games_played: 3, joined_at: t(8) })
+      .eq("session_id", sessionId)
+      .eq("player_id", bots.eve.userId);
+
+    if (preset === "back_to_back_thin_band") {
+      const { error: eveDelErr } = await db
+        .from("queue_entries")
+        .delete()
+        .eq("session_id", sessionId)
+        .eq("player_id", bots.eve.userId);
+      if (eveDelErr) throw new Error(`[seed:${preset}] remove eve: ${eveDelErr.message}`);
     }
   }
 

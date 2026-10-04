@@ -12,6 +12,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "docs:index": "node scripts/gen-doc-index.mjs",
+    "test:freshness-gate": "npx tsx scripts/replay-freshness-gate.ts",
     "test:unit": "vitest run",
     "test:unit:coverage": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts --reporter=verbose",

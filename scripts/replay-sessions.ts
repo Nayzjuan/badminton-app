@@ -65,16 +65,32 @@ type Args = {
   save: string | null;
   compare: string | null;
   sessions: string[];
+  draftQueue: boolean;
+  freshness: boolean | undefined;
+  jitter: number;
 };
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { refresh: false, save: null, compare: null, sessions: [] };
+  const args: Args = {
+    refresh: false,
+    save: null,
+    compare: null,
+    sessions: [],
+    draftQueue: false,
+    freshness: undefined,
+    jitter: 0,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--refresh") args.refresh = true;
     else if (a === "--save") args.save = argv[++i] ?? null;
     else if (a === "--compare") args.compare = argv[++i] ?? null;
-    else if (a === "--session") {
+    else if (a === "--draft-queue") args.draftQueue = true;
+    else if (a === "--jitter") args.jitter = Number(argv[++i] ?? 0);
+    else if (a === "--freshness") {
+      const v = (argv[++i] ?? "on").toLowerCase();
+      args.freshness = v !== "off" && v !== "false" && v !== "0";
+    } else if (a === "--session") {
       const id = argv[++i];
       if (id) args.sessions.push(id);
     } else if (a === "--help" || a === "-h") {
@@ -85,6 +101,9 @@ function parseArgs(argv: string[]): Args {
           "  --save <label>       write this run's metrics to .replay-cache/results/<label>.json",
           "  --compare <label>    diff this run against a saved one",
           "  --session <uuid>     replay one session (repeatable)",
+          "  --draft-queue        compose on-deck like runEngineInternal (P0-6)",
+          "  --jitter <k>         replay K times with ±10% duration jitter; print means",
+          "  --freshness on|off   override MATCHMAKING_FRESHNESS_REFRESH",
         ].join("\n")
       );
       process.exit(0);
@@ -181,7 +200,8 @@ function metricRows(m: SessionMetrics): [string, string][] {
       "Consecutive-partner repeats",
       `${m.consecutivePartnerRepeats}  (${pct(m.consecutivePartnerRate)})`,
     ],
-    ["Near-identical foursomes", `${m.consecutiveThreeOfFour}  (3 of 3 co-players repeated)`],
+    ["Identical foursomes", `${m.consecutiveThreeOfFour}  (3 of 3 co-players repeated)`],
+    ["Near-identical foursomes", `${m.consecutiveNearIdentical}  (≥2 of 3 co-players repeated)`],
     ["Opponent variety", pct(m.opponentVariety)],
     ["Partner variety", pct(m.partnerVariety)],
     ["Pairs over cap", `${m.opponentPairsOverCap} opponent · ${m.partnershipsOverCap} partnership`],
@@ -422,7 +442,11 @@ async function main() {
     console.warn = (...a: unknown[]) => engineLog.push(a.join(" "));
     let result;
     try {
-      result = replaySession(fixture);
+      result = replaySession(fixture, {
+        draftQueue: args.draftQueue,
+        freshness: args.freshness,
+        durationJitter: args.jitter > 0 ? { seed: args.jitter, pct: 0.1 } : undefined,
+      });
     } finally {
       console.log = realLog;
       console.warn = realWarn;

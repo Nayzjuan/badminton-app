@@ -526,6 +526,7 @@ export type MatchUpdate = Partial<
     | "started_at"
     | "completed_at"
     | "created_method"
+    | "created_at" // test seeding only — history order for diversity lookback
     | "modification_count" // prod maintains this via record_match_event; allowed here for test seeding
     | "is_published"
     // final_classification is GENERATED — never written directly.

@@ -43,17 +43,13 @@ import { pushToPlayers } from "@/lib/notifications/push-server";
 import { logPublishedEvents } from "@/lib/match-event-log";
 import {
   PLAYERS_PER_MATCH,
-  CRITICAL_WAIT_MINUTES,
-  GATE_POOL_THRESHOLD,
-  GATE_HOLD_MINUTES,
-  MIN_FREE_POOL_FOR_ON_DECK,
   CROSS_COURT_REST_FALLBACK_MINUTES,
   CROSS_COURT_MAX_HOLD_MINUTES,
 } from "@/lib/constants";
 import {
-  getDynamicDraftCap,
   shouldAutoPublishMatch,
   runAlgorithm,
+  runAlgorithmWithFreshness,
   scoreAndSortPool,
   isHeldMatchReady,
   heldDraftExpired,
@@ -64,6 +60,12 @@ import {
   buildCrossCourtProposal,
   isRedZonePlayer,
 } from "@/lib/matchmaking-core";
+import {
+  isFreshnessRefreshEnabled,
+  planSlots,
+  softGateDecision,
+  shouldContinueSlot,
+} from "@/lib/matchmaking-slots";
 import {
   fetchActivePool,
   fetchRecentClearedRosters,
@@ -488,13 +490,15 @@ async function runEngineInternal(
   }
 
   const autoPublish = shouldAutoPublishMatch(sessionRow?.auto_publish ?? false);
+  const freshnessRefresh = isFreshnessRefreshEnabled();
 
   const waitingCount = waitingRows?.length ?? 0;
-  const dynamicCap = getDynamicDraftCap(waitingCount);
-  // Apply organizer override as a ceiling: min(override, dynamicCap).
-  // null override means "use dynamic cap as-is".
-  const override = sessionRow?.max_auto_drafts_override ?? null;
-  const effectiveCap = override != null ? Math.min(override, dynamicCap) : dynamicCap;
+  const { dynamicCap, effectiveCap, draftCount, slotsAvailable } = planSlots({
+    waitingCount,
+    override: sessionRow?.max_auto_drafts_override ?? null,
+    autoPublish,
+    pendingRows,
+  });
 
   // Mode-dependent cap count, both derived from the single pending-match read.
   //
@@ -529,15 +533,10 @@ async function runEngineInternal(
   //   are excluded by this same branch and bounded by nothing here at all (they
   //   drain as courts free). `effectiveCap` bounds the review queue, not the
   //   pending set.
-  const draftCount = autoPublish
-    ? pendingRows.filter((m) => m.is_published || m.is_held).length
-    : pendingRows.filter((m) => !m.is_published && !isHeldAwaitingReadiness(m)).length;
-  const slotsAvailable = Math.max(0, effectiveCap - draftCount);
-
   console.log(
     `[engine] runEngineInternal: mode=${autoPublish ? "auto" : "draft"} courts=${courtCount} ` +
       `waiting=${waitingCount} pending=${draftCount} dynamic=${dynamicCap} ` +
-      `effective=${effectiveCap} slots=${slotsAvailable}`
+      `effective=${effectiveCap} slots=${slotsAvailable} freshnessRefresh=${freshnessRefresh ? "on" : "off"}`
   );
   if (slotsAvailable <= 0) {
     console.log(
@@ -562,42 +561,34 @@ async function runEngineInternal(
 
   let estimatedWaiting = waitingCount; // already fetched above
 
-  if (!bypassGate) {
-    if (waitingRows && waitingCount > 0 && waitingCount <= GATE_POOL_THRESHOLD) {
-      const maxWait = Math.max(...waitingRows.map((r) => (r.wait_minutes as number | null) ?? 0));
-      const hasRedZone = maxWait >= CRITICAL_WAIT_MINUTES;
-      const gateTimedOut = maxWait >= GATE_HOLD_MINUTES;
+  const maxWait =
+    waitingRows && waitingCount > 0
+      ? Math.max(...waitingRows.map((r) => (r.wait_minutes as number | null) ?? 0))
+      : 0;
+  if (softGateDecision({ bypassGate, waitingCount, maxWait }) === "needs-active-count") {
+    const { count: activeCount, error: activeErr } = await supabase
+      .from("matches")
+      .select("id", { count: "exact", head: true })
+      .eq("session_id", sessionId)
+      .eq("status", "in_progress");
 
-      if (!hasRedZone && !gateTimedOut) {
-        const { count: activeCount, error: activeErr } = await supabase
-          .from("matches")
-          .select("id", { count: "exact", head: true })
-          .eq("session_id", sessionId)
-          .eq("status", "in_progress");
-
-        if (!activeErr && (activeCount ?? 0) > 0) {
-          console.log(
-            `[engine] Soft gate active: pool=${waitingCount} ≤ ${GATE_POOL_THRESHOLD}, ` +
-              `maxWait=${maxWait.toFixed(1)}min < ${GATE_HOLD_MINUTES}min, ` +
-              `activeCourts=${activeCount} — deferring on-deck for cross-court mix`
-          );
-          return;
-        }
-      }
+    if (!activeErr && (activeCount ?? 0) > 0) {
+      console.log(
+        `[engine] Soft gate active: pool=${waitingCount}, ` +
+          `maxWait=${maxWait.toFixed(1)}min, ` +
+          `activeCourts=${activeCount} — deferring on-deck for cross-court mix`
+      );
+      return;
     }
   }
 
   for (let i = 0; i < slotsAvailable; i++) {
-    // Pool diversity cap: from the 2nd slot onwards.
-    if (!bypassGate && i > 0) {
-      const minPool = PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK; // 8
-      if (estimatedWaiting < minPool) {
-        console.log(
-          `[engine] Pool diversity cap at slot ${i + 1}: ` +
-            `estimatedWaiting=${estimatedWaiting} < ${minPool} — stopping to preserve pool`
-        );
-        break;
-      }
+    if (!shouldContinueSlot({ slotIndex: i, estimatedWaiting, bypassGate })) {
+      console.log(
+        `[engine] Pool diversity cap at slot ${i + 1}: ` +
+          `estimatedWaiting=${estimatedWaiting} — stopping to preserve pool`
+      );
+      break;
     }
 
     // ── Per-slot data fetch ──────────────────────────────────────
@@ -656,16 +647,27 @@ async function runEngineInternal(
     const { lastOpponents, lastPartners } = deriveLastSides(snapshot);
 
     // ── Pure algorithm — zero DB calls ───────────────────────────
-    const result = runAlgorithm(
-      pool,
-      partnershipCounts,
-      overlapMap,
-      recentRosters,
-      opponentCounts,
-      rejectedRosters,
-      lastOpponents,
-      lastPartners
-    );
+    const result = freshnessRefresh
+      ? runAlgorithmWithFreshness(
+          pool,
+          partnershipCounts,
+          overlapMap,
+          recentRosters,
+          opponentCounts,
+          rejectedRosters,
+          lastOpponents,
+          lastPartners
+        )
+      : runAlgorithm(
+          pool,
+          partnershipCounts,
+          overlapMap,
+          recentRosters,
+          opponentCounts,
+          rejectedRosters,
+          lastOpponents,
+          lastPartners
+        );
     const { proposal, capSaturation } = result;
 
     if (!proposal) {
@@ -804,6 +806,7 @@ async function runEngineInternal(
             lastPartners,
             baseStaleness,
             forcedRepeat: result.forcedRepeat,
+            backToBackFilter: freshnessRefresh,
           }
         );
 

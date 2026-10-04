@@ -38,6 +38,8 @@ export type FixturePlayer = {
   skill_level: string;
   /** Minutes from t0 when this player entered the queue. 0 = first to arrive. */
   joinMin: number;
+  /** Minutes from t0 when they leave. Absent = stay to the horizon. Synthetics only. */
+  leaveMin?: number;
 };
 
 export type FixtureCourt = {
@@ -88,6 +90,32 @@ export type ReplayDiagnostics = {
   forcedRepeats: number;
   /** Evaluations skipped because fewer than 4 players were waiting. */
   thinPoolEvents: number;
+  /** Distinct stall episodes (consecutive no-match with ≥4 waiting = one). */
+  stallEpisodes: number;
+  /** Served fours that were a per-player back-to-back repeat. */
+  backToBackServed: number;
+  /** Of those, how many the independent brute force could have freshened. */
+  avoidableNearIdentical: number;
+  refreshAttempts: number;
+  refreshSuccesses: number;
+  /** Wait minutes of every seated player at compose time. */
+  draftWaits: number[];
+  redZoneEntries: number;
+  hardCapEntries: number;
+  mixedLevelMatches: number;
+  skillSpread2Matches: number;
+  teamSkillGaps: number[];
+  /** Wall-clock ms of each `runAlgorithmWithFreshness` call (ON runs only). */
+  wrapperMs: number[];
+};
+
+export type ReplayOptions = {
+  /** Override MATCHMAKING_FRESHNESS_REFRESH for this run. */
+  freshness?: boolean;
+  /** Compose ahead like runEngineInternal instead of seating on court-free. */
+  draftQueue?: boolean;
+  waitSlackMinutes?: number;
+  durationJitter?: { seed: number; pct: number };
 };
 
 export type ReplayResult = {

@@ -372,6 +372,8 @@ export interface MakeCompletedMatchOptions {
   scoreB?: number;
   /** Optional court UUID. */
   courtId?: string | null;
+  /** Explicit created_at so history order is deterministic. */
+  createdAt?: string;
 }
 
 /**
@@ -388,6 +390,7 @@ export async function makeCompletedMatch({
   scoreA = 21,
   scoreB = 15,
   courtId = null,
+  createdAt,
 }: MakeCompletedMatchOptions): Promise<MatchResult> {
   const client = serviceClient();
 
@@ -419,6 +422,7 @@ export async function makeCompletedMatch({
       team_a_score: scoreA,
       team_b_score: scoreB,
       completed_at: new Date().toISOString(),
+      ...(createdAt ? { created_at: createdAt } : {}),
     })
     .eq("id", match.id);
 

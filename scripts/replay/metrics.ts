@@ -27,8 +27,10 @@ export type SessionMetrics = {
   /** Back-to-back games that shared the same partner. */
   consecutivePartnerRepeats: number;
   consecutivePartnerRate: number;
-  /** Back-to-back games sharing ≥3 of the other 3 players — a near-identical foursome. */
+  /** Back-to-back games sharing all 3 other players — an identical foursome. */
   consecutiveThreeOfFour: number;
+  /** Back-to-back games carrying ≥2 of the other 3 players — the owner's complaint. */
+  consecutiveNearIdentical: number;
   /** Denominator for all three rates above. */
   consecutivePairs: number;
 
@@ -106,6 +108,7 @@ export function computeMetrics(matches: PlayedMatch[], rosterSize: number): Sess
   let consecutiveOpponentRepeats = 0;
   let consecutivePartnerRepeats = 0;
   let consecutiveThreeOfFour = 0;
+  let consecutiveNearIdentical = 0;
   let consecutivePairs = 0;
 
   const cycles: number[] = [];
@@ -129,7 +132,9 @@ export function computeMetrics(matches: PlayedMatch[], rosterSize: number): Sess
       // Same three co-players two games running = the foursome barely moved.
       const prevCo = new Set([...prev.opponents, prev.partner].filter(Boolean));
       const curCo = [...cur.opponents, cur.partner].filter(Boolean);
-      if (curCo.filter((p) => prevCo.has(p)).length >= 3) consecutiveThreeOfFour++;
+      const sharedCo = curCo.filter((p) => prevCo.has(p)).length;
+      if (sharedCo >= 3) consecutiveThreeOfFour++;
+      if (sharedCo >= 2) consecutiveNearIdentical++;
 
       cycles.push(cur.startMin - prev.startMin);
     }
@@ -178,6 +183,7 @@ export function computeMetrics(matches: PlayedMatch[], rosterSize: number): Sess
     consecutivePartnerRepeats,
     consecutivePartnerRate: consecutivePairs > 0 ? consecutivePartnerRepeats / consecutivePairs : 0,
     consecutiveThreeOfFour,
+    consecutiveNearIdentical,
     consecutivePairs,
 
     opponentVariety: opponentEncounters > 0 ? opponentCounts.size / opponentEncounters : 0,
