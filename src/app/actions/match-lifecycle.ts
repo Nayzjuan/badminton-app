@@ -442,7 +442,57 @@ async function endMatchInternal(
 //     and reverts each player's queue_entries row to "playing"
 //     with games_played decremented by 1. Use this when a player
 //     accidentally submitted the score before the game finished.
+//
+// After either mode succeeds, rebuild cross-session ledgers
+// (partnerships + rivalries) via refresh_cross_session_stats so a
+// win-flip or un-complete does not leave all-time W/L stale until
+// the next closeSession. Closed sessions also recompute Wrapped.
 // ============================================================
+
+/** Post-correction ledger / board / Wrapped refresh shared by score-edit and revert. */
+async function refreshLedgersAfterMatchCorrection(
+  db: ReturnType<typeof createServiceClient>,
+  sessionId: string
+): Promise<void> {
+  const { error: ledgerErr } = await db.rpc("refresh_cross_session_stats", {
+    p_session_id: sessionId,
+  });
+  if (ledgerErr) {
+    console.warn(
+      "[updateMatchDetails] refresh_cross_session_stats failed (non-fatal):",
+      ledgerErr.message
+    );
+  }
+
+  if (shouldRefreshLeaderboard()) {
+    void db.rpc("refresh_alltime_leaderboard").then(({ error }) => {
+      if (error) {
+        console.warn("[updateMatchDetails] leaderboard refresh failed:", error.message);
+      }
+    });
+  }
+
+  const { data: sessionRow } = await db
+    .from("sessions")
+    .select("is_active")
+    .eq("id", sessionId)
+    .maybeSingle();
+
+  if (sessionRow && !sessionRow.is_active) {
+    after(() =>
+      Promise.resolve(db.rpc("compute_session_wrapped", { p_session_id: sessionId }))
+        .then(({ error: wrappedErr }) => {
+          if (wrappedErr) {
+            console.warn(
+              "[updateMatchDetails] compute_session_wrapped failed (non-fatal):",
+              wrappedErr.message
+            );
+          }
+        })
+        .catch((err) => console.error("[updateMatchDetails] compute_session_wrapped threw:", err))
+    );
+  }
+}
 
 /**
  * Organizer-only score correction or match revert.
@@ -570,6 +620,7 @@ export async function updateMatchDetails(
       },
     });
     await closePendingScoreCorrections(matchId, "resolved", actor.id);
+    await refreshLedgersAfterMatchCorrection(db, match.session_id);
     return { success: true, message: "Scores updated." };
   }
 
@@ -671,6 +722,7 @@ export async function updateMatchDetails(
   });
 
   await closePendingScoreCorrections(matchId, "superseded", actor.id);
+  await refreshLedgersAfterMatchCorrection(db, match.session_id);
   return { success: true, message: "Match reverted. Players can re-submit the correct score." };
 }
 

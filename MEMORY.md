@@ -17,6 +17,12 @@
 
 ---
 
+## 2026-10-18 — post-completion ledger rebuild (Fix + score edit)
+
+Hand-corrected Court 9 match `0e53e4da-…` (Mich↔Miggy; 26–31 Team B). Probe drift on Chu↔Miggy healed via `refresh_cross_session_stats`.
+
+`20261018000000_fix_record_rebuild_ledgers` — Fix drops `_fix_record_partnership_delta`, ends with `refresh_cross_session_stats` + `refresh_alltime_leaderboard`. `updateMatchDetails` score-edit/revert does the same (+ Wrapped when closed). Prod stamp `20261017165116`. Suite FRL.
+
 ## 2026-10-04 — CI follow-up after #100
 
 `use-organizer-dashboard.ts` was below the perFile floor (lines 78 / statements 75 / branches 70) because Auto-publish and courtside offline/timeout were never driven. OD-CS covers those. I-3 used 8 waiters; after the first four, `shouldContinueSlot` sees 4 and stops (`PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK`). Fixture is 12 so slot 2 can fire. Branch `fix/ci-after-held-readiness`.
@@ -138,6 +144,8 @@ Resolve a suspected gap file by file, never by count — and check that doc befo
 
 | Applied | Stamp |
 |---|---|
+| `20261018000000_fix_record_rebuild_ledgers` | `20261017165116` |
+| `20261004000000_score_and_start_actor_logging` | `20261003185541` |
 | `20260920000000_queue_status_follows_roster` | `20260920121809` |
 | `20260821000000_prior_sessions_exclude_hidden` | `20260821000000` |
 | `20260820000000_wrapped_reads_the_ledger_as_of_this_session` | `20260820000000` |

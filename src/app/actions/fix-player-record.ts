@@ -13,8 +13,9 @@
 //   • Team flip (both players already in the match → swap teams)
 //   • Full replacement (in_player from another completed match)
 //   • queue_entries.games_played delta (full replacement only)
-//   • player_partnerships all-time delta
 //   • is_mixed_level recomputation
+//   • refresh_cross_session_stats() — absolute rebuild of
+//     player_partnerships + player_rivalries from match history
 //   • refresh_alltime_leaderboard() for the materialized view
 //
 // v_session_leaderboard and session-scoped partnership caps auto-update
