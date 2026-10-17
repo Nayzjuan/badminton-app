@@ -1371,6 +1371,8 @@ The Queue & Match Control tab renders one of two lenses over the same queue data
 
 Any player assigned to an `in_progress` match can submit the final score from their phone. Submission is guarded: only players in `match_players` for that match can call the action. `submitMatchScore` always records the `scored` event as `actor_type=player` / `via=player_submit`, even when the caller is also an organizer or club admin. Triggers the same cascade as organizer score entry (games_played increment, on-deck promotion, engine refill). A first score is never a `score_edit` — that event is only a later correction. Incident: `docs/incidents/2026-10-03-phantom-14-31-unattributed-score.md`.
 
+**Organizer post-completion score edit / revert** (`updateMatchDetails`, `EditMatchDialog`): after the write succeeds, rebuilds `player_partnerships` + `player_rivalries` via `refresh_cross_session_stats`, refreshes the all-time matview, and recomputes Wrapped when the session is already closed. See §3.21.
+
 ---
 
 ### 3.16 My Session History
@@ -1466,7 +1468,7 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 
 ### 3.21 Fix Player Record (Historical Roster Correction)
 
-**Files:** `src/components/organizer/fix-record-sheet.tsx`, `src/app/actions/fix-player-record.ts`, `src/hooks/use-fix-record.ts`, `src/hooks/use-session-completed-players.ts`, migration `20260522000000_fix_record_swap_player.sql`
+**Files:** `src/components/organizer/fix-record-sheet.tsx`, `src/app/actions/fix-player-record.ts`, `src/hooks/use-fix-record.ts`, `src/hooks/use-session-completed-players.ts`, migrations `20260522000000_fix_record_swap_player.sql` + `20261018000000_fix_record_rebuild_ledgers.sql` (prod stamp `20261017165116`)
 
 **Entry point:** Amber "Fix" button (ArrowLeftRight icon) in the header of each completed match card in `match-history-panel.tsx`, alongside the existing `EditMatchDialog`.
 
@@ -1487,20 +1489,21 @@ Displayed in the **Monitor** tab of the organizer dashboard. Shows all `waiting`
 **What the RPC updates explicitly:**
 - `match_players` (team swap or delete+insert)
 - `queue_entries.games_played` ±1 (full replacement only)
-- `player_partnerships` (delta in both directions, both paths)
 - `matches.is_mixed_level` (recomputed from profiles)
-- `matches.origin` (`'auto'` → `'modified'` only — sticky rule, never demotes `'manual'`)
-- Calls `refresh_alltime_leaderboard()` (materialized view refresh)
+- Calls `refresh_cross_session_stats(p_session_id)` — absolute rebuild of `player_partnerships` **and** `player_rivalries` from match history (same path as session close; migration `20261018000000`)
+- Calls `refresh_alltime_leaderboard()` for the materialized view
 
 **What auto-corrects without explicit update:**
 - `v_session_leaderboard` — live view from `match_players`, auto-correct
 - Session partnership cap (`derivePairCounts` over the per-slot snapshot) — reads `match_players` directly, auto-correct
 
-**Realtime auto-refresh:** The RPC always updates `matches.is_mixed_level` or `matches.origin`, which fires the `subscribeToMatches` realtime subscription in `useMatchHistory` and triggers a full re-fetch of the match card including updated player names. `onCorrected` callback in the panel is a no-op.
+**Realtime auto-refresh:** The RPC updates `matches.is_mixed_level`, which fires the `subscribeToMatches` realtime subscription in `useMatchHistory` and triggers a full re-fetch of the match card including updated player names. `onCorrected` callback in the panel is a no-op.
 
 **Amber accent:** Visual signal this is a data-correction operation (vs teal for live swaps). Uses `var(--cc-amber)` and `var(--cc-amber-dim)` from the command-center palette.
 
-⚠️ **Migration `20260522000000_fix_record_swap_player.sql` must be applied to Supabase production** before this feature is usable in live sessions.
+**Edit scores / revert (`updateMatchDetails` in `match-lifecycle.ts`):** After a successful score-only edit or revert-to-active, the action calls the same ledger rebuild (`refresh_cross_session_stats`), refreshes the all-time matview (debounced via `shouldRefreshLeaderboard`), and — when the session is already closed — recomputes Session Wrapped via `after()` + `compute_session_wrapped`. Suite FRL (`tests/integration/fix-record-ledgers.test.ts`) pins Fix team-flip, score win-flip, and revert.
+
+`_fix_record_partnership_delta` is **dropped** — it still targeted `ON CONFLICT (player_id, partner_id)` after partnerships became club-scoped and every Fix `+1` path raised `42P10`.
 
 ---
 
@@ -2589,7 +2592,7 @@ APP_MANIFEST.md                  # This file — the living document
 16. **Active-match re-join guard** — `joinQueueAction` rejects if the player's current queue status is `playing`. Guards against double-queue on rapid re-tap.
 17. **UUID validation before all DB calls** — Every server action must call `isValidUUID()` on every UUID parameter before touching Supabase. Malformed UUIDs return early with a clean error.
 18. **`signOut()` before `signInAnonymously()`** — reconnectPlayer always signs out first. Skipping this causes a stale session conflict that silently fails the identity migration.
-19. **`fix_record_swap_player` does NOT update `player_rivalries`** — The Fix Player Record RPC corrects `match_players`, `player_partnerships`, `queue_entries.games_played`, `matches.is_mixed_level`, and `matches.origin`, but intentionally skips `player_rivalries` (all-time H2H). Rivalries are only used for Session Wrapped awards display, not matchmaking. A correction will show slightly stale H2H data in wrapped awards (e.g. `nemesis_slayer`, `the_dynasty`) for affected players. A future migration can add opponent-delta logic mirroring `_fix_record_partnership_delta`.
+19. **`fix_record_swap_player` rebuilds partnerships and rivalries via `refresh_cross_session_stats`** — roster writes stay in the RPC; ledgers are absolute-rebuilt from match history (same as session close). `updateMatchDetails` score-edit and revert do the same after a successful write. Do not reintroduce `_fix_record_partnership_delta` — it was dropped in `20261018000000` after the club-scoped PK made its `ON CONFLICT (player_id, partner_id)` raise `42P10`.
 20. **Skill level has 6 values** — `upper_beginner` was removed. The enum is: `beginner`, `lower_intermediate`, `intermediate`, `upper_intermediate`, `lower_advanced`, `advanced`. Never reference `upper_beginner` in code or migrations.
 21. **`sessions.ts` not `session.ts`** — the actions file is `sessions.ts` (plural). Don't create a `session.ts` duplicate.
 22. **`is_auto_matchmaking_on` excluded from postgres_changes** — sessions RLS SELECT only grants access to the row creator. Co-organizers would never receive the UPDATE event. This field is synced exclusively via the `auto_matchmaking_toggled` broadcast. Never try to sync it through the sessions postgres_changes channel.
