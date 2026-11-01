@@ -106,6 +106,8 @@ interface QueueControlProps {
    * repeat warning is suppressed entirely for its duration.
    */
   capSaturationActive?: boolean;
+  /** Which partnership constraint the notice is showing — rematch keeps last-game warnings. */
+  capSaturationReason?: "session_cap" | "consecutive" | "immediate_rematch" | null;
   /** Players parked on an unpublished unready hold — violet chip instead of Drafted. */
   heldQueueChips?: ReadonlyMap<string, HeldQueueChip>;
 }
@@ -121,6 +123,7 @@ export function QueueControl({
   onJoinQueue,
   matchesRevision = 0,
   capSaturationActive = false,
+  capSaturationReason = null,
   heldQueueChips,
 }: QueueControlProps) {
   // Four positional slots: [A1, A2, B1, B2]. null = free.
@@ -404,6 +407,7 @@ export function QueueControl({
     liveCounts,
     selectionEpoch,
     suppressed: capSaturationActive,
+    capSaturationReason,
     nameOf,
   });
 

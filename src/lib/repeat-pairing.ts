@@ -3,8 +3,9 @@
 // ============================================================
 // Deliberately its OWN module (not matchmaking-core): QueueControl is a
 // "use client" component, and matchmaking-core is a ~1000-line engine module
-// with ~20 engine-constant imports. This file imports only pairKey + the two
-// repeat caps, so the client bundle stays clean and the engine stays server-side.
+// with ~20 engine-constant imports. This file imports only pairKey,
+// isImmediateRematchPair, and the three repeat caps, so the client bundle
+// stays clean and the engine stays server-side.
 //
 // SLOT MODEL — the selection is FOUR POSITIONAL SLOTS, not an insertion-ordered
 // list: [A1, A2, B1, B2]. Deselecting frees that slot and leaves the other three
@@ -18,14 +19,15 @@
 // the engine soft-refuses a pairing at >= cap, so a warning threshold ABOVE the
 // cap would stay silent on exactly the pairings the engine already rejects.
 //
-// Counts come from fetchPartnershipCounts, spanning COMMITTED_MATCH_STATUSES
-// (completed + in_progress + pending) — so a count is "times already paired this
-// session, including a live match and an unpublished draft". PRIOR count: it
-// never includes the match currently being built.
+// Counts come from one session snapshot (derivePairCounts + deriveLastSides),
+// spanning COMMITTED_MATCH_STATUSES (completed + in_progress + pending) — so a
+// count is "times already paired this session, including a live match and an
+// unpublished draft". PRIOR count: it never includes the match currently being
+// built. Last-sides are session-wide so the either-rule can see bench players.
 // ============================================================
 
-import { pairKey } from "@/lib/matchmaking-core";
-import { MAX_PARTNERSHIP_REPEATS, MAX_OPPONENT_REPEATS } from "@/lib/constants";
+import { isImmediateRematchPair, pairKey } from "@/lib/matchmaking-core";
+import { MAX_OPPONENT_REPEATS, MAX_PARTNERSHIP_REPEATS, MAX_SHARED_GAMES } from "@/lib/constants";
 
 /** Four positional slots: [A1, A2, B1, B2]. null = free. */
 export type Slots = (string | null)[];
@@ -33,24 +35,36 @@ export type Slots = (string | null)[];
 export const SLOT_COUNT = 4;
 export const EMPTY_SLOTS: Slots = [null, null, null, null];
 
-export type PairRelation = "teammate" | "opponent";
+export type PairRelation = "teammate" | "opponent" | "last_game" | "shared";
 
 export type RepeatThresholds = {
   /** Warn when a same-team pair has already played together >= this many times. */
   teammate: number;
   /** Warn when a cross-net pair has already met >= this many times. */
   opponent: number;
+  /** Warn when a pair has already shared this many games, either side. */
+  shared?: number;
 };
 
 /** Production thresholds — the engine's own caps, so UI and engine never drift. */
 export const DEFAULT_REPEAT_THRESHOLDS: RepeatThresholds = {
   teammate: MAX_PARTNERSHIP_REPEATS,
   opponent: MAX_OPPONENT_REPEATS,
+  shared: MAX_SHARED_GAMES,
 };
 
 export type PairCounts = {
   partnerships: Map<string, number>;
   opponents: Map<string, number>;
+  /** Session-wide last-game opponents. Empty when the snapshot has none. */
+  lastOpponents: Map<string, Set<string>>;
+  /** Session-wide last-game partners. Empty when the snapshot has none. */
+  lastPartners: Map<string, Set<string>>;
+};
+
+export const EMPTY_LAST_SIDES = {
+  lastOpponents: new Map<string, Set<string>>(),
+  lastPartners: new Map<string, Set<string>>(),
 };
 
 export type PairWarning = {
@@ -81,7 +95,7 @@ export type CandidateMarker = {
    */
   worstCount: number;
   /**
-   * `relations[0].relation` — teammate outranks opponent regardless of count.
+   * `relations[0].relation` — last_game, then teammate, then shared, then opponent.
    * Same caveat as `worstCount`: read `relations[0]` when you need the word
    * and the number together.
    */
@@ -120,15 +134,81 @@ export function filledCount(slots: Slots): number {
 }
 
 function countFor(counts: PairCounts, relation: PairRelation, a: string, b: string): number {
+  if (relation === "shared") {
+    return (
+      (counts.partnerships.get(pairKey(a, b)) ?? 0) + (counts.opponents.get(pairKey(a, b)) ?? 0)
+    );
+  }
+  if (relation === "last_game") return 1;
   const map = relation === "teammate" ? counts.partnerships : counts.opponents;
   return map.get(pairKey(a, b)) ?? 0;
+}
+
+/** last_game first (hard rematch), then teammate, then shared, then opponent. */
+function relationRank(relation: PairRelation): number {
+  switch (relation) {
+    case "last_game":
+      return 0;
+    case "teammate":
+      return 1;
+    case "shared":
+      return 2;
+    case "opponent":
+      return 3;
+  }
+}
+
+function sortByRelationThenCount<T extends { relation: PairRelation; count: number }>(
+  a: T,
+  b: T
+): number {
+  const rank = relationRank(a.relation) - relationRank(b.relation);
+  if (rank !== 0) return rank;
+  return b.count - a.count;
+}
+
+function isLastGamePair(counts: PairCounts, a: string, b: string): boolean {
+  return isImmediateRematchPair(a, b, counts.lastOpponents, counts.lastPartners);
+}
+
+function minFor(
+  relation: Exclude<PairRelation, "last_game">,
+  thresholds: RepeatThresholds
+): number {
+  if (relation === "teammate") return thresholds.teammate;
+  if (relation === "shared") return thresholds.shared ?? MAX_SHARED_GAMES;
+  return thresholds.opponent;
+}
+
+/**
+ * Keep only last-game findings. Used when the rematch-saturation notice is
+ * up: every other relation stays suppressed, last-game stays visible.
+ */
+export function lastGameWarningsOnly(warnings: PairWarning[]): PairWarning[] {
+  return warnings.filter((w) => w.relation === "last_game");
+}
+
+/** Same filter for bench markers — drop a marker that has no last-game left. */
+export function lastGameMarkersOnly(markers: CandidateMarker[]): CandidateMarker[] {
+  const out: CandidateMarker[] = [];
+  for (const m of markers) {
+    const relations = m.relations.filter((r) => r.relation === "last_game");
+    if (relations.length === 0) continue;
+    out.push({
+      playerId: m.playerId,
+      relations,
+      worstCount: Math.max(...relations.map((r) => r.count)),
+      primaryRelation: relations[0].relation,
+    });
+  }
+  return out;
 }
 
 /**
  * Every repeat pairing implied by the CURRENT slots.
  *
- * Teammates are listed first, then by descending count, so the caller can
- * headline `[0]` as the worst finding.
+ * last_game first, then teammate, then shared, then opponent; within a
+ * relation, descending count. The caller headlines `[0]` as the worst finding.
  */
 export function derivePairWarnings(
   slots: Slots,
@@ -139,19 +219,36 @@ export function derivePairWarnings(
   const out: PairWarning[] = [];
 
   const consider = (a: string, b: string, relation: PairRelation) => {
+    if (relation === "last_game") {
+      if (isLastGamePair(counts, a, b)) {
+        out.push({ pairKey: pairKey(a, b), playerIds: [a, b], relation, count: 1 });
+      }
+      return;
+    }
     const count = countFor(counts, relation, a, b);
-    const min = relation === "teammate" ? thresholds.teammate : thresholds.opponent;
-    if (count >= min) out.push({ pairKey: pairKey(a, b), playerIds: [a, b], relation, count });
+    if (count >= minFor(relation, thresholds)) {
+      out.push({ pairKey: pairKey(a, b), playerIds: [a, b], relation, count });
+    }
   };
 
   if (teamA.length === 2) consider(teamA[0], teamA[1], "teammate");
   if (teamB.length === 2) consider(teamB[0], teamB[1], "teammate");
   for (const a of teamA) for (const b of teamB) consider(a, b, "opponent");
 
-  return out.sort((x, y) => {
-    if (x.relation !== y.relation) return x.relation === "teammate" ? -1 : 1;
-    return y.count - x.count;
-  });
+  const selected = [...teamA, ...teamB];
+  const roleKeys = new Set(out.map((w) => w.pairKey));
+  for (let i = 0; i < selected.length; i++) {
+    for (let j = i + 1; j < selected.length; j++) {
+      consider(selected[i], selected[j], "last_game");
+      // Shared is the 1+1 case the role caps miss. Skip when teammate or
+      // opponent already named this pair — two rows for one fact is noise.
+      if (!roleKeys.has(pairKey(selected[i], selected[j]))) {
+        consider(selected[i], selected[j], "shared");
+      }
+    }
+  }
+
+  return out.sort(sortByRelationThenCount);
 }
 
 /**
@@ -192,20 +289,31 @@ export function deriveCandidateMarkers(
 
     const relations: MarkerRelation[] = [];
     const add = (relation: PairRelation, withPlayerId: string) => {
+      if (relation === "last_game") {
+        if (isLastGamePair(counts, candidate, withPlayerId)) {
+          relations.push({ relation, withPlayerId, count: 1 });
+        }
+        return;
+      }
       const count = countFor(counts, relation, candidate, withPlayerId);
-      const min = relation === "teammate" ? thresholds.teammate : thresholds.opponent;
-      if (count >= min) relations.push({ relation, withPlayerId, count });
+      if (count >= minFor(relation, thresholds)) {
+        relations.push({ relation, withPlayerId, count });
+      }
     };
 
     if (partner) add("teammate", partner);
     for (const o of opponents) add("opponent", o);
 
+    const touched = [...(partner ? [partner] : []), ...opponents];
+    const roleWith = new Set(relations.map((r) => r.withPlayerId));
+    for (const other of touched) {
+      add("last_game", other);
+      if (!roleWith.has(other)) add("shared", other);
+    }
+
     if (relations.length === 0) continue;
 
-    relations.sort((x, y) => {
-      if (x.relation !== y.relation) return x.relation === "teammate" ? -1 : 1;
-      return y.count - x.count;
-    });
+    relations.sort(sortByRelationThenCount);
     out.push({
       playerId: candidate,
       relations,

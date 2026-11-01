@@ -19,12 +19,14 @@ import {
   freshMarkersAreInformative,
   hasCleanAlternative,
   filledCount,
+  lastGameMarkersOnly,
+  lastGameWarningsOnly,
   DEFAULT_REPEAT_THRESHOLDS,
   EMPTY_SLOTS,
   type PairCounts,
 } from "@/lib/repeat-pairing";
 import { pairKey } from "@/lib/matchmaking-core";
-import { MAX_PARTNERSHIP_REPEATS, MAX_OPPONENT_REPEATS } from "@/lib/constants";
+import { MAX_PARTNERSHIP_REPEATS, MAX_OPPONENT_REPEATS, MAX_SHARED_GAMES } from "@/lib/constants";
 
 const P1 = "p1",
   P2 = "p2",
@@ -32,13 +34,28 @@ const P1 = "p1",
   P4 = "p4",
   P5 = "p5";
 
+function lastSides(
+  lastGames: Array<[string, string[]]> = []
+): Pick<PairCounts, "lastOpponents" | "lastPartners"> {
+  const lastOpponents = new Map<string, Set<string>>();
+  const lastPartners = new Map<string, Set<string>>();
+  for (const [id, roster] of lastGames) {
+    const [partner, ...opponents] = roster;
+    lastPartners.set(id, new Set(partner ? [partner] : []));
+    lastOpponents.set(id, new Set(opponents));
+  }
+  return { lastOpponents, lastPartners };
+}
+
 function counts(
   partnerships: Array<[string, string, number]> = [],
-  opponents: Array<[string, string, number]> = []
+  opponents: Array<[string, string, number]> = [],
+  lastGames: Array<[string, string[]]> = []
 ): PairCounts {
   return {
     partnerships: new Map(partnerships.map(([a, b, n]) => [pairKey(a, b), n])),
     opponents: new Map(opponents.map(([a, b, n]) => [pairKey(a, b), n])),
+    ...lastSides(lastGames),
   };
 }
 
@@ -48,6 +65,7 @@ describe("repeat-pairing — thresholds", () => {
   it("RP-C1: production thresholds are pinned to the engine caps (no drift)", () => {
     expect(DEFAULT_REPEAT_THRESHOLDS.teammate).toBe(MAX_PARTNERSHIP_REPEATS);
     expect(DEFAULT_REPEAT_THRESHOLDS.opponent).toBe(MAX_OPPONENT_REPEATS);
+    expect(DEFAULT_REPEAT_THRESHOLDS.shared).toBe(MAX_SHARED_GAMES);
   });
 });
 
@@ -142,6 +160,37 @@ describe("repeat-pairing — derivePairWarnings", () => {
     expect(opp).toHaveLength(1);
     expect(opp[0]).toMatchObject({ relation: "opponent", count: 4 });
   });
+
+  it("RP-W7: last-game fires when the pair shared either player's last roster", () => {
+    const c = counts([], [], [[P1, [P2, P3, P4]]]);
+    const w = derivePairWarnings([P1, P2], c, T);
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatchObject({ relation: "last_game", count: 1, pairKey: pairKey(P1, P2) });
+  });
+
+  it("RP-W8: last-game is the either-rule — B's last roster containing A is enough", () => {
+    const c = counts([], [], [[P2, [P5, P1, P3]]]);
+    expect(derivePairWarnings([P1, P2], c, T)[0].relation).toBe("last_game");
+  });
+
+  it("RP-W9: shared fires on 1 partner + 1 opponent (the case neither role cap sees)", () => {
+    const c = counts([[P1, P2, 1]], [[P1, P2, 1]]);
+    const w = derivePairWarnings([P1, P2], c, T);
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatchObject({ relation: "shared", count: 2, pairKey: pairKey(P1, P2) });
+  });
+
+  it("RP-W10: shared does not double a pair the teammate cap already named", () => {
+    const c = counts([[P1, P2, 2]]);
+    const w = derivePairWarnings([P1, P2], c, T);
+    expect(w.map((x) => x.relation)).toEqual(["teammate"]);
+  });
+
+  it("RP-W11: last-game outranks teammate so the rematch is the headline", () => {
+    const c = counts([[P1, P2, 2]], [], [[P1, [P2, P3, P4]]]);
+    const w = derivePairWarnings([P1, P2], c, T);
+    expect(w.map((x) => x.relation)).toEqual(["last_game", "teammate"]);
+  });
 });
 
 describe("repeat-pairing — deriveCandidateMarkers", () => {
@@ -187,6 +236,19 @@ describe("repeat-pairing — deriveCandidateMarkers", () => {
     const m = deriveCandidateMarkers([P1], [P4], counts([[P1, P4, 1]]), T);
     expect(m).toEqual([]);
   });
+
+  it("RP-M8: last-game marks a bench player from the selected player's last roster", () => {
+    const m = deriveCandidateMarkers([P1], [P5], counts([], [], [[P1, [P2, P5, P3]]]), T);
+    expect(m).toHaveLength(1);
+    expect(m[0].relations).toEqual([{ relation: "last_game", withPlayerId: P1, count: 1 }]);
+    expect(m[0].primaryRelation).toBe("last_game");
+  });
+
+  it("RP-M9: shared marks the 1+1 case the role caps miss", () => {
+    const m = deriveCandidateMarkers([P1], [P5], counts([[P1, P5, 1]], [[P1, P5, 1]]), T);
+    expect(m).toHaveLength(1);
+    expect(m[0].relations).toEqual([{ relation: "shared", withPlayerId: P1, count: 2 }]);
+  });
 });
 
 describe("repeat-pairing — slot gaps (post-deselect)", () => {
@@ -226,6 +288,30 @@ describe("repeat-pairing — avoidability gate", () => {
 
   it("RP-A3: false when there are no candidates at all", () => {
     expect(hasCleanAlternative([P1, null, null, null], [], counts(), T)).toBe(false);
+  });
+
+  it("RP-A4: last-game and shared feed the same avoidability gate", () => {
+    expect(
+      hasCleanAlternative([P1, null, null, null], [P4, P5], counts([], [], [[P1, [P4, P2, P3]]]), T)
+    ).toBe(true);
+    expect(
+      hasCleanAlternative([P1, null, null, null], [P4, P5], counts([], [], [[P1, [P2, P4, P5]]]), T)
+    ).toBe(false);
+  });
+});
+
+describe("repeat-pairing — rematch-notice filter", () => {
+  it("RP-R1: lastGameWarningsOnly keeps last-game and drops the rest", () => {
+    const mixed = derivePairWarnings([P1, P2], counts([[P1, P2, 2]], [], [[P1, [P2, P3, P4]]]), T);
+    expect(lastGameWarningsOnly(mixed).map((w) => w.relation)).toEqual(["last_game"]);
+  });
+
+  it("RP-R2: lastGameMarkersOnly drops a marker that has no last-game left", () => {
+    const marked = deriveCandidateMarkers([P1], [P5], counts([[P1, P5, 3]]), T);
+    expect(lastGameMarkersOnly(marked)).toEqual([]);
+    const rematch = deriveCandidateMarkers([P1], [P5], counts([], [], [[P1, [P2, P5, P3]]]), T);
+    expect(lastGameMarkersOnly(rematch)).toHaveLength(1);
+    expect(lastGameMarkersOnly(rematch)[0].primaryRelation).toBe("last_game");
   });
 });
 

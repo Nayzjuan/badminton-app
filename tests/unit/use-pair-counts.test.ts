@@ -137,9 +137,14 @@ type Probe = {
   reads: () => number;
 };
 
-function successProbe(partnerships: [string, number][], opponents: [string, number][]): Probe {
+function successProbe(
+  partnerships: [string, number][],
+  opponents: [string, number][],
+  lastOpponents: [string, string[]][] = [],
+  lastPartners: [string, string[]][] = []
+): Probe {
   let reads = 0;
-  const data = { partnerships, opponents };
+  const data = { partnerships, opponents, lastOpponents, lastPartners };
   return {
     payload: {
       success: true,
@@ -260,6 +265,25 @@ describe("usePairCounts — Unit Suite", () => {
     expect(counts?.opponents.size, "the opponents Map holds entries the payload never sent").toBe(
       1
     );
+    expect(counts?.lastOpponents.size, "last-sides leaked into an empty payload").toBe(0);
+    expect(counts?.lastPartners.size).toBe(0);
+  });
+
+  it("PC-12: last-sides tuples rehydrate into Maps of Sets", async () => {
+    const d = deferred<GetSessionPairCountsResult>();
+    mockGetCounts.mockReturnValue(d.promise);
+    const { result } = setup();
+
+    await act(async () => {
+      d.resolve(successProbe([], [], [[ALICE_BOB, ["carol"]]], [[ALICE_BOB, ["dave"]]]).payload);
+    });
+
+    expect(result.current?.lastOpponents.get(ALICE_BOB)).toEqual(new Set(["carol"]));
+    expect(result.current?.lastPartners.get(ALICE_BOB)).toEqual(new Set(["dave"]));
+    expect(
+      result.current?.partnerships.size,
+      "a last-sides entry leaked into the partnership counts"
+    ).toBe(0);
   });
 
   // ── PC-3 (edge) ────────────────────────────────────────────

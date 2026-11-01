@@ -699,6 +699,7 @@ export function OrganizerDashboard({
                  override manually — a repeat warning on top of it would
                  fire hardest exactly when they have no alternative. */
               capSaturationActive={capSaturation !== null}
+              capSaturationReason={capSaturation?.reason ?? null}
               heldQueueChips={heldQueueChips}
             />
           )}

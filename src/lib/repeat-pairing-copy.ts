@@ -55,7 +55,16 @@ function plural(n: number, one: string, many: string): string {
 
 /** Human label for a relation — carried on the LABEL, never on hue alone. */
 export function relationNoun(relation: PairRelation): string {
-  return relation === "teammate" ? "Teammates" : "Opponents";
+  switch (relation) {
+    case "teammate":
+      return "Teammates";
+    case "opponent":
+      return "Opponents";
+    case "last_game":
+      return "Last game";
+    case "shared":
+      return "Shared";
+  }
 }
 
 /**
@@ -77,13 +86,24 @@ export function relationNoun(relation: PairRelation): string {
 export function pairHeadline(w: PairWarning, nameOf: NameLookup): string {
   const a = nameOf(w.playerIds[0]);
   const b = nameOf(w.playerIds[1]);
-  return w.relation === "teammate"
-    ? `${a} & ${b} have partnered ${w.count}× tonight — auto-matchmaking won't pair them again`
-    : `${a} & ${b} have been opponents ${w.count}× tonight — auto-matchmaking avoids this, but won't refuse it`;
+  switch (w.relation) {
+    case "teammate":
+      return `${a} & ${b} have partnered ${w.count}× tonight — auto-matchmaking won't pair them again`;
+    case "opponent":
+      return `${a} & ${b} have been opponents ${w.count}× tonight — auto-matchmaking avoids this, but won't refuse it`;
+    case "last_game":
+      return `${a} & ${b} played together last game — auto-matchmaking won't rematch them`;
+    case "shared":
+      return `${a} & ${b} have shared ${w.count} games tonight — auto-matchmaking prefers to avoid this, but won't refuse it`;
+  }
 }
 
 /** Compact per-pair row tail, e.g. "2 prior matches". */
 export function pairRowSummary(w: PairWarning): string {
+  if (w.relation === "last_game") return "last game";
+  if (w.relation === "shared") {
+    return `${w.count} shared ${plural(w.count, "game", "games")}`;
+  }
   return `${w.count} prior ${plural(w.count, "match", "matches")}`;
 }
 
@@ -93,6 +113,12 @@ export function pairRowSummary(w: PairWarning): string {
 export function pairHeadlineSpoken(w: PairWarning, nameOf: NameLookup): string {
   const a = nameOf(w.playerIds[0]);
   const b = nameOf(w.playerIds[1]);
+  if (w.relation === "last_game") {
+    return `${a} and ${b} played together last game.`;
+  }
+  if (w.relation === "shared") {
+    return `${a} and ${b} have shared ${w.count} ${plural(w.count, "game", "games")} tonight.`;
+  }
   const verb = w.relation === "teammate" ? "partnered" : "been opponents";
   return `${a} and ${b} have ${verb} ${w.count} ${plural(w.count, "time", "times")} tonight.`;
 }
@@ -116,23 +142,48 @@ export function announcementFor(warnings: PairWarning[], nameOf: NameLookup): st
  * Lists EVERY triggered relation — filling a Team B slot can repeat a
  * teammate and both opponents at once, and a single glyph can't say that.
  */
+function relationAsPhrase(relation: PairRelation): string {
+  switch (relation) {
+    case "teammate":
+      return "as teammates";
+    case "opponent":
+      return "as opponents";
+    case "last_game":
+      return "from last game";
+    case "shared":
+      return "as a shared pairing";
+  }
+}
+
 export function markerLabel(m: CandidateMarker, nameOf: NameLookup): string {
-  const parts = m.relations.map(
-    (r) =>
-      `a ${ordinal(r.count + 1)} match with ${nameOf(r.withPlayerId)} as ${
-        r.relation === "teammate" ? "teammates" : "opponents"
-      }`
+  const parts = m.relations.map((r) =>
+    r.relation === "last_game"
+      ? `a rematch with ${nameOf(r.withPlayerId)} from last game`
+      : `a ${ordinal(r.count + 1)} match with ${nameOf(r.withPlayerId)} ${relationAsPhrase(r.relation)}`
   );
   return `Repeat pairing: picking this player would be ${joinWithAnd(parts)}.`;
 }
 
+/** Visible chip word — last game has no ordinal, the others convert prior → next. */
+export function markerChipLabel(relation: PairRelation, count: number): string {
+  switch (relation) {
+    case "teammate":
+      return `Team ${ordinal(count + 1)}`;
+    case "opponent":
+      return `Opp ${ordinal(count + 1)}`;
+    case "last_game":
+      return "Last";
+    case "shared":
+      return `Share ${ordinal(count + 1)}`;
+  }
+}
+
 /** Short visible tooltip for the same marker. */
 export function markerTitle(m: CandidateMarker, nameOf: NameLookup): string {
-  const parts = m.relations.map(
-    (r) =>
-      `${ordinal(r.count + 1)} with ${nameOf(r.withPlayerId)} as ${
-        r.relation === "teammate" ? "teammates" : "opponents"
-      }`
+  const parts = m.relations.map((r) =>
+    r.relation === "last_game"
+      ? `last game with ${nameOf(r.withPlayerId)}`
+      : `${ordinal(r.count + 1)} with ${nameOf(r.withPlayerId)} ${relationAsPhrase(r.relation)}`
   );
   return joinWithAnd(parts);
 }

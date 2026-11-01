@@ -21,6 +21,7 @@ import {
   freshLabel,
   freshTitle,
   markerLegend,
+  markerChipLabel,
   markerTitle,
   ordinal,
   pairHeadline,
@@ -37,7 +38,7 @@ const nameOf = (id: string) => NAMES[id] ?? "Unknown";
 function warning(
   a: string,
   b: string,
-  relation: "teammate" | "opponent",
+  relation: PairWarning["relation"],
   count: number
 ): PairWarning {
   return { pairKey: pairKey(a, b), playerIds: [a, b], relation, count };
@@ -119,9 +120,40 @@ describe("repeat-pairing-copy — headlines", () => {
     );
   });
 
-  it("RPC-H3: relation nouns are Teammates / Opponents", () => {
+  it("RPC-H3: relation nouns are Teammates / Opponents / Last game / Shared", () => {
     expect(relationNoun("teammate")).toBe("Teammates");
     expect(relationNoun("opponent")).toBe("Opponents");
+    expect(relationNoun("last_game")).toBe("Last game");
+    expect(relationNoun("shared")).toBe("Shared");
+  });
+
+  it("RPC-H7: last-game headline names the rematch refusal", () => {
+    expect(pairHeadline(warning("p1", "p2", "last_game", 1), nameOf)).toBe(
+      "Alice & Bob played together last game — auto-matchmaking won't rematch them"
+    );
+  });
+
+  it("RPC-H8: shared headline is a preference, not a refusal", () => {
+    const text = pairHeadline(warning("p1", "p2", "shared", 2), nameOf);
+    expect(text).toBe(
+      "Alice & Bob have shared 2 games tonight — auto-matchmaking prefers to avoid this, but won't refuse it"
+    );
+    expect(text).not.toMatch(/won't rematch|won't pair them again/);
+  });
+
+  it("RPC-H9: last-game row tail is 'last game', shared states the prior shared count", () => {
+    expect(pairRowSummary(warning("p1", "p2", "last_game", 1))).toBe("last game");
+    expect(pairRowSummary(warning("p1", "p2", "shared", 2))).toBe("2 shared games");
+  });
+
+  it("RPC-H10: spoken last-game and shared contain no × glyph", () => {
+    expect(pairHeadlineSpoken(warning("p1", "p2", "last_game", 1), nameOf)).toBe(
+      "Alice and Bob played together last game."
+    );
+    expect(pairHeadlineSpoken(warning("p1", "p2", "shared", 2), nameOf)).toBe(
+      "Alice and Bob have shared 2 games tonight."
+    );
+    expect(pairHeadlineSpoken(warning("p1", "p2", "last_game", 1), nameOf)).not.toContain("×");
   });
 
   it("RPC-H4: the row tail states the PRIOR count, pluralised", () => {
@@ -212,6 +244,22 @@ describe("repeat-pairing-copy — markers", () => {
       nameOf
     );
     expect(title).toBe("3rd with Alice as opponents");
+  });
+
+  it("RPC-M4: last-game chip says Last, shared says Share plus ordinal", () => {
+    expect(markerChipLabel("last_game", 1)).toBe("Last");
+    expect(markerChipLabel("shared", 2)).toBe("Share 3rd");
+    expect(markerChipLabel("teammate", 2)).toBe("Team 3rd");
+  });
+
+  it("RPC-M5: last-game spoken copy says rematch, not an ordinal", () => {
+    const label = markerLabel(
+      marker("p3", [{ relation: "last_game", withPlayerId: "p1", count: 1 }]),
+      nameOf
+    );
+    expect(label).toBe(
+      "Repeat pairing: picking this player would be a rematch with Alice from last game."
+    );
   });
 });
 
