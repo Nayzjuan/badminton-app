@@ -31,8 +31,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { DEFAULT_SESSION_IDS, loadFixture, CACHE_DIR } from "./replay/fetch";
 import { replaySession } from "./replay/simulate";
-import { computeMetrics, type SessionMetrics } from "./replay/metrics";
-import type { SessionFixture } from "./replay/types";
+import { computeMetrics, meanMetrics, type SessionMetrics } from "./replay/metrics";
+import type { ReplayDiagnostics, SessionFixture } from "./replay/types";
+import {
+  isFreshnessRefreshEnabled,
+  isNoImmediateRematchEnabled,
+  isSharedGamesPreferenceEnabled,
+} from "../src/lib/matchmaking-slots";
 
 // ─── Terminal formatting ─────────────────────────────────────────────────────
 const W = (s: string) => `\x1b[1m${s}\x1b[0m`;
@@ -67,8 +72,15 @@ type Args = {
   sessions: string[];
   draftQueue: boolean;
   freshness: boolean | undefined;
+  noImmediateRematch: boolean | undefined;
+  sharedGamesPreference: boolean | undefined;
   jitter: number;
 };
+
+function parseOnOff(raw: string | undefined): boolean {
+  const v = (raw ?? "on").toLowerCase();
+  return v !== "off" && v !== "false" && v !== "0";
+}
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
@@ -78,6 +90,8 @@ function parseArgs(argv: string[]): Args {
     sessions: [],
     draftQueue: false,
     freshness: undefined,
+    noImmediateRematch: undefined,
+    sharedGamesPreference: undefined,
     jitter: 0,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -87,10 +101,10 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--compare") args.compare = argv[++i] ?? null;
     else if (a === "--draft-queue") args.draftQueue = true;
     else if (a === "--jitter") args.jitter = Number(argv[++i] ?? 0);
-    else if (a === "--freshness") {
-      const v = (argv[++i] ?? "on").toLowerCase();
-      args.freshness = v !== "off" && v !== "false" && v !== "0";
-    } else if (a === "--session") {
+    else if (a === "--freshness") args.freshness = parseOnOff(argv[++i]);
+    else if (a === "--no-rematch") args.noImmediateRematch = parseOnOff(argv[++i]);
+    else if (a === "--shared-pref") args.sharedGamesPreference = parseOnOff(argv[++i]);
+    else if (a === "--session") {
       const id = argv[++i];
       if (id) args.sessions.push(id);
     } else if (a === "--help" || a === "-h") {
@@ -102,8 +116,10 @@ function parseArgs(argv: string[]): Args {
           "  --compare <label>    diff this run against a saved one",
           "  --session <uuid>     replay one session (repeatable)",
           "  --draft-queue        compose on-deck like runEngineInternal (P0-6)",
-          "  --jitter <k>         replay K times with ±10% duration jitter; print means",
+          "  --jitter <k>         run K replays with seeds 1..K (±10% duration); print means",
           "  --freshness on|off   override MATCHMAKING_FRESHNESS_REFRESH",
+          "  --no-rematch on|off  override MATCHMAKING_NO_IMMEDIATE_REMATCH",
+          "  --shared-pref on|off override MATCHMAKING_SHARED_GAMES_PREFERENCE",
         ].join("\n")
       );
       process.exit(0);
@@ -119,6 +135,14 @@ function parseArgs(argv: string[]): Args {
 // ─── Saved-run I/O ───────────────────────────────────────────────────────────
 const RESULTS_DIR = path.join(CACHE_DIR, "results");
 
+type SavedRunFlags = {
+  freshness: boolean;
+  noImmediateRematch: boolean;
+  sharedGamesPreference: boolean;
+  draftQueue: boolean;
+  jitter: number;
+};
+
 type SavedRun = {
   label: string;
   /** Caller-supplied at write time — Date is banned inside workflows, not here. */
@@ -126,7 +150,16 @@ type SavedRun = {
   gitHead: string;
   /** Fingerprint of the engine source this run exercised — see engineHash. */
   engineHash: string;
-  sessions: Record<string, { name: string; fixtureHash: string; replay: SessionMetrics }>;
+  flags: SavedRunFlags;
+  sessions: Record<
+    string,
+    {
+      name: string;
+      fixtureHash: string;
+      replay: SessionMetrics;
+      diagnostics: ReplayDiagnostics;
+    }
+  >;
 };
 
 /**
@@ -142,7 +175,7 @@ const ENGINE_SOURCES = [
   "src/lib/constants.ts",
 ];
 
-function engineHash(): string {
+function engineHash(flags: SavedRunFlags): string {
   const h = createHash("sha256");
   for (const rel of ENGINE_SOURCES) {
     try {
@@ -151,6 +184,7 @@ function engineHash(): string {
       h.update(`missing:${rel}`);
     }
   }
+  h.update(JSON.stringify(flags));
   return h.digest("hex").slice(0, 12);
 }
 
@@ -202,6 +236,8 @@ function metricRows(m: SessionMetrics): [string, string][] {
     ],
     ["Identical foursomes", `${m.consecutiveThreeOfFour}  (3 of 3 co-players repeated)`],
     ["Near-identical foursomes", `${m.consecutiveNearIdentical}  (≥2 of 3 co-players repeated)`],
+    ["Co-player back-to-back", String(m.consecutiveCoPlayerRepeats)],
+    ["Pairs over shared cap", `${m.pairsOverSharedCap}  (max ${m.maxSharedGames}×)`],
     ["Opponent variety", pct(m.opponentVariety)],
     ["Partner variety", pct(m.partnerVariety)],
     ["Pairs over cap", `${m.opponentPairsOverCap} opponent · ${m.partnershipsOverCap} partnership`],
@@ -308,6 +344,80 @@ function printAggregate(label: string, all: SessionMetrics[]) {
   );
 }
 
+function emptyDiagnostics(): ReplayDiagnostics {
+  return {
+    noMatchEvents: 0,
+    capSaturationEvents: 0,
+    forcedRepeats: 0,
+    thinPoolEvents: 0,
+    stallEpisodes: 0,
+    backToBackServed: 0,
+    avoidableNearIdentical: 0,
+    refreshAttempts: 0,
+    refreshSuccesses: 0,
+    draftWaits: [],
+    redZoneEntries: 0,
+    hardCapEntries: 0,
+    mixedLevelMatches: 0,
+    skillSpread2Matches: 0,
+    teamSkillGaps: [],
+    wrapperMs: [],
+    noMatchByReason: {},
+    lessRepeatedRefreshes: 0,
+    restWaivedRetries: 0,
+    rematchFallbacks: 0,
+  };
+}
+
+function meanDiagnostics(all: ReplayDiagnostics[]): ReplayDiagnostics {
+  const n = all.length || 1;
+  const pick = (fn: (d: ReplayDiagnostics) => number) => all.reduce((s, d) => s + fn(d), 0) / n;
+  const reasons = new Set(all.flatMap((d) => Object.keys(d.noMatchByReason ?? {})));
+  const noMatchByReason: Record<string, number> = {};
+  for (const key of reasons) {
+    noMatchByReason[key] = all.reduce((s, d) => s + (d.noMatchByReason?.[key] ?? 0), 0) / n;
+  }
+  return {
+    noMatchEvents: pick((d) => d.noMatchEvents),
+    capSaturationEvents: pick((d) => d.capSaturationEvents),
+    forcedRepeats: pick((d) => d.forcedRepeats),
+    thinPoolEvents: pick((d) => d.thinPoolEvents),
+    stallEpisodes: pick((d) => d.stallEpisodes),
+    backToBackServed: pick((d) => d.backToBackServed),
+    avoidableNearIdentical: pick((d) => d.avoidableNearIdentical),
+    refreshAttempts: pick((d) => d.refreshAttempts),
+    refreshSuccesses: pick((d) => d.refreshSuccesses),
+    draftWaits: all.flatMap((d) => d.draftWaits),
+    redZoneEntries: pick((d) => d.redZoneEntries),
+    hardCapEntries: pick((d) => d.hardCapEntries),
+    mixedLevelMatches: pick((d) => d.mixedLevelMatches),
+    skillSpread2Matches: pick((d) => d.skillSpread2Matches),
+    teamSkillGaps: all.flatMap((d) => d.teamSkillGaps),
+    wrapperMs: all.flatMap((d) => d.wrapperMs),
+    noMatchByReason,
+    lessRepeatedRefreshes: pick((d) => d.lessRepeatedRefreshes),
+    restWaivedRetries: pick((d) => d.restWaivedRetries),
+    rematchFallbacks: pick((d) => d.rematchFallbacks ?? 0),
+  };
+}
+
+function fmtNum(n: number): string {
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
+function deltaArrow(delta: number, invert = false): string {
+  if (Math.abs(delta) < 1e-9) return D("=");
+  const worse = invert ? delta < 0 : delta > 0;
+  const label = `${delta > 0 ? "▲" : "▼"} ${fmtNum(Math.abs(delta))}`;
+  return worse ? R(label) : G(label);
+}
+
+type ThresholdRow = {
+  label: string;
+  prev: number;
+  cur: number;
+};
+
 function printComparison(current: SavedRun, previous: SavedRun) {
   console.log(`\n\n${W("━━━━━━━━━━━━━━━━━━━━━━  COMPARISON  ━━━━━━━━━━━━━━━━━━━━━━")}\n`);
   console.log(
@@ -326,16 +436,18 @@ function printComparison(current: SavedRun, previous: SavedRun) {
     );
   }
 
-  console.log(
-    D(`  ${pad("Session", 26)}${pad("Consec-opp repeats", 24)}${pad("3-of-4", 14)}Avg cycle`)
-  );
-  console.log(sep("·"));
-
-  let baseTotal = 0;
-  let curTotal = 0;
+  const driftedFixtures: string[] = [];
   let compared = 0;
 
-  const driftedFixtures: string[] = [];
+  const sessionRows: { name: string; rows: ThresholdRow[] }[] = [];
+  const aggregates: Record<string, { prev: number; cur: number }> = {};
+
+  const addAgg = (label: string, prev: number, cur: number) => {
+    const slot = aggregates[label] ?? { prev: 0, cur: 0 };
+    slot.prev += prev;
+    slot.cur += cur;
+    aggregates[label] = slot;
+  };
 
   for (const [sessionId, cur] of Object.entries(current.sessions)) {
     const prev = previous.sessions[sessionId];
@@ -343,54 +455,70 @@ function printComparison(current: SavedRun, previous: SavedRun) {
       console.log(`  ${pad(cur.name, 26)}${D("(not in baseline)")}`);
       continue;
     }
-    // A baseline written before fixtureHash existed has none — compare only
-    // when both sides carry one, rather than crying drift over a missing field.
     if (prev.fixtureHash && cur.fixtureHash !== prev.fixtureHash) {
       driftedFixtures.push(cur.name);
     }
+    compared++;
     const a = prev.replay;
     const b = cur.replay;
-    baseTotal += a.consecutiveOpponentRepeats;
-    curTotal += b.consecutiveOpponentRepeats;
-    compared++;
-
-    const delta = b.consecutiveOpponentRepeats - a.consecutiveOpponentRepeats;
-    const arrow = delta < 0 ? G(`▼ ${-delta}`) : delta > 0 ? R(`▲ ${delta}`) : D("=");
-    const threeDelta = b.consecutiveThreeOfFour - a.consecutiveThreeOfFour;
-    const threeArrow =
-      threeDelta < 0 ? G(`▼ ${-threeDelta}`) : threeDelta > 0 ? R(`▲ ${threeDelta}`) : D("=");
-    const cycleDelta = b.avgCycleMin - a.avgCycleMin;
-    const cycleArrow =
-      Math.abs(cycleDelta) < 0.05
-        ? D("=")
-        : cycleDelta < 0
-          ? G(`▼ ${(-cycleDelta).toFixed(1)}m`)
-          : Y(`▲ ${cycleDelta.toFixed(1)}m`);
-
-    console.log(
-      `  ${pad(cur.name, 26)}` +
-        `${pad(`${a.consecutiveOpponentRepeats} → ${b.consecutiveOpponentRepeats}  ${arrow}`, 24)}` +
-        `${pad(`${a.consecutiveThreeOfFour} → ${b.consecutiveThreeOfFour} ${threeArrow}`, 14)}` +
-        `${cycleArrow}`
-    );
+    const ad = prev.diagnostics ?? emptyDiagnostics();
+    const bd = cur.diagnostics ?? emptyDiagnostics();
+    const rows: ThresholdRow[] = [
+      {
+        label: "consecutiveCoPlayerRepeats",
+        prev: a.consecutiveCoPlayerRepeats ?? 0,
+        cur: b.consecutiveCoPlayerRepeats ?? 0,
+      },
+      {
+        label: "pairsOverSharedCap",
+        prev: a.pairsOverSharedCap ?? 0,
+        cur: b.pairsOverSharedCap ?? 0,
+      },
+      { label: "stallEpisodes", prev: ad.stallEpisodes, cur: bd.stallEpisodes },
+      {
+        label: "rematchFallbacks",
+        prev: ad.rematchFallbacks ?? 0,
+        cur: bd.rematchFallbacks ?? 0,
+      },
+      { label: "cycle avg", prev: a.avgCycleMin, cur: b.avgCycleMin },
+      { label: "cycle p90", prev: a.p90CycleMin, cur: b.p90CycleMin },
+      { label: "cycle max", prev: a.maxCycleMin, cur: b.maxCycleMin },
+      { label: "redZoneEntries", prev: ad.redZoneEntries, cur: bd.redZoneEntries },
+      { label: "hardCapEntries", prev: ad.hardCapEntries, cur: bd.hardCapEntries },
+      { label: "mixedLevelMatches", prev: ad.mixedLevelMatches, cur: bd.mixedLevelMatches },
+      { label: "gamesMin", prev: a.gamesMin, cur: b.gamesMin },
+      { label: "satOut", prev: a.satOut, cur: b.satOut },
+    ];
+    sessionRows.push({ name: cur.name, rows });
+    for (const row of rows) addAgg(row.label, row.prev, row.cur);
   }
 
-  console.log(sep("·"));
-  // Scope the verdict to what was actually compared. A --session run diffs one
-  // night; saying "across all sessions" there would overclaim the evidence.
+  const printRows = (title: string, rows: ThresholdRow[]) => {
+    console.log(D(`  ${title}`));
+    for (const row of rows) {
+      console.log(
+        `    ${pad(row.label, 30)}${pad(`${fmtNum(row.prev)} → ${fmtNum(row.cur)}`, 22)}` +
+          `${deltaArrow(row.cur - row.prev, row.label === "gamesMin")}`
+      );
+    }
+  };
+
+  for (const session of sessionRows) {
+    printRows(session.name, session.rows);
+    console.log(sep("·"));
+  }
+
+  printRows(
+    "ALL SESSIONS",
+    Object.entries(aggregates).map(([label, v]) => ({ label, ...v }))
+  );
+
   const baselineCount = Object.keys(previous.sessions).length;
   const scope =
     compared === baselineCount
       ? `across all ${compared} session(s)`
       : `across ${compared} of the baseline's ${baselineCount} session(s)`;
-  const total = curTotal - baseTotal;
-  const verdict =
-    total < 0
-      ? G(`✓ ${-total} fewer consecutive-opponent repeats ${scope}`)
-      : total > 0
-        ? R(`✗ ${total} MORE consecutive-opponent repeats ${scope} — the change is a regression`)
-        : Y(`= no change in consecutive-opponent repeats ${scope}`);
-  console.log(`  ${verdict}`);
+  console.log(D(`\n  Compared ${scope}.`));
 
   if (driftedFixtures.length > 0) {
     console.log(
@@ -407,14 +535,31 @@ function printComparison(current: SavedRun, previous: SavedRun) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  const flags: SavedRunFlags = {
+    freshness: args.freshness ?? isFreshnessRefreshEnabled(),
+    noImmediateRematch: args.noImmediateRematch ?? isNoImmediateRematchEnabled(),
+    sharedGamesPreference: args.sharedGamesPreference ?? isSharedGamesPreferenceEnabled(),
+    draftQueue: args.draftQueue,
+    jitter: args.jitter,
+  };
+  const hash = engineHash(flags);
 
   console.log(W("\n╔══════════════════════════════════════════════════════════════════════╗"));
   console.log(W("║   ENGINE REPLAY — production sessions, current algorithm             ║"));
   console.log(W("╚══════════════════════════════════════════════════════════════════════╝"));
   console.log(
     D(
-      `  ${gitHead()}  ·  engine ${engineHash()}  ·  ${args.sessions.length} session(s)` +
+      `  ${gitHead()}  ·  engine ${hash}  ·  ${args.sessions.length} session(s)` +
         `  ·  cache: ${CACHE_DIR}`
+    )
+  );
+  console.log(
+    D(
+      `  flags: freshness=${flags.freshness ? "on" : "off"}` +
+        ` no-rematch=${flags.noImmediateRematch ? "on" : "off"}` +
+        ` shared-pref=${flags.sharedGamesPreference ? "on" : "off"}` +
+        ` draft-queue=${flags.draftQueue ? "on" : "off"}` +
+        ` jitter=${flags.jitter}`
     )
   );
 
@@ -440,26 +585,51 @@ async function main() {
     const realWarn = console.warn;
     console.log = (...a: unknown[]) => engineLog.push(a.join(" "));
     console.warn = (...a: unknown[]) => engineLog.push(a.join(" "));
-    let result;
+
+    const baseOpts = {
+      draftQueue: args.draftQueue,
+      freshness: flags.freshness,
+      noImmediateRematch: flags.noImmediateRematch,
+      sharedGamesPreference: flags.sharedGamesPreference,
+    };
+    let replayMetrics: SessionMetrics;
+    let diagnostics: ReplayDiagnostics;
     try {
-      result = replaySession(fixture, {
-        draftQueue: args.draftQueue,
-        freshness: args.freshness,
-        durationJitter: args.jitter > 0 ? { seed: args.jitter, pct: 0.1 } : undefined,
-      });
+      if (args.jitter > 0) {
+        const metricRuns: SessionMetrics[] = [];
+        const diagRuns: ReplayDiagnostics[] = [];
+        for (let seed = 1; seed <= args.jitter; seed++) {
+          const run = replaySession(fixture, {
+            ...baseOpts,
+            durationJitter: { seed, pct: 0.1 },
+          });
+          metricRuns.push(computeMetrics(run.matches, fixture.players.length));
+          diagRuns.push(run.diagnostics);
+        }
+        replayMetrics = meanMetrics(metricRuns);
+        diagnostics = meanDiagnostics(diagRuns);
+      } else {
+        const run = replaySession(fixture, baseOpts);
+        replayMetrics = computeMetrics(run.matches, fixture.players.length);
+        diagnostics = run.diagnostics;
+      }
     } finally {
       console.log = realLog;
       console.warn = realWarn;
     }
 
     const real = computeMetrics(fixture.realMatches, fixture.players.length);
-    const replay = computeMetrics(result.matches, fixture.players.length);
 
     realAll.push(real);
-    replayAll.push(replay);
-    saved[sessionId] = { name: fixture.name, fixtureHash: fixtureHash(fixture), replay };
+    replayAll.push(replayMetrics);
+    saved[sessionId] = {
+      name: fixture.name,
+      fixtureHash: fixtureHash(fixture),
+      replay: replayMetrics,
+      diagnostics,
+    };
 
-    printSession(fixture, real, replay, result.diagnostics, engineLog.length);
+    printSession(fixture, real, replayMetrics, diagnostics, engineLog.length);
   }
 
   if (replayAll.length === 0) {
@@ -488,7 +658,8 @@ async function main() {
     label: args.save ?? "current",
     savedAt: new Date().toISOString(),
     gitHead: gitHead(),
-    engineHash: engineHash(),
+    engineHash: hash,
+    flags,
     sessions: saved,
   };
 

@@ -18,7 +18,7 @@ import {
   MIN_FREE_POOL_FOR_ON_DECK,
   PLAYERS_PER_MATCH,
 } from "@/lib/constants";
-import { getDynamicDraftCap } from "@/lib/matchmaking-core";
+import { getDynamicDraftCap, type PairRuleFlags } from "@/lib/matchmaking-core";
 import { isHeldAwaitingReadiness } from "@/lib/cross-court/derive-held-state";
 
 export type PendingCapRow = {
@@ -77,10 +77,33 @@ export function shouldContinueSlot(args: {
   return args.estimatedWaiting >= PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK;
 }
 
-export function isFreshnessRefreshEnabled(
-  env: string | undefined = process.env.MATCHMAKING_FRESHNESS_REFRESH
-): boolean {
+function isEnvFlagEnabled(env: string | undefined): boolean {
   if (env == null || env.trim() === "") return true;
   const v = env.trim().toLowerCase();
   return v !== "false" && v !== "0" && v !== "off";
+}
+
+export function isFreshnessRefreshEnabled(
+  env: string | undefined = process.env.MATCHMAKING_FRESHNESS_REFRESH
+): boolean {
+  return isEnvFlagEnabled(env);
+}
+
+export function isNoImmediateRematchEnabled(
+  env: string | undefined = process.env.MATCHMAKING_NO_IMMEDIATE_REMATCH
+): boolean {
+  return isEnvFlagEnabled(env);
+}
+
+export function isSharedGamesPreferenceEnabled(
+  env: string | undefined = process.env.MATCHMAKING_SHARED_GAMES_PREFERENCE
+): boolean {
+  return isEnvFlagEnabled(env);
+}
+
+export function readPairRuleFlags(): PairRuleFlags {
+  return {
+    noImmediateRematch: isNoImmediateRematchEnabled(),
+    sharedGamesPreference: isSharedGamesPreferenceEnabled(),
+  };
 }

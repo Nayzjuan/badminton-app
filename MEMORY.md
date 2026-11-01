@@ -17,11 +17,9 @@
 
 ---
 
-## 2026-10-18 — post-completion ledger rebuild (Fix + score edit)
+## Pair-repeat rules — shipped on `feat/pair-repeat-rules`
 
-Hand-corrected Court 9 match `0e53e4da-…` (Mich↔Miggy; 26–31 Team B). Probe drift on Chu↔Miggy healed via `refresh_cross_session_stats`.
-
-`20261018000000_fix_record_rebuild_ledgers` — Fix drops `_fix_record_partnership_delta`, ends with `refresh_cross_session_stats` + `refresh_alltime_leaderboard`. `updateMatchDetails` score-edit/revert does the same (+ Wrapped when closed). Prod stamp `20261017165116`. Suite FRL.
+Owner picked **R1 as same-slot preference**. `composeEngineProposal` yields a rematch from the rested pool (`rematchFallback`); rest is not waived (that skipped the XC-1 pull). Replay vs `pair-rules-baseline`: rematches 564.8 → 265.2; over-cap 137 → 61.8; stalls 30 → 30.6; sit-outs 0. Residual: mixed-level 13.6 → 36.8. Shipping via PR #103.
 
 ## 2026-10-04 — CI follow-up after #100
 

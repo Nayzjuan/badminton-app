@@ -311,6 +311,36 @@ describe("QRP-W: the warning is advisory, never a gate", () => {
     );
   });
 
+  it("QRP-W3b: an immediate-rematch notice still shows last-game warnings", async () => {
+    vi.mocked(getSessionPairCounts).mockResolvedValue({
+      success: true,
+      data: {
+        partnerships: [],
+        opponents: [],
+        lastOpponents: [
+          ["p1", ["p3", "p4"]],
+          ["p2", ["p3", "p4"]],
+        ],
+        lastPartners: [
+          ["p1", ["p2"]],
+          ["p2", ["p1"]],
+        ],
+      },
+    });
+    renderQueue({ capSaturationActive: true, capSaturationReason: "immediate_rematch" });
+    await countsLoaded();
+    tapRow("Alice");
+    tapRow("Bob");
+
+    await waitFor(() =>
+      expect(screen.getByTestId("repeat-headline")).toHaveTextContent(
+        "Alice & Bob played together last game — auto-matchmaking won't rematch them"
+      )
+    );
+    const cta = screen.getByText(/add to on deck/i);
+    expect(cta).not.toBeDisabled();
+  });
+
   it("QRP-W3: cap saturation suppresses the whole surface", async () => {
     renderQueue({ capSaturationActive: true });
     await countsLoaded();
@@ -877,6 +907,22 @@ describe("QRP-N: the marker chip's VISIBLE text", () => {
       />
     );
     expect(screen.getByTestId("repeat-marker-label").textContent).toBe("Opp 3rd");
+  });
+
+  it("QRP-N3: a last-game marker says Last, a shared marker says Share", () => {
+    render(
+      <RepeatMarker
+        marker={{
+          playerId: "p9",
+          relations: [{ relation: "last_game", withPlayerId: "p1", count: 1 }],
+          worstCount: 1,
+          primaryRelation: "last_game",
+        }}
+        nameOf={nameOf}
+      />
+    );
+    expect(screen.getByTestId("repeat-marker-label").textContent).toBe("Last");
+    expect(screen.getByText(/a rematch with Alice from last game/i)).toBeInTheDocument();
   });
 });
 

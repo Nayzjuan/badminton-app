@@ -23,17 +23,25 @@
 // ("TEAM" / "OPP"), never on hue alone.
 // ============================================================
 
-import { Sparkles, Swords, Users } from "lucide-react";
+import { History, Repeat2, Sparkles, Swords, Users, type LucideIcon } from "lucide-react";
 import {
   freshLabel,
   freshTitle,
+  markerChipLabel,
   markerLabel,
   markerLegend,
   markerTitle,
-  ordinal,
+  type LegendFamilies,
+  type NameLookup,
 } from "@/lib/repeat-pairing-copy";
-import type { LegendFamilies, NameLookup } from "@/lib/repeat-pairing-copy";
-import type { CandidateMarker } from "@/lib/repeat-pairing";
+import type { CandidateMarker, PairRelation } from "@/lib/repeat-pairing";
+
+const MARKER_ICON: Record<PairRelation, LucideIcon> = {
+  teammate: Users,
+  opponent: Swords,
+  last_game: History,
+  shared: Repeat2,
+};
 
 interface RepeatMarkerProps {
   marker: CandidateMarker;
@@ -43,19 +51,19 @@ interface RepeatMarkerProps {
 export function RepeatMarker({ marker, nameOf }: RepeatMarkerProps) {
   // The chip shows the PRIMARY relation and that relation's OWN count.
   // `worstCount` is the max across ALL relations while `primaryRelation` is
-  // teammate-first regardless of count, so pairing the two would weld the
-  // teammate word to an opponent number ("TEAM 6TH" for a 3rd-time teammate
-  // who has also faced someone 5x). relations[0] is the primary by
-  // construction — deriveCandidateMarkers sorts teammate-first, then count
-  // desc — so reading its count keeps word and number self-consistent.
+  // last-game / teammate first regardless of count, so pairing the two would
+  // weld the teammate word to an opponent number ("TEAM 6TH" for a 3rd-time
+  // teammate who has also faced someone 5x). relations[0] is the primary by
+  // construction — deriveCandidateMarkers sorts last-game, teammate, shared,
+  // opponent, then count desc — so reading its count keeps word and number
+  // self-consistent.
   const primary = marker.relations[0];
   // deriveCandidateMarkers never emits an empty `relations` (it `continue`s
   // first), but this is now an indexed read and the repo does not enable
   // noUncheckedIndexedAccess — so a future producer with [] would crash the
   // whole queue tab for an advisory chip. Render nothing instead.
   if (!primary) return null;
-  const isTeammate = primary.relation === "teammate";
-  const Icon = isTeammate ? Users : Swords;
+  const Icon = MARKER_ICON[primary.relation];
 
   return (
     <span
@@ -67,7 +75,7 @@ export function RepeatMarker({ marker, nameOf }: RepeatMarkerProps) {
     >
       <Icon className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
       <span data-testid="repeat-marker-label" aria-hidden="true">
-        {isTeammate ? "Team" : "Opp"} {ordinal(primary.count + 1)}
+        {markerChipLabel(primary.relation, primary.count)}
       </span>
       <span className="sr-only">{markerLabel(marker, nameOf)}</span>
     </span>

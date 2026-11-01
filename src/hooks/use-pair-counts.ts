@@ -38,6 +38,12 @@ export function usePairCounts(sessionId: string, revision: number): PairCounts |
         setCounts({
           partnerships: new Map(result.data.partnerships),
           opponents: new Map(result.data.opponents),
+          lastOpponents: new Map(
+            (result.data.lastOpponents ?? []).map(([id, ids]) => [id, new Set(ids)])
+          ),
+          lastPartners: new Map(
+            (result.data.lastPartners ?? []).map(([id, ids]) => [id, new Set(ids)])
+          ),
         });
       })
       .catch((err: unknown) => {

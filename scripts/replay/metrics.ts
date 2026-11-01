@@ -13,7 +13,11 @@
 // session and the replay are scored by identical code.
 
 import { pairKey } from "../../src/lib/matchmaking-core";
-import { MAX_OPPONENT_REPEATS, MAX_PARTNERSHIP_REPEATS } from "../../src/lib/constants";
+import {
+  MAX_OPPONENT_REPEATS,
+  MAX_PARTNERSHIP_REPEATS,
+  MAX_SHARED_GAMES,
+} from "../../src/lib/constants";
 import type { PlayedMatch } from "./types";
 
 export type SessionMetrics = {
@@ -31,6 +35,8 @@ export type SessionMetrics = {
   consecutiveThreeOfFour: number;
   /** Back-to-back games carrying ≥2 of the other 3 players — the owner's complaint. */
   consecutiveNearIdentical: number;
+  /** Back-to-back games sharing at least one co-player, either side. */
+  consecutiveCoPlayerRepeats: number;
   /** Denominator for all three rates above. */
   consecutivePairs: number;
 
@@ -44,6 +50,10 @@ export type SessionMetrics = {
   partnershipsOverCap: number;
   maxOpponentRepeats: number;
   maxPartnershipRepeats: number;
+  /** Pairs whose partner+opponent meetings exceed MAX_SHARED_GAMES. */
+  pairsOverSharedCap: number;
+  /** Highest partner+opponent meeting count of any pair. */
+  maxSharedGames: number;
 
   /**
    * Minutes from one game's START to the next one's, across all players — cycle
@@ -109,6 +119,7 @@ export function computeMetrics(matches: PlayedMatch[], rosterSize: number): Sess
   let consecutivePartnerRepeats = 0;
   let consecutiveThreeOfFour = 0;
   let consecutiveNearIdentical = 0;
+  let consecutiveCoPlayerRepeats = 0;
   let consecutivePairs = 0;
 
   const cycles: number[] = [];
@@ -135,6 +146,7 @@ export function computeMetrics(matches: PlayedMatch[], rosterSize: number): Sess
       const sharedCo = curCo.filter((p) => prevCo.has(p)).length;
       if (sharedCo >= 3) consecutiveThreeOfFour++;
       if (sharedCo >= 2) consecutiveNearIdentical++;
+      if (sharedCo >= 1) consecutiveCoPlayerRepeats++;
 
       cycles.push(cur.startMin - prev.startMin);
     }
@@ -173,6 +185,10 @@ export function computeMetrics(matches: PlayedMatch[], rosterSize: number): Sess
 
   const sortedCycles = [...cycles].sort((a, b) => a - b);
 
+  const sharedCounts = new Map<string, number>();
+  for (const [k, n] of partnershipCounts) sharedCounts.set(k, (sharedCounts.get(k) ?? 0) + n);
+  for (const [k, n] of opponentCounts) sharedCounts.set(k, (sharedCounts.get(k) ?? 0) + n);
+
   return {
     matches: matches.length,
     players: rosterSize,
@@ -184,6 +200,7 @@ export function computeMetrics(matches: PlayedMatch[], rosterSize: number): Sess
     consecutivePartnerRate: consecutivePairs > 0 ? consecutivePartnerRepeats / consecutivePairs : 0,
     consecutiveThreeOfFour,
     consecutiveNearIdentical,
+    consecutiveCoPlayerRepeats,
     consecutivePairs,
 
     opponentVariety: opponentEncounters > 0 ? opponentCounts.size / opponentEncounters : 0,
@@ -194,6 +211,8 @@ export function computeMetrics(matches: PlayedMatch[], rosterSize: number): Sess
       .length,
     maxOpponentRepeats: opponentCounts.size > 0 ? Math.max(...opponentCounts.values()) : 0,
     maxPartnershipRepeats: partnershipCounts.size > 0 ? Math.max(...partnershipCounts.values()) : 0,
+    pairsOverSharedCap: [...sharedCounts.values()].filter((n) => n > MAX_SHARED_GAMES).length,
+    maxSharedGames: sharedCounts.size > 0 ? Math.max(...sharedCounts.values()) : 0,
 
     avgCycleMin: cycles.length > 0 ? cycles.reduce((s, n) => s + n, 0) / cycles.length : 0,
     maxCycleMin: cycles.length > 0 ? Math.max(...cycles) : 0,
@@ -208,5 +227,46 @@ export function computeMetrics(matches: PlayedMatch[], rosterSize: number): Sess
     satOut,
 
     worstConsecutive: worst.sort((a, b) => b.repeats - a.repeats).slice(0, 5),
+  };
+}
+
+function meanOf(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((s, n) => s + n, 0) / values.length;
+}
+
+/** Mean of every numeric metric. `worstConsecutive` is taken from the first run. */
+export function meanMetrics(all: SessionMetrics[]): SessionMetrics {
+  if (all.length === 0) {
+    return computeMetrics([], 0);
+  }
+  const pick = (fn: (m: SessionMetrics) => number) => meanOf(all.map(fn));
+  return {
+    matches: pick((m) => m.matches),
+    players: pick((m) => m.players),
+    consecutiveOpponentRepeats: pick((m) => m.consecutiveOpponentRepeats),
+    consecutiveOpponentRate: pick((m) => m.consecutiveOpponentRate),
+    consecutivePartnerRepeats: pick((m) => m.consecutivePartnerRepeats),
+    consecutivePartnerRate: pick((m) => m.consecutivePartnerRate),
+    consecutiveThreeOfFour: pick((m) => m.consecutiveThreeOfFour),
+    consecutiveNearIdentical: pick((m) => m.consecutiveNearIdentical),
+    consecutiveCoPlayerRepeats: pick((m) => m.consecutiveCoPlayerRepeats),
+    consecutivePairs: pick((m) => m.consecutivePairs),
+    opponentVariety: pick((m) => m.opponentVariety),
+    partnerVariety: pick((m) => m.partnerVariety),
+    opponentPairsOverCap: pick((m) => m.opponentPairsOverCap),
+    partnershipsOverCap: pick((m) => m.partnershipsOverCap),
+    maxOpponentRepeats: pick((m) => m.maxOpponentRepeats),
+    maxPartnershipRepeats: pick((m) => m.maxPartnershipRepeats),
+    pairsOverSharedCap: pick((m) => m.pairsOverSharedCap),
+    maxSharedGames: pick((m) => m.maxSharedGames),
+    avgCycleMin: pick((m) => m.avgCycleMin),
+    maxCycleMin: pick((m) => m.maxCycleMin),
+    p90CycleMin: pick((m) => m.p90CycleMin),
+    gamesMin: pick((m) => m.gamesMin),
+    gamesMax: pick((m) => m.gamesMax),
+    gamesAvg: pick((m) => m.gamesAvg),
+    satOut: pick((m) => m.satOut),
+    worstConsecutive: all[0].worstConsecutive,
   };
 }

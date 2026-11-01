@@ -248,6 +248,14 @@ export const MAX_PARTNERSHIP_REPEATS = 2;
 export const MAX_OPPONENT_REPEATS = 2;
 
 /**
+ * Soft preference on how many committed matches two players may share in a
+ * session, either side (partners + opponents). Independent of the two caps
+ * above, which keep their current hard/soft behaviour. Enforced as a
+ * replacement search after the existing pipeline, never as a hard block.
+ */
+export const MAX_SHARED_GAMES = 2;
+
+/**
  * Familiarity weights applied by deriveOverlapMap per prior in-session
  * encounter with the anchor, consumed by scoreCandidates (weight × the overlap
  * multiplier) to push already-encountered players down the candidate order.

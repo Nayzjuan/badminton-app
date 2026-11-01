@@ -34,11 +34,21 @@ const nameOf = (id: string) => NAMES[id] ?? "Unknown";
 
 function counts(
   partnerships: Array<[string, string, number]> = [],
-  opponents: Array<[string, string, number]> = []
+  opponents: Array<[string, string, number]> = [],
+  lastGames: Array<[string, string[]]> = []
 ): PairCounts {
+  const lastOpponents = new Map<string, Set<string>>();
+  const lastPartners = new Map<string, Set<string>>();
+  for (const [id, roster] of lastGames) {
+    const [partner, ...opps] = roster;
+    lastPartners.set(id, new Set(partner ? [partner] : []));
+    lastOpponents.set(id, new Set(opps));
+  }
   return {
     partnerships: new Map(partnerships.map(([a, b, n]) => [pairKey(a, b), n])),
     opponents: new Map(opponents.map(([a, b, n]) => [pairKey(a, b), n])),
+    lastOpponents,
+    lastPartners,
   };
 }
 
@@ -212,6 +222,20 @@ describe("useRepeatPairing — avoidability gate + suppression", () => {
       liveCounts: c,
     });
     expect(result.current.markers.size).toBe(2);
+  });
+
+  it("RPH-G3b: an immediate-rematch notice still shows last-game warnings", () => {
+    const c = counts([["p1", "p2", 2]], [], [["p1", ["p2", "p3", "p4"]]]);
+    const { result } = setup({
+      slots: ["p1", "p2", null, null],
+      candidateIds: ["p3", "p4", "p5"],
+      liveCounts: c,
+      suppressed: true,
+      capSaturationReason: "immediate_rematch",
+    });
+    expect(result.current.warnings.map((w) => w.relation)).toEqual(["last_game"]);
+    expect(result.current.headline?.relation).toBe("last_game");
+    expect(result.current.markers.get("p3")?.primaryRelation).toBe("last_game");
   });
 
   it("RPH-G3: cap saturation suppresses the warning entirely", () => {

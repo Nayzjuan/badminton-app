@@ -27,9 +27,9 @@
 //
 // AVOIDABILITY GATE. Everything is suppressed unless `hasCleanAlternative`
 // says the organizer could plausibly have done better — and entirely while
-// the engine's own cap-saturation notice is up, since that notice tells
-// them to override manually. An ungated warning fires hardest exactly when
-// there is no choice (and, on an 8-player night, on nearly every match).
+// the engine's own cap-saturation notice is up, except when that notice is
+// an immediate rematch: last-game warnings stay visible because that is
+// the moment the organizer is told to assign by hand.
 // ============================================================
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -42,6 +42,8 @@ import {
   filledCount,
   freshMarkersAreInformative,
   hasCleanAlternative,
+  lastGameMarkersOnly,
+  lastGameWarningsOnly,
   opposingSlotIndices,
   partnerSlotIndex,
   SLOT_COUNT,
@@ -115,9 +117,24 @@ export function useRepeatPairing(params: {
   selectionEpoch: number;
   /** True while the engine's cap-saturation notice is up. */
   suppressed: boolean;
+  /**
+   * When the notice is an immediate rematch, last-game warnings stay
+   * visible — that is the moment the organizer is told to assign by hand.
+   */
+  capSaturationReason?: "session_cap" | "consecutive" | "immediate_rematch" | null;
   nameOf: NameLookup;
 }): RepeatPairingState {
-  const { slots, candidateIds, liveCounts, selectionEpoch, suppressed, nameOf } = params;
+  const {
+    slots,
+    candidateIds,
+    liveCounts,
+    selectionEpoch,
+    suppressed,
+    capSaturationReason,
+    nameOf,
+  } = params;
+  const rematchNotice = suppressed && capSaturationReason === "immediate_rematch";
+  const fullySuppressed = suppressed && !rematchNotice;
 
   const filled = filledCount(slots);
   const buildActive = filled > 0;
@@ -143,7 +160,7 @@ export function useRepeatPairing(params: {
 
   // ── 2. Derivation + avoidability gate ────────────────────────
   const gateOpen = useMemo(() => {
-    if (!counts || suppressed) return false;
+    if (!counts || fullySuppressed) return false;
     if (filled < SLOT_COUNT) {
       return hasCleanAlternative(slots, candidateIds, counts, DEFAULT_REPEAT_THRESHOLDS);
     }
@@ -169,19 +186,29 @@ export function useRepeatPairing(params: {
       const pool = occupant ? [...candidateIds, occupant] : candidateIds;
       return hasCleanAlternative(probe, pool, counts, DEFAULT_REPEAT_THRESHOLDS);
     });
-  }, [counts, suppressed, slots, candidateIds, filled]);
+  }, [counts, fullySuppressed, slots, candidateIds, filled]);
 
   const warnings = useMemo(() => {
-    if (!gateOpen || !counts) return NO_WARNINGS;
+    if (!counts) return NO_WARNINGS;
+    if (rematchNotice) {
+      return lastGameWarningsOnly(derivePairWarnings(slots, counts, DEFAULT_REPEAT_THRESHOLDS));
+    }
+    if (!gateOpen) return NO_WARNINGS;
     return derivePairWarnings(slots, counts, DEFAULT_REPEAT_THRESHOLDS);
-  }, [gateOpen, counts, slots]);
+  }, [gateOpen, rematchNotice, counts, slots]);
 
   const markers = useMemo(() => {
-    if (!gateOpen || !counts) return NO_MARKERS;
-    const list = deriveCandidateMarkers(slots, candidateIds, counts, DEFAULT_REPEAT_THRESHOLDS);
+    if (!counts) return NO_MARKERS;
+    const list = rematchNotice
+      ? lastGameMarkersOnly(
+          deriveCandidateMarkers(slots, candidateIds, counts, DEFAULT_REPEAT_THRESHOLDS)
+        )
+      : gateOpen
+        ? deriveCandidateMarkers(slots, candidateIds, counts, DEFAULT_REPEAT_THRESHOLDS)
+        : [];
     if (list.length === 0) return NO_MARKERS;
     return new Map(list.map((m) => [m.playerId, m]));
-  }, [gateOpen, counts, slots, candidateIds]);
+  }, [gateOpen, rematchNotice, counts, slots, candidateIds]);
 
   // FRESH chips ride the episode snapshot (same freeze, same reason: a
   // background draft must not re-paint the bench mid-tap) but NOT `gateOpen`.

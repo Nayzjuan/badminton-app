@@ -8,12 +8,10 @@
 // co-play graph for the session. Only organizers build manual matches, so
 // there is no reason to expose it more widely.
 //
-// Reads go through the service client: fetchPartnershipCounts is typed for a
-// service-role DbClient and runs with RLS bypassed. It is now this action's
-// helper alone — the engine derives its own counts from the per-slot match
-// snapshot — and it fails SOFT (empty maps + a warn) so a transient DB error
-// blanks the badge rather than erroring the organizer's screen. The JS-level
-// organizer gate above is the boundary.
+// Reads go through the service client: one session snapshot, then
+// derivePairCounts + deriveLastSides. Fails SOFT (empty maps + a warn) so a
+// transient DB error blanks the badge rather than erroring the organizer's
+// screen. The JS-level organizer gate above is the boundary.
 //
 // Both actions honour the CLAUDE.md contract: return { success, ... }, never throw.
 //
@@ -27,7 +25,7 @@
 import { createServerSupabaseClient } from "@/utils/supabase/server";
 import { createServiceClient } from "@/utils/supabase/service";
 import { isSessionOrganizer } from "@/app/actions/_shared";
-import { fetchPartnershipCounts } from "@/lib/matchmaking-db";
+import { deriveLastSides, derivePairCounts, fetchSessionMatchSnapshot } from "@/lib/matchmaking-db";
 import { COMMITTED_MATCH_STATUSES } from "@/lib/constants";
 import { isValidUUID } from "@/lib/validate";
 
@@ -35,6 +33,21 @@ export type PairCountsPayload = {
   /** [pairKey, count] tuples — rehydrated into Maps on the client. */
   partnerships: [string, number][];
   opponents: [string, number][];
+  /** [playerId, co-player ids] — session-wide last-game opponents. */
+  lastOpponents?: [string, string[]][];
+  /** [playerId, co-player ids] — session-wide last-game partners. */
+  lastPartners?: [string, string[]][];
+};
+
+function serializeLastSides(map: Map<string, Set<string>>): [string, string[]][] {
+  return Array.from(map.entries()).map(([id, set]) => [id, [...set]]);
+}
+
+const EMPTY_PAIR_COUNTS: PairCountsPayload = {
+  partnerships: [],
+  opponents: [],
+  lastOpponents: [],
+  lastPartners: [],
 };
 
 export type GetSessionPairCountsResult =
@@ -57,12 +70,20 @@ export async function getSessionPairCounts(sessionId: string): Promise<GetSessio
 
   try {
     const db = createServiceClient();
-    const { partnershipCounts, opponentCounts } = await fetchPartnershipCounts(db, sessionId);
+    const snapshot = await fetchSessionMatchSnapshot(db, sessionId);
+    if (!snapshot.ok) {
+      console.warn("[getSessionPairCounts]", snapshot.reason);
+      return { success: true, data: EMPTY_PAIR_COUNTS };
+    }
+    const { partnershipCounts, opponentCounts } = derivePairCounts(snapshot.snapshot);
+    const { lastOpponents, lastPartners } = deriveLastSides(snapshot.snapshot);
     return {
       success: true,
       data: {
         partnerships: Array.from(partnershipCounts.entries()),
         opponents: Array.from(opponentCounts.entries()),
+        lastOpponents: serializeLastSides(lastOpponents),
+        lastPartners: serializeLastSides(lastPartners),
       },
     };
   } catch (err) {

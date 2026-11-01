@@ -24,11 +24,17 @@
 // ============================================================
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Swords, Users } from "lucide-react";
+import { History, Repeat2, Swords, Users, type LucideIcon } from "lucide-react";
 import { getPairMatches, type PairMatch } from "@/app/actions/repeat-pairing";
-import { pairRowSummary, relationNoun } from "@/lib/repeat-pairing-copy";
-import type { NameLookup } from "@/lib/repeat-pairing-copy";
-import type { PairWarning } from "@/lib/repeat-pairing";
+import { pairRowSummary, relationNoun, type NameLookup } from "@/lib/repeat-pairing-copy";
+import type { PairRelation, PairWarning } from "@/lib/repeat-pairing";
+
+const WARNING_ICON: Record<PairRelation, LucideIcon> = {
+  teammate: Users,
+  opponent: Swords,
+  last_game: History,
+  shared: Repeat2,
+};
 
 interface RepeatPairDetailsProps {
   id: string;
@@ -149,8 +155,7 @@ export function RepeatPairDetails({
         {warnings.map((w) => {
           const open = activeKey === w.pairKey;
           const state = cache.get(w.pairKey);
-          const isTeammate = w.relation === "teammate";
-          const Icon = isTeammate ? Users : Swords;
+          const Icon = WARNING_ICON[w.relation];
           const nameA = nameOf(w.playerIds[0]);
           const nameB = nameOf(w.playerIds[1]);
 
@@ -161,7 +166,7 @@ export function RepeatPairDetails({
 
           return (
             <li
-              key={w.pairKey}
+              key={`${w.pairKey}:${w.relation}`}
               data-pulse={pulsing ? "true" : undefined}
               className={pulsing ? "cc-repeat-pulse motion-reduce:animate-none" : undefined}
             >

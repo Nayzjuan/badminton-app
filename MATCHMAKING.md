@@ -1,455 +1,518 @@
-# Matchmaking Engine — Complete Reference
+# Matchmaking Engine — Reference
 
-> **Last updated:** 2026-04-24  
-> **Source files:** `src/app/actions/matchmaking.ts` · `src/lib/matchmaking-core.ts` · `src/lib/constants.ts`
+Authoritative reference for how matches are built. Source files:
 
-> ## ⚠️ THIS DOCUMENT IS STALE (flagged 2026-08-12) — trust `APP_MANIFEST.md` §3.1 and `src/lib/constants.ts`
->
-> It has not been maintained since 2026-04-24 and several constants below are simply
-> wrong now: `CRITICAL_WAIT_MINUTES` is **20**, not 25, and `GAME_PENALTY_MINUTES` is
-> **8**, not 12. It also predates the fresh-first rule, the consecutive-opponent term,
-> rejection memory and cross-court drafting entirely.
->
-> The two Red Zone passages have been corrected in place (2026-08-12) because they
-> stated a **known bug** as fact — `priorityScore ≥ 1000` is not the Red Zone test.
-> Nothing else here has been re-verified. Read it as history.
+- `src/app/actions/matchmaking.ts` — orchestrator (`runEngineInternal`, cross-court, promote)
+- `src/lib/matchmaking-core.ts` — pure algorithm (`runAlgorithm`, `snakeDraft`, scoring)
+- `src/lib/matchmaking-db.ts` — pool fetch, session snapshot, `executeMatch`
+- `src/lib/constants.ts` — thresholds (verify here when constants change)
+
+`APP_MANIFEST.md` §3.1 covers integration with the rest of the app. This document is the standalone engine narrative.
 
 ---
 
 ## Table of Contents
 
-1. [Overview](#overview)
-2. [Pipeline: Queue → On Deck → Court](#pipeline)
-3. [Priority Scoring](#priority-scoring)
-4. [Skill Matching & Variance Windows](#skill-matching)
-5. [Anti-Repeat / Diversity System](#anti-repeat)
-6. [3-Tier Swap System](#swap-system)
-7. [Partner Rotation (rotatedDraft)](#partner-rotation)
-8. [Soft Gate](#soft-gate)
-9. [On-Deck Capacity](#on-deck-capacity)
-10. [Last-Resort Time Fallback](#fallback)
-11. [Red Zone](#red-zone)
-12. [Paused Players](#paused-players)
-13. [Entry Points](#entry-points)
-14. [Constants Reference](#constants)
-15. [Decision Flow Diagram](#decision-flow)
+1. [Pipeline overview](#1-pipeline-overview)
+2. [Pre-algorithm gates](#2-pre-algorithm-gates)
+3. [Skill levels](#3-skill-levels)
+4. [Per-slot inputs](#4-per-slot-inputs)
+5. [Anchor selection](#5-anchor-selection)
+6. [runAlgorithm — who plays](#6-runalgorithm--who-plays)
+7. [Team seating — how they sit](#7-team-seating--how-they-sit)
+8. [Escalation ladder](#8-escalation-ladder)
+9. [Cross-court drafting](#9-cross-court-drafting)
+10. [Output flags and side effects](#10-output-flags-and-side-effects)
+11. [Constants](#11-constants)
+12. [Conflict priority](#12-conflict-priority)
+13. [Manual bypass](#13-manual-bypass)
 
 ---
 
-## Overview
+## 1. Pipeline overview
 
-The matchmaking engine is a **queue-to-on-deck filler**. Its job is to continuously examine the waiting player pool and produce the best possible group of 4 players for the next match — balancing:
+The engine is a **queue → on-deck filler**. It never assigns players directly to a court. The organizer promotes a pending (on-deck) match via **Call Next Match** (`callNextMatch` → `promoteOnDeckMatchInternal`).
 
-- **Fairness** — who has waited the longest, who has played the most
-- **Skill balance** — keep team skill gaps small
-- **Variety** — avoid putting the same players together repeatedly
-- **Urgency** — guarantee nobody waits so long they never play
+```mermaid
+flowchart TB
+    subgraph triggers["Engine triggers when auto-matchmaking is ON"]
+        T1[Player joins queue]
+        T2[Match ends]
+        T3[Toggle enabled]
+        T4[Organizer Call Next Match]
+    end
 
-Matches are never placed directly onto courts. The engine writes a **pending (on-deck) match**. The organizer promotes it to a court via *Call Next Match*. This two-step design means courts never idle while the engine runs.
+    triggers --> RE[runEngineForSession]
 
----
+    RE --> PRE{{Pre-algorithm gates}}
+    PRE -->|pass| LOOP[Fill draft slots loop]
+    PRE -->|fail| STOP1[No drafts generated]
 
-## Pipeline
+    LOOP --> FETCH[Per slot: fetch pool + match history snapshot]
+    FETCH --> ALG[composeEngineProposal]
+    ALG --> CC{Stale / forced repeat?}
+    CC -->|yes + conditions| HELD[Cross-court held draft]
+    CC -->|no| COMMIT[executeMatch → pending on-deck]
+    HELD --> LOOP
+    COMMIT --> LOOP
 
-```
-Players join queue (status = "waiting")
-          │
-          ▼
-  runEngineInternal()
-  ┌─────────────────────────────────────────────────────────────┐
-  │  1. How many court slots are available?                     │
-  │     capacity = courtCount + ON_DECK_LOOKAHEAD               │
-  │     slots = capacity − existingOnDeckMatches                │
-  │                                                             │
-  │  2. Soft gate: is the pool too small to diversify?          │
-  │     If yes and active courts exist → defer                  │
-  │                                                             │
-  │  3. For each available slot:                                │
-  │     createOneOnDeckMatch() → runAlgorithm()                 │
-  │       → executeMatch() → writes match row (status=pending)  │
-  └─────────────────────────────────────────────────────────────┘
-          │
-          ▼
-  Organizer clicks "Call Next Match"
-  promoteOnDeckMatchInternal()
-    → match.status = "in_progress"
-    → court.status  = "in_use"
-    → queue_entry.status = "playing"
-          │
-          ▼
-  Match ends → endMatchAction()
-    → queue_entry.status = "waiting"  (players return to queue)
-    → runEngineForSession()           (engine refills the slot)
+    COMMIT --> ONDECK[(On-deck match status=pending)]
+    ONDECK --> PROMOTE[Call Next Match]
+    PROMOTE --> COURT[(Court in_progress)]
+    COURT --> END[Match ends → queue]
+    END --> RE
 ```
 
----
+**Entry points**
 
-## Priority Scoring
-
-Every waiting player receives a **priority score** that determines who anchors the next match.
-
-### Normal queue (wait < 25 min)
-
-```
-priorityScore = max(0, waitMinutes − (gamesPlayed × GAME_PENALTY_MINUTES))
-```
-
-- `GAME_PENALTY_MINUTES = 12` — each game played costs 12 "virtual minutes" of wait time.
-- **Floor at 0** — game debt never drops a player below a fresh joiner. Both score 0 in that case; `joined_at` (earlier = higher priority) breaks the tie.
-- Effect: a player with 3 games played and 10 minutes waited scores `max(0, 10 − 36) = 0`. A fresh joiner also scores 0, but if they joined later, the veteran gets matched first.
-
-### Red Zone (wait ≥ 25 min)
-
-```
-priorityScore = 1000 + waitMinutes
-```
-
-- Scores 1000+ guarantee this player **anchors the very next match**, regardless of how many games they have played.
-- Game debt is completely ignored in the Red Zone.
-- A Red Zone player with 30 min wait scores 1030 — always beats any Normal player (max Normal score ≈ 24).
-
-### Sort order
-
-The pool is sorted **descending by priorityScore**, ties broken **ascending by `joined_at`**. The top player (index 0) is the **anchor** around whom the match is built.
-
----
-
-## Skill Matching
-
-### Skill levels
-
-| Label | Integer |
+| Function | Role |
 |---|---|
-| Beginner | 1–2 |
-| Intermediate | 3–5 |
-| Advanced | 6–7 |
+| `runEngineForSession` | Public trigger; checks toggle; concurrency guard per process |
+| `runEngineInternal` | Capacity-limited slot loop; fetches data; calls `composeEngineProposal`; commits |
+| `composeEngineProposal` | Steps 1–3: `runAlgorithm` → freshness refresh → shared-games replacement |
+| `callNextMatch` | Promote oldest on-deck; if none, run engine with `bypassGate=true` then retry |
 
-The engine works on integer skill levels stored in `skill_level_int`.
+---
 
-### Variance windows
+## 2. Pre-algorithm gates
 
-The engine tries to form a group where **every pairwise skill difference ≤ maxVariance**. It attempts windows in order, expanding only if the current window can't find 3 candidates:
+These run in `runEngineInternal` before `runAlgorithm` is invoked.
 
-| Window | `maxVariance` | Condition |
+| Gate | Rule | Bypass |
 |---|---|---|
-| Target | `SKILL_VARIANCE_TARGET = 1` | Always tried first |
-| Max | `SKILL_VARIANCE_MAX = 2` | If ±1 fails |
-| Extended (Red Zone only) | 3, then 4 | Only when anchor is in Red Zone |
+| Auto-matchmaking toggle | Skip if `is_auto_matchmaking_on = false` | Manual organizer flows |
+| Open courts | Need ≥1 non-`closed` court | — |
+| Draft cap | Unpublished draft limit by waiting count: **3** (<25), **5** (25–29), **6** (≥30); `max_auto_drafts_override` is a **ceiling** only | — |
+| Soft gate | Waiting ≤ `GATE_POOL_THRESHOLD` (4) AND match `in_progress` AND max wait < `GATE_HOLD_MINUTES` (8) AND no Red Zone → defer | `bypassGate` on Call Next Match |
+| Pool diversity cap | From **2nd slot**: need ≥ `PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK` (8) estimated waiters | `bypassGate`; slot 0 always allowed |
+| Min pool | ≥ `PLAYERS_PER_MATCH` (4) eligible waiters per slot | — |
+| Match snapshot | `fetchSessionMatchSnapshot` must succeed (fail-closed) | — |
 
-A group is only considered valid when `isGroupValid()` returns true — i.e., no pair within the proposed 4 exceeds `maxVariance`.
+**Pool construction** (`fetchActivePool`):
 
-### Combination search (`buildCombinationGroup`)
-
-Rather than greedy selection (which can get trapped by an incompatible high-priority player), the engine does a full **N-choose-3 combination search** across all eligible candidates. The candidates are already sorted best-priority-first, so the very first valid combination found is optimal. Worst case: C(30, 3) = 4,060 iterations — negligible at runtime.
-
----
-
-## Anti-Repeat / Diversity System
-
-### What it prevents
-
-The engine checks if ≥ 3 of the proposed 4 players appeared together in any **single recent match roster**. If yes, it's a "diversity violation" and the engine tries to find a better group.
-
-### Dynamic lookback window
-
-The number of recent matches examined scales with the eligible pool size to avoid false violations in small sessions:
-
-| Eligible pool size | Lookback window |
+| Filter | Rule |
 |---|---|
-| ≤ 5 players | 2 matches |
-| 6–9 players | 3 matches |
-| 10–15 players | 4 matches |
-| 16+ players | 5 matches |
+| Paused | `is_paused = true` → invisible |
+| Rest | Returning players need `wait_minutes ≥ MIN_REST_MINUTES` (18); first-game players (`games_played = 0`) exempt; waived if filter would leave <4 players |
+| Drafted | Players in unready held drafts excluded from pool |
 
-"Eligible pool" = candidates within the current skill window + the anchor.
-
-### Anti-repeat overlap scoring (`scoreCandidates`)
-
-Each candidate receives a composite score that penalises repeat pairings with the anchor:
-
-```
-Normal candidate:    score = −priorityScore + (overlapCount × 10,000)
-Red Zone candidate:  score = −priorityScore + (overlapCount × 100)
-```
-
-The 10,000× multiplier for Normal candidates means a repeat pairing almost always loses to a fresh pairing. For Red Zone candidates the penalty is capped at 100× so that urgency wins: a Red Zone player with 1 overlap (`−1030 + 100 = −930`) still sorts before a fresh Normal player (`−2 + 0 = −2`).
+Each slot **re-fetches** pool and snapshot so sibling drafts from earlier slots in the same burst are visible to diversity and cap logic.
 
 ---
 
-## 3-Tier Swap System
+## 3. Skill levels
 
-When `buildCombinationGroup` returns a valid group of 3 but the full 4-player combo triggers a **diversity violation**, the engine steps through three escalating attempts before accepting a repeat:
+Six tiers from `SKILL_LEVELS` in `src/types/database.ts`. The engine uses `skill_level_int`:
 
-### Tier 1 — Primary swap (same skill window)
+| Label | Int |
+|---|---|
+| Beginner | 1 |
+| Lower Intermediate | 2 |
+| Intermediate | 3 |
+| Upper Intermediate | 4 |
+| Lower Advanced | 5 |
+| Advanced | 6 |
 
-Keep the top 2 companions from the original group. Replace the 3rd with any candidate from the same `±maxVariance` pool that:
-1. Passes `isGroupValid()` with the anchor + fixed two
-2. Does not trigger `isDiversityViolation()`
-
-If a diverse swap is found → create the match with `snakeDraft` team assignment.  
-`isMixedLevel` is inherited from the current skill window (`maxVariance > SKILL_VARIANCE_MAX`).
-
-### Tier 2 — Expanded swap (±SKILL_VARIANCE_MAX)
-
-Only triggered when **Tier 1's swap pool was empty** (i.e., the current `±maxVariance` window had exactly 3 candidates — all now in the group — and there are no extras). Expands the search to `±SKILL_VARIANCE_MAX` candidates not already in the group.
-
-This breaks tier isolation: an Advanced player (skill 6) whose only ±1 partners have all recently played together can now draw from Intermediate players (skill 4–5) as swap candidates. Match is not flagged `isMixedLevel` because `±SKILL_VARIANCE_MAX` is still within the normal skill range.
-
-### Tier 3 — Partner rotation (forced repeat)
-
-All swap paths exhausted. The same 4 players must play again. Instead of always producing the identical team split, `rotatedDraft` cycles through 3 possible configurations (see [Partner Rotation](#partner-rotation)).
-
-### Red Zone immunity (swap exception)
-
-If the **3rd companion** (the swap target) is in the Red Zone themselves — tested with `isRedZonePlayer(swapTarget)`, i.e. `wait ≥ CRITICAL_WAIT_MINUTES` OR `priorityScore ≥ RED_ZONE_SCORE_FLOOR` — they **cannot be benched** for diversity reasons. Urgency always wins. The original group is accepted with `snakeDraft` — no swap attempted.
-
-⚠️ **Corrected 2026-08-12.** This passage used to say the test was `priorityScore ≥ 1000` alone. It is not: `RED_ZONE_SCORE_FLOOR` is an *addend* inside the Tier 2 formula (`1000 + wait − games × 8`), so a genuine Red-Zone player with heavy game debt scores **below** 1000 and was being benched. See APP_MANIFEST §3.34.
+Conversion: `skillLevelToInt`.
 
 ---
 
-## Partner Rotation
+## 4. Per-slot inputs
 
-`rotatedDraft()` is called only as a last resort when the same 4 players are forced to repeat. It cycles through 3 team-split configurations so **partners change on each repeat**, providing variety even when the opponent group cannot change.
+```mermaid
+flowchart LR
+    POOL[fetchActivePool]
+    SNAP[fetchSessionMatchSnapshot]
 
-Players are sorted descending by skill (positions 0=highest, 3=lowest):
+    SNAP --> R1[deriveRecentRosters]
+    SNAP --> R2[derivePairCounts]
+    SNAP --> R3[deriveOverlapMap per anchor]
+    SNAP --> R4[deriveLastSides]
 
-| `splitIndex` | Team A | Team B | Description |
+    POOL --> SORT[scoreAndSortPool]
+    SORT --> ANCHOR[pool0 = anchor]
+
+    REJ[fetchRecentClearedRosters] --> ALG[runAlgorithm]
+    ANCHOR --> ALG
+    R1 --> ALG
+    R2 --> ALG
+    R3 --> ALG
+    R4 --> ALG
+```
+
+**Session match snapshot** — single read per slot; all diversity inputs derive from it:
+
+- `deriveRecentRosters` — last `ROSTER_LOOKBACK_COUNT` (10) rosters for `isDiversityViolation`
+- `derivePairCounts` — same-team (`partnershipCounts`) and cross-net (`opponentCounts`) session totals; includes `pending` matches
+- `deriveOverlapMap` — anchor-specific familiarity weights for `scoreCandidates`
+- `deriveLastOpponents` / `deriveLastPartners` — who each player faced/partnered in their **last match only**
+- `fetchRecentClearedRosters` — rejection memory (organizer-cleared drafts, TTL 30 min)
+
+Snapshot fails closed: engine stops the burst rather than run with empty history.
+
+---
+
+## 5. Anchor selection
+
+After `scoreAndSortPool`, **`pool[0]`** is the anchor. Sort key is `priorityScore` (desc), tie-break `joined_at` (asc).
+
+### Priority tiers (`computePriorityScore`)
+
+| Tier | Condition | Score |
+|---|---|---|
+| **Hard Cap** | wait ≥ `HARD_WAIT_CAP_MINUTES` (25) AND games < `HARD_CAP_GAMES_CEILING` (5) | `HARD_CAP_SCORE_FLOOR` (2000) + (wait − 25) × 10 |
+| **Red Zone** | wait ≥ `CRITICAL_WAIT_MINUTES` (20) | `RED_ZONE_SCORE_FLOOR` (1000) + wait − (games × `GAME_PENALTY_MINUTES`) |
+| **Normal** | wait < 20 | wait − (games × 8); unbounded below zero |
+
+**Red Zone test:** use `isRedZonePlayer` only — never `priorityScore >= RED_ZONE_SCORE_FLOOR` alone (game debt can push score below 1000 while wait ≥ 20).
+
+---
+
+## 6. runAlgorithm — who plays
+
+Pure function in `matchmaking-core.ts`. Returns `AlgorithmResult`: `{ proposal, capSaturation, forcedRepeat?, ... }`.
+
+```mermaid
+flowchart TD
+    START[Anchor = pool0] --> PF[Pre-filter: remove candidates at partnership cap WITH anchor]
+    PF --> WIN{Anchor Red Zone?}
+    WIN -->|No| W12[Windows: ±1 ±2]
+    WIN -->|Yes| W124[Windows: ±1 ±2 ±3 ±4]
+
+    W12 --> LOOP
+    W124 --> LOOP
+
+    LOOP[For each maxVariance] --> ELIG[Eligible within ±window of anchor skill]
+    ELIG --> ENOUGH{≥3 eligible?}
+    ENOUGH -->|No| NEXTW[Next window]
+    ENOUGH -->|Yes| SCORE[scoreCandidates]
+    SCORE --> COMBO[buildCombinationGroup N-choose-3]
+    COMBO --> GROUP{3 companions?}
+    GROUP -->|No| NEXTW
+    GROUP -->|Yes| DIV{Diversity or rejection violation?}
+
+    DIV -->|No| SEAT[snakeDraft]
+    DIV -->|Yes| SWAP[Swap ladder Tier 1 → 2 → 3]
+
+    SWAP --> SEAT
+    SEAT --> CAPOK{Seating legal?}
+    CAPOK -->|usedCapOverride| BAL[Balance-preserving swap]
+    BAL --> DONE[Return proposal]
+    CAPOK -->|OK| DONE
+    CAPOK -->|null| NEXTW
+
+    NEXTW --> MORE{More windows?}
+    MORE -->|Yes| LOOP
+    MORE -->|No| FB{Anchor wait > 15 min?}
+    FB -->|Yes| LR[Last-resort: no skill check]
+    LR --> DONELR[proposal is_mixed_level forcedRepeat]
+    FB -->|No| FAIL[null capSaturation?]
+```
+
+### 6a. Skill compatibility (`isGroupValid`)
+
+Every pair in the foursome must satisfy `|skill_A − skill_B| ≤ maxVariance`.
+
+| Window | maxVariance | When |
+|---|---|---|
+| Target | ±1 (`SKILL_VARIANCE_TARGET`) | Always first |
+| Max | ±2 (`SKILL_VARIANCE_MAX`) | Normal hard cap |
+| Red Zone +1 | ±3 | Red Zone anchor |
+| Red Zone max | ±4 (`RED_ZONE_SKILL_VARIANCE_MAX`) | Red Zone last window |
+| Last-resort | none | Anchor wait > `FALLBACK_WAIT_MINUTES` (15), all windows failed |
+
+`isMixedLevel = true` when `maxVariance > SKILL_VARIANCE_MAX` or last-resort path.
+
+### 6b. Candidate scoring (`scoreCandidates`)
+
+Lower score = higher priority among skill-valid candidates.
+
+```
+Normal:   score = −priorityScore + overlap×10_000 + gamesAhead×10_000
+Red Zone: score = −priorityScore + overlap×100    + gamesAhead×100
+```
+
+| Term | Meaning |
+|---|---|
+| `overlap` | From `deriveOverlapMap`; teammate and opponent weights equal (`OVERLAP_WEIGHT_* = 2`) |
+| `gamesAhead` | `max(0, games_played − poolMinGames)`; fresh-first among waiters; pulled bodies exempt |
+| Red Zone caps | 100× penalties so urgency beats freshness/overlap |
+
+### 6c. Group assembly (`buildCombinationGroup`)
+
+Full **N-choose-3** search over scored candidates. First valid triple (baseline) or argmin over triples when `lastOpponents` is non-empty (split preview + `CONSECUTIVE_OPPONENT_PENALTY`).
+
+At most **one** `isPulled` body per foursome (cross-court).
+
+### 6d. Partnership cap (hard)
+
+- `MAX_PARTNERSHIP_REPEATS = 2` same-team pairings per session
+- Pre-filter removes anyone at cap **with the anchor** before grouping
+- Counts include completed, in_progress, and **pending** (drafts count immediately)
+- **No waivers** — not Red Zone, not last-resort
+- Manual organizer assignment is the only bypass
+
+### 6d2. Immediate rematch (preference, `isImmediateRematchPair`)
+
+A pair is an immediate rematch if they shared **either** player's last committed game, either side. `hasImmediateRematch` rejects that four at every `runAlgorithm` path: partnership pre-filter, `buildCombinationGroup`, Tier 1/2 swaps, last-resort, and freshness. Red Zone and last-resort do not override it inside `runAlgorithm`.
+
+`composeEngineProposal` then treats R1 as a same-slot preference. First pass is rematch-free (`rematchFallback: false`). If that miss is `rematchBlocked`, a second compose with `rematchFallback: true` re-runs R1 off and serves the rematch among the same rested pool. Rest is not waived — seating someone who just walked off court skipped the cross-court pull. The final guard before `executeMatch` allows only that yielded rematch (`rematchFallback`); a rematch that slipped through without the yield is still skipped. A rematch held-draft pick is dropped and the waiting four is kept.
+
+When no clean four exists, `runAlgorithm` re-runs with the rematch flag off; `rematchBlocked` is true only if that re-run yields a proposal. Reason precedence: `immediate_rematch` > `session_cap` > `consecutive`.
+
+Kill switch: `MATCHMAKING_NO_IMMEDIATE_REMATCH` (unset/empty = on). `runAlgorithm`'s default `flags` are both off so existing callers stay identical; production reads `readPairRuleFlags`.
+
+### 6e. Diversity (`isDiversityViolation`)
+
+True if **≥3 of 4** proposed IDs appeared together in any single recent roster.
+
+Lookback via `getEffectiveLookback(eligiblePoolSize + 1)`:
+
+| Eligible pool | Lookback |
+|---|---|
+| ≤5 | 2 |
+| 6–9 | 3 |
+| 10–15 | 4 |
+| 16+ | 7 |
+
+Triggers swap ladder; Tier 3 may accept repeat.
+
+### 6e2. Back-to-back freshness (`runAlgorithmWithFreshness`)
+
+Today's `runAlgorithm` is unchanged. After it serves a four, a wrapper may *replace* that four when it is stale: `forcedRepeat`, or `isBackToBackRepeat` (any of the four would replay ≥3 people from **their own last game**, reconstructed from `lastOpponents ∪ lastPartners`).
+
+The replacement must stay within ±2 skill, keep every Red Zone player already in today's four (engine search only — organizers can still swap anyone), and must not seat anyone further ahead on games, more familiar to the anchor, more than `FRESHNESS_WAIT_SLACK_MINUTES` (10) cheaper on summed wait, or staler across the net. No qualifying four → serve today's four. Kill switch: `MATCHMAKING_FRESHNESS_REFRESH=false`.
+
+### 6e3. Shared-games preference (`findLessRepeatedFour`)
+
+After the existing ladder, if the served four has any pair at `MAX_SHARED_GAMES` (2) shared games (partners + opponents), `composeEngineProposal` searches for a replacement four with a strictly lower over-cap count. Soft: no alternative → original served, `sharedOverCapPairs` reported, and a `shared-games preference: no alternative` warning is logged. When the preference is off, every over-cap count is forced to 0 so cross-court stays byte-identical.
+
+Kill switch: `MATCHMAKING_SHARED_GAMES_PREFERENCE` (unset/empty = on).
+
+### 6f. Rejection memory (`isRejectedRoster`)
+
+Exact four the organizer cleared within `REJECTED_ROSTER_TTL_MINUTES` (30) → treated like diversity violation (stricter than ≥3 overlap — allows 3-of-4 recombinations).
+
+### 6g. Swap ladder (on diversity / rejection)
+
+| Tier | Action | Mixed flag |
+|---|---|---|
+| **1** | Replace 3rd companion within current skill window | `isMixedLevel` if window > ±2 |
+| **2** | Expanded swap at ±`SKILL_VARIANCE_MAX` (only if Tier 1 swap pool empty) | false |
+| **3** | `rotatedDraft` — same four, rotate team split | per window |
+
+Red Zone swap **target** is never benched for diversity — engine falls through to seat original group (may flag `forcedRepeat`).
+
+### 6h. Last-resort fallback
+
+When anchor wait > **15 min** and all skill windows failed:
+
+- Skip `isGroupValid` entirely
+- Take top 3 candidates by score (at most one pulled body)
+- Always `isMixedLevel = true`, `forcedRepeat = true`
+- Partnership cap, last-partner ban, and immediate rematch still apply to seating
+
+### 6i. No match
+
+Returns `proposal: null`. `capSaturation: true` when:
+
+- `immediate_rematch` — every remaining group would rematch someone from a last game
+- `session_cap` — partnership cap removed too many candidates or seating blocked
+- `consecutive` — every balanced split would re-seat last game's teammates (cannot fire while rematch is on)
+
+Organizer receives cap-saturation broadcast.
+
+---
+
+## 7. Team seating — how they sit
+
+`snakeDraft` (normal) and `rotatedDraft` (Tier 3 forced repeat) assign teams via `selectSplit`.
+
+### Split geometry
+
+Players sorted DESC by skill → positions [0,1,2,3]:
+
+| Index | Team A | Team B | Notes |
 |---|---|---|---|
-| 0 | [0, 3] | [1, 2] | Snake draft (highest+lowest vs 2nd+3rd) |
-| 1 | [0, 1] | [2, 3] | Top pair vs bottom pair |
-| 2 | [0, 2] | [1, 3] | Alternating cross-split |
+| 0 | [0,3] | [1,2] | Snake default — highest+lowest vs 2nd+3rd |
+| 2 | [0,2] | [1,3] | Cross-split |
+| 1 | [0,1] | [2,3] | Top vs bottom — **only if balanced** |
 
-`splitIndex = repeatCount % 3` where `repeatCount` is the number of **completed** matches in the recent roster window that contained all 4 of these players.
+**Balance gate** (`isBalancedSplit`): team skill gap ≤ `minGap + SKILL_VARIANCE_MAX`. Two highest on same team only when gap equals `minGap`. Bans lopsided high+high vs low+low when mixed splits exist.
 
-**Example:**
-- First time these 4 play: snakeDraft (normal path, rotation not involved)
-- 2nd play (forced repeat): `repeatCount = 1` → split 1 — top pair vs bottom pair
-- 3rd play: `repeatCount = 2` → split 2 — cross-split
-- 4th play: `repeatCount = 3 % 3 = 0` → split 0 — back to snake (full cycle)
+### Seating freshness ladder (`selectSplit`)
 
----
+Four passes, first legal split wins:
 
-## Soft Gate
-
-### Problem it solves
-
-With 2 courts and exactly 4 players waiting, there is only one possible combination. If those 4 just played together, the diversity check fires — but there are no swap alternatives. The engine would be forced to immediately repeat the same match.
-
-The soft gate **defers on-deck generation** to wait for more players before scheduling, giving the engine a larger, more diverse pool to work with.
-
-### Gate activation conditions (ALL must be true)
-
-1. `waitingCount ≤ GATE_POOL_THRESHOLD (4)` — only ≤4 players waiting
-2. At least 1 match is currently `in_progress`
-3. No player has waited ≥ `GATE_HOLD_MINUTES (8)` — no timeout
-4. No player is in the Red Zone (wait ≥ `CRITICAL_WAIT_MINUTES = 25`)
-
-### Gate release conditions (ANY is sufficient)
-
-| Condition | Constant | Reason |
+| Pass | Partnership | Opponents |
 |---|---|---|
-| Max wait ≥ 8 minutes | `GATE_HOLD_MINUTES` | Player waited long enough; schedule now |
-| Max wait ≥ 25 minutes | `CRITICAL_WAIT_MINUTES` | Red Zone player — urgency overrides |
-| No active courts | — | Nothing to wait for; pool won't grow |
-| Organizer bypasses | `bypassGate = true` | Explicit organizer request |
+| 1a | Both pairs count = 0 | No cross-net pair at `MAX_OPPONENT_REPEATS` |
+| 1b | Both pairs count = 0 | Opponent cap relaxed |
+| 2a | Both pairs < cap | No cross-net at cap |
+| 2b | Both pairs < cap | Opponent cap relaxed |
 
-### bypassGate flag
+Within each pass: minimize `countConsecutiveOpponentRepeats` (last-game cross-net repeats).
 
-`callNextMatch` (organizer's "Call Next Match" button) always passes `bypassGate = true` when running the engine inline, ensuring the organizer **always gets a match** even when the gate would normally hold.
+### Hard seating bans
 
-The refill run after a successful promotion uses `bypassGate = false` (default) — the gate may hold the refill if the pool is still small. This is intentional and safe: the organizer can call "Call Next Match" again if needed.
-
----
-
-## On-Deck Capacity
-
-The engine maintains a buffer of pre-built matches so courts never idle:
-
-```
-capacity = courtCount + ON_DECK_LOOKAHEAD
-```
-
-With `ON_DECK_LOOKAHEAD = 1` (the default):
-
-| Courts | On-deck capacity |
+| Rule | Never waived |
 |---|---|
-| 1 | 2 |
-| 2 | **3** |
-| 3 | 4 |
-| 4 | 5 |
+| Last-game partner (`isLastPartnership`) | Same-side teammates from immediately previous match |
+| Lopsided stack | high+high vs low+low when balanced mixed splits exist |
 
-The `+1` lookahead absorbs the gap when two courts finish nearly simultaneously — the second court always has a match waiting rather than idling while the engine refills.
+### Cap override
 
-The fill loop stops gracefully when the player pool is exhausted, so no phantom matches are ever created.
+If every balanced split is partnership-capped, `snakeDraft` uses `ignorePartnershipCap` pass → `usedCapOverride: true`. Callers (Tier 1/2 swap, preview) skip override; main path may accept after **balance-preserving swap** (replace one companion with another eligible body).
 
----
-
-## Last-Resort Time Fallback
-
-If the anchor has waited **more than `FALLBACK_WAIT_MINUTES = 15` minutes** and all skill-window expansion passes have failed to find a group:
-
-1. Skill validation is **bypassed entirely** — any 3 players fill the group.
-2. Overlap penalties still apply (to avoid repeating exact matches where possible).
-3. The match is **always flagged `is_mixed_level = true`** so the organizer's UI highlights it.
-
-This prevents indefinite starvation: a Beginner who joined an all-Advanced session will eventually be matched at the 15-minute mark rather than waiting forever.
-
-**Threshold order:** Normal window (±1) → Max window (±2) → Red Zone extensions (±3, ±4) → Last-resort fallback.
+`rotatedDraft` does **not** cap-override — returns null so skill window can expand.
 
 ---
 
-## Red Zone
+## 8. Escalation ladder
 
-A player enters the Red Zone when their wait time reaches **25 minutes** (`CRITICAL_WAIT_MINUTES`).
+When rotation and diversity exhaust options:
 
-### Effects of Red Zone status
+```mermaid
+flowchart LR
+    A["±1 / ±2 skill"] --> B["Swap 1 body Tier 1-2"]
+    B --> C["Same 4 rotate teams Tier 3"]
+    C --> D["±3 / ±4 Red Zone"]
+    D --> E["Last-resort 15+ min no skill"]
+    E --> F["Cap saturation stall"]
+```
 
-| Behaviour | Detail |
-|---|---|
-| **Always anchors** | Red Zone player is guaranteed to be in the next match |
-| **Game debt ignored** | `priorityScore = 1000 + waitMinutes` regardless of games played |
-| **Skill window expands** | Engine tries ±1, ±2, ±3, ±4 in succession |
-| **Swap immunity** | A Red Zone companion cannot be benched for diversity |
-| **Gate release** | Red Zone player immediately releases the soft gate |
-| **Never penalised** | Overlap penalty capped at 100× instead of 10,000× |
-
----
-
-## Paused Players
-
-An organizer can **pause** a player in the queue (`is_paused = true`). Paused players are:
-
-- **Invisible to the engine** — filtered out before pool scoring
-- **Not matched** under any circumstances, even in last-resort fallback
-- **Still counted by the soft gate** (gate reads `status = "waiting"` from the view, which includes paused players) — this is a minor conservative effect that causes the gate to fire slightly more often than strictly necessary, but is always safe.
-
----
-
-## Entry Points
-
-### `runEngineForSession(sessionId)` — automatic trigger
-
-Called by: toggle-ON event, `joinQueueAction`, `endMatchAction`, `clearOnDeckMatch`.
-
-Checks the **auto-matchmaking toggle** first. If OFF, returns immediately. If ON, calls `runEngineInternal`.
-
-### `callNextMatch(sessionId, courtId)` — organizer action
-
-Called when organizer taps "Call Next Match" on a court card.
-
-1. Tries to **promote** the oldest pending on-deck match to the court.
-2. If no on-deck match exists and **toggle is ON**, runs the engine inline (`bypassGate = true`) then retries promotion once.
-3. If toggle is OFF and no on-deck match exists, returns an error message.
-4. After a successful promotion, **always** runs the engine to refill the slot (toggle-independent — even if toggle was just switched OFF, the slot is still refilled once).
-
-### `runEngineInternal(supabase, sessionId, bypassGate?)` — internal
-
-The core filler loop. Not exported to the client. Checks capacity, soft gate, then calls `createOneOnDeckMatch` for each available slot.
-
----
-
-## Constants Reference
-
-| Constant | Value | Purpose |
+| Stage | Leveling | Pairing |
 |---|---|---|
-| `PLAYERS_PER_MATCH` | 4 | Players per court (always doubles) |
-| `SKILL_VARIANCE_TARGET` | 1 | Preferred max pairwise skill gap (±1 level) |
-| `SKILL_VARIANCE_MAX` | 2 | Hard max skill gap for normal matches (±2 levels) |
-| `GAME_PENALTY_MINUTES` | 12 | Virtual minutes deducted per game played in priority score |
-| `CRITICAL_WAIT_MINUTES` | 25 | Wait threshold for Red Zone (priority = 1000 + wait) |
-| `RED_ZONE_SCORE_FLOOR` | 1000 | Tier 2 **addend**, not a floor and not a test. `score ≥ 1000` ⇒ Red Zone, but **not** the converse — call `isRedZonePlayer()` (§3.34) |
-| `FALLBACK_WAIT_MINUTES` | 15 | Wait threshold for last-resort skill bypass |
-| `ANTI_REPEAT_LOOKBACK` | 5 | Max recent matches examined for diversity checks |
-| `BOTTLENECK_THRESHOLD_MINUTES` | 20 | Wait time at which the Wait Monitor flags a player |
-| `GATE_POOL_THRESHOLD` | 4 | Max waiting players that activates the soft gate |
-| `GATE_HOLD_MINUTES` | 8 | Minutes before soft gate releases by timeout |
-| `ON_DECK_LOOKAHEAD` | 1 | Extra on-deck slots beyond courtCount |
+| Normal | ±1 → ±2 | Fresh partners preferred |
+| Tier 1–2 | Same or ±2 max | One body substituted |
+| Tier 3 | Same window | Same four, different split |
+| Red Zone ±3/±4 | Cross-tier | `is_mixed_level` |
+| Last-resort | Any four by priority | Caps still apply to seating |
+| Stall | — | Organizer alert |
 
 ---
 
-## Decision Flow Diagram
+## 9. Cross-court drafting
 
-```
-runAlgorithm()
-│
-├─ Fetch waiting pool (status = "waiting", not paused)
-│
-├─ Score & sort by priorityScore DESC, joined_at ASC
-│
-├─ Anchor = pool[0]  (highest priority)
-│
-├─ Build overlapMap  (anchor's pairing history with each candidate)
-│
-├─ For each skill window [±1, ±2, (±3, ±4 if Red Zone)]:
-│  │
-│  ├─ eligible = candidates within ±maxVariance
-│  ├─ if eligible.length < 3 → expand window
-│  │
-│  ├─ scored = scoreCandidates(eligible, overlapMap)
-│  │            sorts by: -(priorityScore) + overlapPenalty
-│  │
-│  ├─ group = buildCombinationGroup(anchor, scored, maxVariance)
-│  │            N-choose-3 search, returns first valid triple
-│  │
-│  ├─ if group.length < 3 → expand window
-│  │
-│  └─ isDiversityViolation([anchor + group], recentRosters)?
-│     │
-│     ├─ NO  → snakeDraft → executeMatch ✅
-│     │
-│     └─ YES → is swap target (group[2]) in Red Zone?
-│              │
-│              ├─ YES → Red Zone immunity: skip swap
-│              │         snakeDraft → executeMatch ✅ (diversity accepted)
-│              │
-│              └─ NO → Tier 1: try replacing group[2] with any
-│                       other candidate (same ±maxVariance window)
-│                       │
-│                       ├─ diverse swap found →
-│                       │   snakeDraft → executeMatch ✅
-│                       │
-│                       └─ no diverse swap →
-│                           Tier 2: swapPool empty AND maxVariance < MAX?
-│                           │
-│                           ├─ YES → try candidates at ±SKILL_VARIANCE_MAX
-│                           │         diverse swap found →
-│                           │         snakeDraft → executeMatch ✅
-│                           │
-│                           └─ NO → Tier 3: partner rotation
-│                                    rotatedDraft → executeMatch ✅
-│                                    (forced repeat, different team split)
-│
-└─ All windows exhausted AND anchor.wait > FALLBACK_WAIT_MINUTES?
-   │
-   ├─ YES → last-resort fallback: any 3 players, isMixedLevel=true
-   │         snakeDraft → executeMatch ✅
-   │
-   └─ NO → return "No compatible match could be formed"
-```
+When waiting-only four is **stale**:
+
+- `forcedRepeat === true`, **or**
+- `countConsecutiveOpponentRepeats > 0` on base split
+
+And: not `bypassGate`, anchor not near Red Zone (`anchorBlocksReach` — wait ≥ 17 or score ≥ 1000), `hasFeedableCapacity`, pullable body available.
+
+**Held draft:** anchor + 2 waiters + **1 body pulled** from live court (`executeHeldMatch`). Three waiters marked `drafted`. Consumes 3 from pool cap math, not 4.
+
+| Constant | Value | Role |
+|---|---|---|
+| `CROSS_COURT_REST_FALLBACK_MINUTES` | 3 | Min rest after source match ends before hold ready |
+| `CROSS_COURT_MAX_HOLD_MINUTES` | 15 | Hold-age cancel (event-driven, not timer) |
+| `CROSS_COURT_MAX_UNREADY_HOLDS` | 2 | Max unready holds (draft mode cap no longer bounds these) |
+
+`buildCrossCourtProposal` forces pull into each candidate four (anchor + 2 seat candidates + body); inner `runAlgorithm` on exact four. Discards `forcedRepeat` fours. Accepts only if `pullImprovesFreshness`.
+
+Pull eligibility (`isPullEligible`): streak < `MAX_CONSECUTIVE_GAMES_FOR_PULL`, not already in another held draft.
+
+Red Zone anchor is **never held** — seated immediately.
 
 ---
 
-## Team Assignment
+## 10. Output flags and side effects
 
-Once a valid group of 4 is confirmed, teams are assigned with **snake draft** to minimise the aggregate skill gap:
+| Flag / signal | Meaning |
+|---|---|
+| `is_mixed_level` | Window > ±2 or last-resort |
+| `forcedRepeat` | Diversity/rejection failed; Tier 3; Red Zone fall-through; last-resort |
+| `capSaturation` | No legal match |
+| `capSaturationReason: "immediate_rematch"` | Last-game rematch blocked every four |
+| `capSaturationReason: "session_cap"` | Partnership cap |
+| `capSaturationReason: "consecutive"` | Last-partner ban blocked all splits |
+| `sharedOverCapPairs` | Over-cap pairs in the four actually served (0 when the preference is off) |
+| Cap saturation broadcast | Organizer UI via `broadcastCapSaturation` |
+| `ON_DECK_WARNING` push | When match auto-published to on-deck |
 
-```
-Sort 4 players descending by skill_level_int: [P0, P1, P2, P3]
-Team A = [P0, P3]  ← highest + lowest
-Team B = [P1, P2]  ← 2nd + 3rd
-```
+**Draft vs auto-publish**
 
-Example: skill levels [7, 6, 5, 4]  
-Team A = 7+4 = 11 · Team B = 6+5 = 11 → perfectly balanced.
+| Mode | Cap counts | Publish |
+|---|---|---|
+| Draft | Unpublished pending minus unready held | Organizer reviews then publishes |
+| Auto-publish | Published or held pending | `shouldAutoPublishMatch` → straight to on-deck |
 
-For forced repeats, `rotatedDraft` overrides this with one of three alternative splits (see [Partner Rotation](#partner-rotation)).
+Call Next Match slot 0 with `bypassGate` forces publish regardless of draft mode.
 
 ---
 
-## What the Engine Does NOT Do
+## 11. Constants
 
-- **It does not guarantee zero repeats.** With small groups (< 8 players) the engine will eventually cycle through all unique combinations and must repeat. Partner rotation minimises the impact.
-- **It does not balance win/loss records.** Teams are built on skill level, not current W/L. The leaderboard is a separate system.
-- **It does not consider gender, physical condition, or preferences.** Grouping is purely skill + fairness + diversity.
-- **It does not place matches on courts directly.** All engine output is `status = "pending"`. Court assignment is always an organiser action.
-- **It does not run on a timer.** The engine is event-driven: it fires when players join, matches end, or the organiser acts. There is no polling loop.
+Verify in `src/lib/constants.ts` — values below are current as of this document.
+
+| Constant | Value | Role |
+|---|---|---|
+| `PLAYERS_PER_MATCH` | 4 | Doubles |
+| `SKILL_VARIANCE_TARGET` | 1 | Preferred skill gap |
+| `SKILL_VARIANCE_MAX` | 2 | Normal max gap |
+| `RED_ZONE_SKILL_VARIANCE_MAX` | 4 | Red Zone widest |
+| `FALLBACK_WAIT_MINUTES` | 15 | Drop skill checks |
+| `CRITICAL_WAIT_MINUTES` | 20 | Red Zone |
+| `HARD_WAIT_CAP_MINUTES` | 25 | Hard Cap |
+| `HARD_CAP_GAMES_CEILING` | 5 | Hard Cap games limit |
+| `GAME_PENALTY_MINUTES` | 8 | Priority game debt |
+| `MAX_PARTNERSHIP_REPEATS` | 2 | Hard same-team cap |
+| `MAX_OPPONENT_REPEATS` | 2 | Soft cross-net cap |
+| `MAX_SHARED_GAMES` | 2 | Soft either-side shared-game preference |
+| `MIN_REST_MINUTES` | 18 | Post-game rest |
+| `GATE_POOL_THRESHOLD` | 4 | Soft gate pool size |
+| `GATE_HOLD_MINUTES` | 8 | Soft gate release |
+| `MIN_FREE_POOL_FOR_ON_DECK` | 4 | Pool diversity cap increment |
+| `GAMES_AHEAD_PENALTY` | 10_000 | Fresh-first |
+| `GAMES_AHEAD_PENALTY_RED_ZONE` | 100 | Red Zone fresh-first cap |
+| `CONSECUTIVE_OPPONENT_PENALTY` | 3 | Split preview tie-break |
+| `FRESHNESS_WAIT_SLACK_MINUTES` | 10 | Max summed wait the refresh may spend |
+| `REJECTED_ROSTER_TTL_MINUTES` | 30 | Rejection memory |
+| `ROSTER_LOOKBACK_COUNT` | 10 | Snapshot fetch depth |
+| `SESSION_MATCH_SNAPSHOT_CEILING` | 200 | Max matches in snapshot |
+
+To count Red Zone call sites: `rg -c 'isRedZonePlayer\(' src/`
+
+---
+
+## 12. Conflict priority
+
+Strongest to weakest:
+
+1. Hard Cap / Red Zone anchor ordering
+2. Immediate rematch + partnership cap + last-partner ban (hard seating)
+3. Skill window (until widened or dropped)
+4. Diversity + rejection memory → swap → rotate → accept
+4b. Back-to-back freshness refresh (may replace a stale four; cannot stall)
+4c. Shared-games preference (may replace an over-cap four; cannot stall)
+5. Fresh-first (`gamesAhead`)
+6. Overlap map (anchor familiarity)
+7. Opponent cap + consecutive-opponent freshness (soft seating)
+8. Team balance (mixed splits over lopsided)
+9. Wait time within fairness tier (tie-break only)
+
+---
+
+## 13. Manual bypass
+
+| Action | Effect |
+|---|---|
+| Organizer manual roster | Bypasses every engine cap; the builder warns on last-game, shared ≥2, teammate, and opponent repeats |
+| `callNextMatch` / `bypassGate` | Skips soft gate and pool diversity cap |
+| Clear / publish drafts | Manages rejection memory and cap slots |
+
+---
+
+## Related tests
+
+| Area | Location |
+|---|---|
+| Pure algorithm | `tests/unit/matchmaking-core.test.ts` |
+| Engine orchestration | `tests/unit/matchmaking-engine.test.ts` |
+| Snapshot derivations | `tests/unit/matchmaking-snapshot.test.ts` |
+| Integration | `tests/integration/matchmaking.test.ts` |
+| Replay harness | `scripts/replay/simulate.ts` |
+| Immediate rematch | `tests/unit/pair-repeat-r1.test.ts` |
+| Shared-games preference | `tests/unit/pair-repeat-r2.test.ts` |
+| Manual-builder warnings | `tests/unit/repeat-pairing.test.ts`, `tests/unit/pair-rule-wrapper.test.ts` |

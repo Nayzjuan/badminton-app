@@ -29,9 +29,9 @@ const FIXTURE_DIR = path.join(CACHE_DIR, "sessions");
 
 /**
  * The sessions the harness replays by default: every 2-court Thursday of the
- * shape the organizer actually runs (16–18 players), plus one 4-court Saturday
- * as a stress case so a change that helps small pools but hurts large ones
- * cannot hide.
+ * shape the organizer actually runs (16–18 players), two Saturday stress
+ * cases, plus the 10/31 pair-repeat incident so a change that helps small
+ * pools but hurts large ones cannot hide.
  */
 export const DEFAULT_SESSION_IDS = [
   "a710713e-17e4-4aab-a5b6-7187ce7af615", // 08/06 Thursday — 17p / 2ct (the clear-burst night)
@@ -40,7 +40,11 @@ export const DEFAULT_SESSION_IDS = [
   "bcf19499-d5b8-4fba-9dcf-dd9e411621aa", // 06/25 Thursday — 18p / 2ct
   "c1c4439c-8d60-40a9-a41a-a49e76442a21", // 07/25 Saturday — 39p / 4ct (stress)
   "1b7f5a32-1846-4880-9ca0-3144c6385086", // 10/03 Saturday — 30p / 3ct (back-to-back near-identicals)
+  "79f09a78-d5fd-490f-8699-d6e5cb7b0199", // 10/31 Saturday — 37p / Chillax (pair-repeat incident)
 ];
+
+/** Matches longer than this (left open overnight) are dropped from fixtures. */
+export const MAX_REPLAY_MATCH_MINUTES = 90;
 
 function serviceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -61,16 +65,53 @@ export function fixturePath(sessionId: string): string {
   return path.join(FIXTURE_DIR, `${sessionId}.json`);
 }
 
+/**
+ * Drop overnight / unclosed matches so a cached fixture cannot poison the
+ * horizon. Applied AFTER the cache read so already-written JSON is cleaned too.
+ */
+export function sanitizeFixture(fixture: SessionFixture): SessionFixture {
+  const dropped: PlayedMatch[] = [];
+  const realMatches = fixture.realMatches.filter((m) => {
+    if (m.endMin - m.startMin > MAX_REPLAY_MATCH_MINUTES) {
+      dropped.push(m);
+      return false;
+    }
+    return true;
+  });
+  for (const m of dropped) {
+    const id = m.matchId ? ` id=${m.matchId}` : "";
+    console.warn(
+      `[replay] dropped match seq=${m.seq}${id} duration=${(m.endMin - m.startMin).toFixed(1)}min`
+    );
+  }
+
+  const courts = fixture.courts
+    .map((c) => ({
+      ...c,
+      durationsMin: c.durationsMin.filter((d) => d <= MAX_REPLAY_MATCH_MINUTES),
+    }))
+    .filter((c) => c.durationsMin.length > 0);
+
+  if (courts.length === 0) {
+    throw new Error(
+      `session ${fixture.sessionId} has no court left after dropping matches longer than ${MAX_REPLAY_MATCH_MINUTES} min`
+    );
+  }
+
+  const horizonMin = realMatches.reduce((max, m) => Math.max(max, m.endMin), 0);
+  return { ...fixture, realMatches, courts, horizonMin };
+}
+
 /** Cached fixture if present, otherwise a fresh fetch. `refresh` forces the fetch. */
 export async function loadFixture(sessionId: string, refresh = false): Promise<SessionFixture> {
   const file = fixturePath(sessionId);
   if (!refresh && fs.existsSync(file)) {
-    return JSON.parse(fs.readFileSync(file, "utf8")) as SessionFixture;
+    return sanitizeFixture(JSON.parse(fs.readFileSync(file, "utf8")) as SessionFixture);
   }
   const fixture = await fetchFixture(sessionId);
   fs.mkdirSync(FIXTURE_DIR, { recursive: true });
   fs.writeFileSync(file, JSON.stringify(fixture, null, 2));
-  return fixture;
+  return sanitizeFixture(fixture);
 }
 
 async function fetchFixture(sessionId: string): Promise<SessionFixture> {
@@ -165,7 +206,15 @@ async function fetchFixture(sessionId: string): Promise<SessionFixture> {
     const endMin = minutesBetween(t0, m.completed_at as string);
     const courtId = (m.court_id as string | null) ?? "unknown";
 
-    realMatches.push({ seq: realMatches.length + 1, courtId, startMin, endMin, teamA, teamB });
+    realMatches.push({
+      seq: realMatches.length + 1,
+      courtId,
+      startMin,
+      endMin,
+      teamA,
+      teamB,
+      matchId: m.id as string,
+    });
 
     // Sub-minute matches are mis-clicks (a court ended seconds after starting),
     // not real games — they would make the replay's court turnover nonsense.
