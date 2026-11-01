@@ -349,7 +349,7 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
       return null;
     }
 
-    let pool = scoreAndSortPool(rawPool);
+    const pool = scoreAndSortPool(rawPool);
     const recentRosters = deriveRecentRosters(snapshot);
     const { partnershipCounts, opponentCounts } = derivePairCounts(snapshot);
     const overlapMap = deriveOverlapMap(snapshot, pool[0].player_id);

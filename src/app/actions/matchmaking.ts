@@ -678,7 +678,7 @@ async function runEngineInternal(
       lastOpponents,
       lastPartners,
     };
-    let workingPool = pool;
+    const workingPool = pool;
     let result = composeEngineProposal(workingPool, engineInputs, pairFlags, {
       freshness: freshnessRefresh,
       rematchFallback: false,
