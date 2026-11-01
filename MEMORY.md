@@ -19,7 +19,7 @@
 
 ## Pair-repeat rules — shipped on `feat/pair-repeat-rules`
 
-Owner picked **R1 as same-slot preference**. `runAlgorithm` still rejects rematches; `composeEngineProposal` yields after the rest-filter retry (`rematchFallback`). Replay vs `pair-rules-baseline` (`pair-rules-r1-pref`): rematches 564.8 → 265.2; over-cap 137 → 61.8; stalls 30 → 30.6; sit-outs 0; match count 276.6 → 277.8. Residual: mixed-level 13.6 → 36.8 (last-resort mixed rematch-free beats a same-level rematch). Owner accepted and asked to ship.
+Owner picked **R1 as same-slot preference**. `composeEngineProposal` yields a rematch from the rested pool (`rematchFallback`); rest is not waived (that skipped the XC-1 pull). Replay vs `pair-rules-baseline`: rematches 564.8 → 265.2; over-cap 137 → 61.8; stalls 30 → 30.6; sit-outs 0. Residual: mixed-level 13.6 → 36.8. Shipping via PR #103.
 
 ## 2026-10-04 — CI follow-up after #100
 

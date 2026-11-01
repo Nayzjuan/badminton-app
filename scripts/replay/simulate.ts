@@ -392,20 +392,6 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
       freshness: freshnessOn,
       rematchFallback: false,
     });
-    if (
-      !result.proposal &&
-      result.rematchBlocked &&
-      poolDetail.restFiltered &&
-      pairFlags.noImmediateRematch
-    ) {
-      const fullScored = scoreAndSortPool(poolDetail.fullPool);
-      pool = [pool[0], ...fullScored.filter((p) => p.player_id !== pool[0].player_id)];
-      result = composeEngineProposal(pool, engineInputs, pairFlags, {
-        freshness: freshnessOn,
-        rematchFallback: false,
-      });
-      diagnostics.restWaivedRetries++;
-    }
     if (!result.proposal && result.rematchBlocked && pairFlags.noImmediateRematch) {
       result = composeEngineProposal(pool, engineInputs, pairFlags, {
         freshness: freshnessOn,

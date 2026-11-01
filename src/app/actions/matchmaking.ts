@@ -684,20 +684,9 @@ async function runEngineInternal(
       rematchFallback: false,
     });
 
-    if (
-      !result.proposal &&
-      result.rematchBlocked &&
-      poolDetail.restFiltered &&
-      pairFlags.noImmediateRematch
-    ) {
-      const fullScored = scoreAndSortPool(poolDetail.fullPool);
-      workingPool = [pool[0], ...fullScored.filter((p) => p.player_id !== pool[0].player_id)];
-      result = composeEngineProposal(workingPool, engineInputs, pairFlags, {
-        freshness: freshnessRefresh,
-        rematchFallback: false,
-      });
-    }
-
+    // Do not waive rest to hunt a rematch-free four. That seats people who
+    // just walked off court and skips the cross-court pull (XC-1). Yield
+    // among the rested pool instead; the reach can still freshen it.
     if (!result.proposal && result.rematchBlocked && pairFlags.noImmediateRematch) {
       result = composeEngineProposal(workingPool, engineInputs, pairFlags, {
         freshness: freshnessRefresh,
@@ -838,7 +827,7 @@ async function runEngineInternal(
         // the candidate. `priorityScore: -1` is not a control surface.
         // Full derivation (and the three wrong versions of it) lives on
         // buildCrossCourtProposal — read it there rather than paraphrasing.
-        const pick = buildCrossCourtProposal(
+        let pick = buildCrossCourtProposal(
           workingPool,
           eligible.map((b) => ({ ...b, priorityScore: -1, isPulled: true as const })),
           {
@@ -857,20 +846,21 @@ async function runEngineInternal(
           }
         );
 
+        if (
+          pick &&
+          pairFlags.noImmediateRematch &&
+          hasImmediateRematch(
+            [...pick.proposal.teamA, ...pick.proposal.teamB].map((p) => p.player_id),
+            lastOpponents,
+            lastPartners
+          )
+        ) {
+          console.error(
+            "[matchmaking] final guard: immediate rematch in held proposal — keeping waiting four"
+          );
+          pick = null;
+        }
         if (pick) {
-          if (
-            pairFlags.noImmediateRematch &&
-            hasImmediateRematch(
-              [...pick.proposal.teamA, ...pick.proposal.teamB].map((p) => p.player_id),
-              lastOpponents,
-              lastPartners
-            )
-          ) {
-            console.error(
-              "[matchmaking] final guard: immediate rematch in held proposal — skipping slot"
-            );
-            break;
-          }
           const fromMatchId = pulledMatchId.get(pick.pulledPlayerId);
           if (fromMatchId) {
             const heldExec = await executeHeldMatch(
