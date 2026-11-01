@@ -32,13 +32,12 @@
 // not absolute counts, when reading it against the REAL column.
 
 import {
+  composeEngineProposal,
   isBackToBackRepeat,
   isRedZonePlayer,
-  runAlgorithm,
-  runAlgorithmWithFreshness,
   scoreAndSortPool,
-  type FreshnessResult,
   type MatchProposal,
+  type PairRuleFlags,
   type ScoredPlayer,
 } from "../../src/lib/matchmaking-core";
 import {
@@ -50,6 +49,8 @@ import {
 } from "../../src/lib/matchmaking-db";
 import {
   isFreshnessRefreshEnabled,
+  isNoImmediateRematchEnabled,
+  isSharedGamesPreferenceEnabled,
   planSlots,
   shouldContinueSlot,
   softGateDecision,
@@ -133,6 +134,9 @@ function emptyDiagnostics(): ReplayDiagnostics {
     skillSpread2Matches: 0,
     teamSkillGaps: [],
     wrapperMs: [],
+    noMatchByReason: {},
+    lessRepeatedRefreshes: 0,
+    restWaivedRetries: 0,
   };
 }
 
@@ -161,6 +165,10 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
   const t0Ms = new Date(fixture.t0).getTime();
   const isoAt = (min: number) => new Date(t0Ms + min * 60_000).toISOString();
   const freshnessOn = options.freshness ?? isFreshnessRefreshEnabled();
+  const pairFlags: PairRuleFlags = {
+    noImmediateRematch: options.noImmediateRematch ?? isNoImmediateRematchEnabled(),
+    sharedGamesPreference: options.sharedGamesPreference ?? isSharedGamesPreferenceEnabled(),
+  };
   const draftQueueMode = options.draftQueue === true;
   const waitSlack = options.waitSlackMinutes;
   const jitterRnd = options.durationJitter ? mulberry32(options.durationJitter.seed) : null;
@@ -362,33 +370,28 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
     };
 
     const started = performance.now();
-    const result: FreshnessResult = freshnessOn
-      ? runAlgorithmWithFreshness(
-          pool,
-          partnershipCounts,
-          overlapMap,
-          recentRosters,
-          opponentCounts,
-          [],
-          lastOpponents,
-          lastPartners,
-          { waitSlackMinutes: waitSlack }
-        )
-      : runAlgorithm(
-          pool,
-          partnershipCounts,
-          overlapMap,
-          recentRosters,
-          opponentCounts,
-          [],
-          lastOpponents,
-          lastPartners
-        );
+    const result = composeEngineProposal(
+      pool,
+      {
+        partnershipCounts,
+        overlapMap,
+        recentRosters,
+        opponentCounts,
+        rejectedRosters: [],
+        lastOpponents,
+        lastPartners,
+        waitSlackMinutes: waitSlack,
+      },
+      pairFlags,
+      { freshness: freshnessOn }
+    );
     if (freshnessOn) diagnostics.wrapperMs.push(performance.now() - started);
 
     if (!result.proposal) {
       diagnostics.noMatchEvents++;
       if (result.capSaturation) diagnostics.capSaturationEvents++;
+      const reason = result.capSaturationReason ?? (result.capSaturation ? "session_cap" : "none");
+      diagnostics.noMatchByReason[reason] = (diagnostics.noMatchByReason[reason] ?? 0) + 1;
       if (rawPool.length >= PLAYERS_PER_MATCH) {
         if (!stallOpen) {
           diagnostics.stallEpisodes++;
@@ -399,6 +402,7 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
     }
     stallOpen = false;
     if (result.forcedRepeat) diagnostics.forcedRepeats++;
+    if (result.lessRepeatedRefresh) diagnostics.lessRepeatedRefreshes++;
     if (freshnessOn && (result.refreshed || result.backToBackRepeat || result.forcedRepeat)) {
       diagnostics.refreshAttempts++;
       if (result.refreshed) diagnostics.refreshSuccesses++;

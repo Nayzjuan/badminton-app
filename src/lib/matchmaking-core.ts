@@ -1326,6 +1326,27 @@ export type AlgorithmResult = {
    * and on no-match.
    */
   forcedRepeat?: boolean;
+  /**
+   * True when the no-immediate-rematch rule (R1) is why no four was served.
+   * Attribution is a re-run with R1 off — see composeEngineProposal / runAlgorithm.
+   * Absent when R1 is off or did not cause the miss.
+   */
+  rematchBlocked?: true;
+};
+
+/**
+ * Kill switches for the pair-repeat rules. Both default off on `runAlgorithm`
+ * so existing callers stay byte-identical. Production reads the env via
+ * `readPairRuleFlags` (unset = on).
+ */
+export type PairRuleFlags = {
+  noImmediateRematch: boolean;
+  sharedGamesPreference: boolean;
+};
+
+export const PAIR_RULE_FLAGS_OFF: PairRuleFlags = {
+  noImmediateRematch: false,
+  sharedGamesPreference: false,
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -1488,6 +1509,8 @@ export function buildCrossCourtProposal(
      * Flag-gated so MATCHMAKING_FRESHNESS_REFRESH=false is today's code.
      */
     backToBackFilter?: boolean;
+    /** Pair-repeat rules. Default both off — today's cross-court output. */
+    flags?: PairRuleFlags;
   }
 ): CrossCourtPick | null {
   if (pool.length < 3 || bodies.length === 0) return null;
@@ -1542,7 +1565,8 @@ export function buildCrossCourtProposal(
           args.opponentCounts,
           args.rejectedRosters,
           args.lastOpponents,
-          args.lastPartners ?? new Map()
+          args.lastPartners ?? new Map(),
+          args.flags
         );
         // forcedRepeat here means runAlgorithm had to re-serve a group that
         // failed the diversity / rejection check. Never worth a pull.
@@ -1666,8 +1690,12 @@ export function runAlgorithm(
   lastOpponents: LastOpponents = new Map(),
   // Who each player partnered with in their LAST game (deriveLastPartners).
   // Trailing optional — same positional-safety reason as lastOpponents.
-  lastPartners: LastPartners = new Map()
+  lastPartners: LastPartners = new Map(),
+  // Pair-repeat kill switches. Trailing optional — default both off so every
+  // existing caller and test stays byte-identical to today's engine.
+  flags: PairRuleFlags = PAIR_RULE_FLAGS_OFF
 ): AlgorithmResult {
+  void flags;
   // pool must be pre-scored and pre-sorted (pool[0] = anchor).
   const anchor = pool[0];
   const anchorSkill = anchor.skill_level_int;
@@ -2214,6 +2242,7 @@ export function findFresherFour(
     lastOpponents: LastOpponents;
     lastPartners: LastPartners;
     waitSlackMinutes?: number;
+    flags?: PairRuleFlags;
   },
   diagnostics?: FresherFourDiagnostics
 ): MatchProposal | null {
@@ -2331,8 +2360,9 @@ export function runAlgorithmWithFreshness(
   rejectedRosters: string[][] = [],
   lastOpponents: LastOpponents = new Map(),
   lastPartners: LastPartners = new Map(),
-  options: { waitSlackMinutes?: number } = {}
+  options: { waitSlackMinutes?: number; flags?: PairRuleFlags } = {}
 ): FreshnessResult {
+  const flags = options.flags ?? PAIR_RULE_FLAGS_OFF;
   const result = runAlgorithm(
     pool,
     partnershipCounts,
@@ -2341,7 +2371,8 @@ export function runAlgorithmWithFreshness(
     opponentCounts,
     rejectedRosters,
     lastOpponents,
-    lastPartners
+    lastPartners,
+    flags
   );
   if (!result.proposal) return result;
 
@@ -2360,6 +2391,7 @@ export function runAlgorithmWithFreshness(
     lastOpponents,
     lastPartners,
     waitSlackMinutes: options.waitSlackMinutes,
+    flags,
   });
   if (!fresher) {
     console.warn(
@@ -2372,5 +2404,70 @@ export function runAlgorithmWithFreshness(
     capSaturation: false,
     backToBackRepeat: false,
     refreshed: true,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// EXPORT: composeEngineProposal
+// ─────────────────────────────────────────────────────────────
+// One composition used by production (`runEngineInternal`) and the replay
+// simulator. Today this is a behaviour-preserving wrapper of
+// runAlgorithm / runAlgorithmWithFreshness. Pair-repeat rules attach here
+// later without the two callers drifting apart.
+
+export type EngineProposalInputs = {
+  partnershipCounts: Map<string, number>;
+  overlapMap: Map<string, number>;
+  recentRosters: string[][];
+  opponentCounts: Map<string, number>;
+  rejectedRosters?: string[][];
+  lastOpponents?: LastOpponents;
+  lastPartners?: LastPartners;
+  waitSlackMinutes?: number;
+};
+
+export type EngineProposalResult = FreshnessResult & {
+  /** Over-cap pair count of the four actually served. 0 when R2 is off. */
+  sharedOverCapPairs: number;
+  lessRepeatedRefresh?: true;
+};
+
+export function composeEngineProposal(
+  pool: ScoredPlayer[],
+  inputs: EngineProposalInputs,
+  flags: PairRuleFlags = PAIR_RULE_FLAGS_OFF,
+  options: { freshness?: boolean } = {}
+): EngineProposalResult {
+  const rejectedRosters = inputs.rejectedRosters ?? [];
+  const lastOpponents = inputs.lastOpponents ?? new Map();
+  const lastPartners = inputs.lastPartners ?? new Map();
+
+  const result = options.freshness
+    ? runAlgorithmWithFreshness(
+        pool,
+        inputs.partnershipCounts,
+        inputs.overlapMap,
+        inputs.recentRosters,
+        inputs.opponentCounts,
+        rejectedRosters,
+        lastOpponents,
+        lastPartners,
+        { waitSlackMinutes: inputs.waitSlackMinutes, flags }
+      )
+    : runAlgorithm(
+        pool,
+        inputs.partnershipCounts,
+        inputs.overlapMap,
+        inputs.recentRosters,
+        inputs.opponentCounts,
+        rejectedRosters,
+        lastOpponents,
+        lastPartners,
+        flags
+      );
+
+  return {
+    ...result,
+    sharedOverCapPairs: 0,
   };
 }

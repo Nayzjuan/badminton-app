@@ -48,8 +48,7 @@ import {
 } from "@/lib/constants";
 import {
   shouldAutoPublishMatch,
-  runAlgorithm,
-  runAlgorithmWithFreshness,
+  composeEngineProposal,
   scoreAndSortPool,
   isHeldMatchReady,
   heldDraftExpired,
@@ -63,6 +62,7 @@ import {
 import {
   isFreshnessRefreshEnabled,
   planSlots,
+  readPairRuleFlags,
   softGateDecision,
   shouldContinueSlot,
 } from "@/lib/matchmaking-slots";
@@ -505,6 +505,7 @@ async function runEngineInternal(
 
   const autoPublish = shouldAutoPublishMatch(sessionRow?.auto_publish ?? false);
   const freshnessRefresh = isFreshnessRefreshEnabled();
+  const pairFlags = readPairRuleFlags();
 
   const waitingCount = waitingRows?.length ?? 0;
   const { dynamicCap, effectiveCap, draftCount, slotsAvailable } = planSlots({
@@ -661,27 +662,20 @@ async function runEngineInternal(
     const { lastOpponents, lastPartners } = deriveLastSides(snapshot);
 
     // ── Pure algorithm — zero DB calls ───────────────────────────
-    const result = freshnessRefresh
-      ? runAlgorithmWithFreshness(
-          pool,
-          partnershipCounts,
-          overlapMap,
-          recentRosters,
-          opponentCounts,
-          rejectedRosters,
-          lastOpponents,
-          lastPartners
-        )
-      : runAlgorithm(
-          pool,
-          partnershipCounts,
-          overlapMap,
-          recentRosters,
-          opponentCounts,
-          rejectedRosters,
-          lastOpponents,
-          lastPartners
-        );
+    const result = composeEngineProposal(
+      pool,
+      {
+        partnershipCounts,
+        overlapMap,
+        recentRosters,
+        opponentCounts,
+        rejectedRosters,
+        lastOpponents,
+        lastPartners,
+      },
+      pairFlags,
+      { freshness: freshnessRefresh }
+    );
     const { proposal, capSaturation } = result;
 
     if (!proposal) {
@@ -821,6 +815,7 @@ async function runEngineInternal(
             baseStaleness,
             forcedRepeat: result.forcedRepeat,
             backToBackFilter: freshnessRefresh,
+            flags: pairFlags,
           }
         );
 

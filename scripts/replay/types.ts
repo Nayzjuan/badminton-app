@@ -66,6 +66,8 @@ export type PlayedMatch = {
   endMin: number;
   teamA: string[];
   teamB: string[];
+  /** Production match id, when the fixture was fetched (not present on cache predating this field). */
+  matchId?: string;
   /** Replay only: the algorithm reported this as a Tier-3 / fallback repeat. */
   forcedRepeat?: boolean;
   /** Replay only: composed under a widened skill window. */
@@ -107,11 +109,21 @@ export type ReplayDiagnostics = {
   teamSkillGaps: number[];
   /** Wall-clock ms of each `runAlgorithmWithFreshness` call (ON runs only). */
   wrapperMs: number[];
+  /** Engine no-match counts by `capSaturationReason` (or `"none"`). */
+  noMatchByReason: Record<string, number>;
+  /** Served fours replaced by the shared-games preference (R2). */
+  lessRepeatedRefreshes: number;
+  /** Times the rest filter was waived for an R1 retry. */
+  restWaivedRetries: number;
 };
 
 export type ReplayOptions = {
   /** Override MATCHMAKING_FRESHNESS_REFRESH for this run. */
   freshness?: boolean;
+  /** Override MATCHMAKING_NO_IMMEDIATE_REMATCH for this run. */
+  noImmediateRematch?: boolean;
+  /** Override MATCHMAKING_SHARED_GAMES_PREFERENCE for this run. */
+  sharedGamesPreference?: boolean;
   /** Compose ahead like runEngineInternal instead of seating on court-free. */
   draftQueue?: boolean;
   waitSlackMinutes?: number;
