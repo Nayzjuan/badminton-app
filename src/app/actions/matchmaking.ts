@@ -681,6 +681,7 @@ async function runEngineInternal(
     let workingPool = pool;
     let result = composeEngineProposal(workingPool, engineInputs, pairFlags, {
       freshness: freshnessRefresh,
+      rematchFallback: false,
     });
 
     if (
@@ -693,6 +694,14 @@ async function runEngineInternal(
       workingPool = [pool[0], ...fullScored.filter((p) => p.player_id !== pool[0].player_id)];
       result = composeEngineProposal(workingPool, engineInputs, pairFlags, {
         freshness: freshnessRefresh,
+        rematchFallback: false,
+      });
+    }
+
+    if (!result.proposal && result.rematchBlocked && pairFlags.noImmediateRematch) {
+      result = composeEngineProposal(workingPool, engineInputs, pairFlags, {
+        freshness: freshnessRefresh,
+        rematchFallback: true,
       });
     }
 
@@ -900,6 +909,7 @@ async function runEngineInternal(
     // authenticated and court-scoped — keep it that way before adding callers.
     if (
       pairFlags.noImmediateRematch &&
+      !result.rematchFallback &&
       hasImmediateRematch(
         [...proposal.teamA, ...proposal.teamB].map((p) => p.player_id),
         lastOpponents,

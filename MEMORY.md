@@ -19,7 +19,7 @@
 
 ## Pair-repeat rules — shipped on `feat/pair-repeat-rules`
 
-R1 hard-blocks an immediate rematch (`isImmediateRematchPair`); R2 prefers fours under `MAX_SHARED_GAMES` (`findLessRepeatedFour`); the manual builder warns on last-game and shared ≥2. Kill switches `MATCHMAKING_NO_IMMEDIATE_REMATCH` / `MATCHMAKING_SHARED_GAMES_PREFERENCE` (unset = on). Replay baseline + threshold compare **not run** — no `.replay-cache/`. Remaining gate: `npx tsx scripts/replay-sessions.ts --draft-queue --jitter 5 --no-rematch off --shared-pref off --save pair-rules-baseline`, then the same with `--no-rematch on --shared-pref off` and `--no-rematch on --shared-pref on`. Branch not pushed.
+Owner picked **R1 as same-slot preference**. `runAlgorithm` still rejects rematches; `composeEngineProposal` yields after the rest-filter retry (`rematchFallback`). Replay vs `pair-rules-baseline` (`pair-rules-r1-pref`): rematches 564.8 → 265.2; over-cap 137 → 61.8; stalls 30 → 30.6; sit-outs 0; match count 276.6 → 277.8. Residual: mixed-level 13.6 → 36.8 (last-resort mixed rematch-free beats a same-level rematch). Owner accepted and asked to ship.
 
 ## 2026-10-04 — CI follow-up after #100
 

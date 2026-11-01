@@ -115,6 +115,8 @@ export type ReplayDiagnostics = {
   lessRepeatedRefreshes: number;
   /** Times the rest filter was waived for an R1 retry. */
   restWaivedRetries: number;
+  /** Times R1 yielded a rematch because no clean four existed. */
+  rematchFallbacks: number;
 };
 
 export type ReplayOptions = {

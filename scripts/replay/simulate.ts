@@ -138,6 +138,7 @@ function emptyDiagnostics(): ReplayDiagnostics {
     noMatchByReason: {},
     lessRepeatedRefreshes: 0,
     restWaivedRetries: 0,
+    rematchFallbacks: 0,
   };
 }
 
@@ -387,7 +388,10 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
       lastPartners,
       waitSlackMinutes: waitSlack,
     };
-    let result = composeEngineProposal(pool, engineInputs, pairFlags, { freshness: freshnessOn });
+    let result = composeEngineProposal(pool, engineInputs, pairFlags, {
+      freshness: freshnessOn,
+      rematchFallback: false,
+    });
     if (
       !result.proposal &&
       result.rematchBlocked &&
@@ -396,8 +400,17 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
     ) {
       const fullScored = scoreAndSortPool(poolDetail.fullPool);
       pool = [pool[0], ...fullScored.filter((p) => p.player_id !== pool[0].player_id)];
-      result = composeEngineProposal(pool, engineInputs, pairFlags, { freshness: freshnessOn });
+      result = composeEngineProposal(pool, engineInputs, pairFlags, {
+        freshness: freshnessOn,
+        rematchFallback: false,
+      });
       diagnostics.restWaivedRetries++;
+    }
+    if (!result.proposal && result.rematchBlocked && pairFlags.noImmediateRematch) {
+      result = composeEngineProposal(pool, engineInputs, pairFlags, {
+        freshness: freshnessOn,
+        rematchFallback: true,
+      });
     }
     if (freshnessOn) diagnostics.wrapperMs.push(performance.now() - started);
 
@@ -417,6 +430,7 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
     stallOpen = false;
     if (result.forcedRepeat) diagnostics.forcedRepeats++;
     if (result.lessRepeatedRefresh) diagnostics.lessRepeatedRefreshes++;
+    if (result.rematchFallback) diagnostics.rematchFallbacks++;
     if (freshnessOn && (result.refreshed || result.backToBackRepeat || result.forcedRepeat)) {
       diagnostics.refreshAttempts++;
       if (result.refreshed) diagnostics.refreshSuccesses++;
@@ -425,6 +439,7 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
     const servedIds = [...result.proposal.teamA, ...result.proposal.teamB].map((p) => p.player_id);
     if (
       pairFlags.noImmediateRematch &&
+      !result.rematchFallback &&
       hasImmediateRematch(servedIds, lastOpponents, lastPartners)
     ) {
       console.error("[matchmaking] final guard: immediate rematch in replay proposal — skipping");

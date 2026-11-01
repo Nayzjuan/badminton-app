@@ -2,8 +2,9 @@
 // Pair-repeat R1 — no immediate rematch
 // ============================================================
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  composeEngineProposal,
   hasImmediateRematch,
   isImmediateRematchPair,
   lastRosterOf,
@@ -261,6 +262,97 @@ describe("runAlgorithm R1", () => {
     expect(ids).toEqual(["a", "e", "f"].concat(ids.includes("b") ? ["b"] : ["c"]).sort());
     expect(hasImmediateRematch(ids, sides.lastOpponents, sides.lastPartners)).toBe(false);
     expect(ids.includes("b") && ids.includes("c")).toBe(false);
+  });
+
+  it("composeEngineProposal yields a rematch when rematchFallback is on and no clean four exists", () => {
+    const pool = [
+      player("a", { wait: CRITICAL_WAIT_MINUTES + 1, priority: 1001 }),
+      player("b", { wait: 14, priority: 14 }),
+      player("c", { wait: 12, priority: 12 }),
+      player("d", { wait: 10, priority: 10 }),
+    ];
+    const sides = lastGame({ a: ["a", "b"], b: ["c", "d"] });
+    const inputs = {
+      partnershipCounts: new Map<string, number>(),
+      overlapMap: new Map<string, number>(),
+      recentRosters: [] as string[][],
+      opponentCounts: new Map<string, number>(),
+      lastOpponents: sides.lastOpponents,
+      lastPartners: sides.lastPartners,
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const yielded = composeEngineProposal(pool, inputs, R1, {
+      freshness: false,
+      rematchFallback: true,
+    });
+    expect(yielded.proposal).not.toBeNull();
+    expect(yielded.rematchFallback).toBe(true);
+    expect(
+      hasImmediateRematch(idsOf(yielded.proposal!), sides.lastOpponents, sides.lastPartners)
+    ).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/serving rematch/));
+    warn.mockRestore();
+
+    const strict = composeEngineProposal(pool, inputs, R1, {
+      freshness: false,
+      rematchFallback: false,
+    });
+    expect(strict.proposal).toBeNull();
+    expect(strict.rematchBlocked).toBe(true);
+    expect(strict.rematchFallback).toBeUndefined();
+  });
+
+  it("composeEngineProposal does not yield when a clean four exists", () => {
+    const pool = [
+      player("a", { wait: 16, priority: 16 }),
+      player("b", { wait: 14, priority: 14 }),
+      player("e", { wait: 12, priority: 12 }),
+      player("f", { wait: 10, priority: 10 }),
+      player("g", { wait: 8, priority: 8 }),
+    ];
+    const sides = lastGame({ a: ["a", "b"], b: ["c", "d"] });
+    const inputs = {
+      partnershipCounts: new Map<string, number>(),
+      overlapMap: new Map<string, number>(),
+      recentRosters: [] as string[][],
+      opponentCounts: new Map<string, number>(),
+      lastOpponents: sides.lastOpponents,
+      lastPartners: sides.lastPartners,
+    };
+    const result = composeEngineProposal(pool, inputs, R1, {
+      freshness: false,
+      rematchFallback: true,
+    });
+    expect(result.proposal).not.toBeNull();
+    expect(result.rematchFallback).toBeUndefined();
+    expect(
+      hasImmediateRematch(idsOf(result.proposal!), sides.lastOpponents, sides.lastPartners)
+    ).toBe(false);
+  });
+
+  it("composeEngineProposal does not yield on a miss that is not rematch-blocked", () => {
+    const pool = [
+      player("a", { skill: 1, wait: 10, priority: 10 }),
+      player("e", { skill: 6, wait: 8, priority: 8 }),
+      player("f", { skill: 6, wait: 6, priority: 6 }),
+      player("g", { skill: 6, wait: 4, priority: 4 }),
+    ];
+    const sides = lastGame({ a: ["x", "y"], b: ["z", "w"] });
+    const inputs = {
+      partnershipCounts: new Map<string, number>(),
+      overlapMap: new Map<string, number>(),
+      recentRosters: [] as string[][],
+      opponentCounts: new Map<string, number>(),
+      lastOpponents: sides.lastOpponents,
+      lastPartners: sides.lastPartners,
+    };
+    const result = composeEngineProposal(pool, inputs, R1, {
+      freshness: false,
+      rematchFallback: true,
+    });
+    expect(result.proposal).toBeNull();
+    expect(result.rematchBlocked).toBeUndefined();
+    expect(result.rematchFallback).toBeUndefined();
   });
 
   it("flags off still serves a rematch four", () => {

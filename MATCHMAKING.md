@@ -252,11 +252,13 @@ At most **one** `isPulled` body per foursome (cross-court).
 - **No waivers** — not Red Zone, not last-resort
 - Manual organizer assignment is the only bypass
 
-### 6d2. Immediate rematch (hard, `isImmediateRematchPair`)
+### 6d2. Immediate rematch (preference, `isImmediateRematchPair`)
 
-A pair is an immediate rematch if they shared **either** player's last committed game, either side. `hasImmediateRematch` rejects that four at every engine path: partnership pre-filter, `buildCombinationGroup`, Tier 1/2 swaps, last-resort, freshness, and the final guard before `executeMatch` / `executeHeldMatch`. Red Zone and last-resort do not override it.
+A pair is an immediate rematch if they shared **either** player's last committed game, either side. `hasImmediateRematch` rejects that four at every `runAlgorithm` path: partnership pre-filter, `buildCombinationGroup`, Tier 1/2 swaps, last-resort, and freshness. Red Zone and last-resort do not override it inside `runAlgorithm`.
 
-When no clean four exists, the engine re-runs with the rematch flag off; `rematchBlocked` is true only if that re-run yields a proposal. Reason precedence: `immediate_rematch` > `session_cap` > `consecutive`.
+`composeEngineProposal` then treats R1 as a same-slot preference. First pass is rematch-free (`rematchFallback: false`). If that miss is `rematchBlocked`, the rest-filter retry keeps the same anchor on the full pool. If still blocked, a second compose with `rematchFallback: true` re-runs R1 off and serves the rematch. The final guard before `executeMatch` allows only that yielded rematch (`rematchFallback`); a rematch that slipped through without the yield is still skipped. Held-draft proposals stay rematch-free.
+
+When no clean four exists, `runAlgorithm` re-runs with the rematch flag off; `rematchBlocked` is true only if that re-run yields a proposal. Reason precedence: `immediate_rematch` > `session_cap` > `consecutive`.
 
 Kill switch: `MATCHMAKING_NO_IMMEDIATE_REMATCH` (unset/empty = on). `runAlgorithm`'s default `flags` are both off so existing callers stay identical; production reads `readPairRuleFlags`.
 

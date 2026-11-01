@@ -365,6 +365,7 @@ function emptyDiagnostics(): ReplayDiagnostics {
     noMatchByReason: {},
     lessRepeatedRefreshes: 0,
     restWaivedRetries: 0,
+    rematchFallbacks: 0,
   };
 }
 
@@ -396,6 +397,7 @@ function meanDiagnostics(all: ReplayDiagnostics[]): ReplayDiagnostics {
     noMatchByReason,
     lessRepeatedRefreshes: pick((d) => d.lessRepeatedRefreshes),
     restWaivedRetries: pick((d) => d.restWaivedRetries),
+    rematchFallbacks: pick((d) => d.rematchFallbacks ?? 0),
   };
 }
 
@@ -473,6 +475,11 @@ function printComparison(current: SavedRun, previous: SavedRun) {
         cur: b.pairsOverSharedCap ?? 0,
       },
       { label: "stallEpisodes", prev: ad.stallEpisodes, cur: bd.stallEpisodes },
+      {
+        label: "rematchFallbacks",
+        prev: ad.rematchFallbacks ?? 0,
+        cur: bd.rematchFallbacks ?? 0,
+      },
       { label: "cycle avg", prev: a.avgCycleMin, cur: b.avgCycleMin },
       { label: "cycle p90", prev: a.p90CycleMin, cur: b.p90CycleMin },
       { label: "cycle max", prev: a.maxCycleMin, cur: b.maxCycleMin },

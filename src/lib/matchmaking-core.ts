@@ -1387,9 +1387,10 @@ export type AlgorithmResult = {
    */
   forcedRepeat?: boolean;
   /**
-   * True when the no-immediate-rematch rule (R1) is why no four was served.
-   * Attribution is a re-run with R1 off — see composeEngineProposal / runAlgorithm.
-   * Absent when R1 is off or did not cause the miss.
+   * True when the no-immediate-rematch rule (R1) is why `runAlgorithm` served
+   * nothing. Attribution is a re-run with R1 off. Absent when R1 is off or
+   * did not cause the miss. `composeEngineProposal` may then yield a rematch
+   * (`rematchFallback`) — this flag stays on the failed first pass only.
    */
   rematchBlocked?: true;
 };
@@ -2720,42 +2721,21 @@ export type EngineProposalResult = FreshnessResult & {
   /** Over-cap pair count of the four actually served. 0 when R2 is off. */
   sharedOverCapPairs: number;
   lessRepeatedRefresh?: true;
+  /**
+   * True when the first pass was rematch-blocked and this four is the R1-off
+   * yield. Absent on a rematch-free serve and on a hard miss.
+   */
+  rematchFallback?: true;
 };
 
-export function composeEngineProposal(
+function applySharedGamesPreference(
   pool: ScoredPlayer[],
   inputs: EngineProposalInputs,
-  flags: PairRuleFlags = PAIR_RULE_FLAGS_OFF,
-  options: { freshness?: boolean } = {}
+  flags: PairRuleFlags,
+  result: FreshnessResult,
+  lastOpponents: LastOpponents,
+  lastPartners: LastPartners
 ): EngineProposalResult {
-  const rejectedRosters = inputs.rejectedRosters ?? [];
-  const lastOpponents = inputs.lastOpponents ?? new Map();
-  const lastPartners = inputs.lastPartners ?? new Map();
-
-  const result = options.freshness
-    ? runAlgorithmWithFreshness(
-        pool,
-        inputs.partnershipCounts,
-        inputs.overlapMap,
-        inputs.recentRosters,
-        inputs.opponentCounts,
-        rejectedRosters,
-        lastOpponents,
-        lastPartners,
-        { waitSlackMinutes: inputs.waitSlackMinutes, flags }
-      )
-    : runAlgorithm(
-        pool,
-        inputs.partnershipCounts,
-        inputs.overlapMap,
-        inputs.recentRosters,
-        inputs.opponentCounts,
-        rejectedRosters,
-        lastOpponents,
-        lastPartners,
-        flags
-      );
-
   if (!flags.sharedGamesPreference || !result.proposal) {
     return { ...result, sharedOverCapPairs: 0 };
   }
@@ -2766,6 +2746,7 @@ export function composeEngineProposal(
     return { ...result, sharedOverCapPairs: 0 };
   }
 
+  const rejectedRosters = inputs.rejectedRosters ?? [];
   const replacement = findLessRepeatedFour(pool, result.proposal, {
     partnershipCounts: inputs.partnershipCounts,
     overlapMap: inputs.overlapMap,
@@ -2795,4 +2776,57 @@ export function composeEngineProposal(
     `[matchmaking] shared-games preference: no alternative — serving ${overCap} over-cap pair(s)`
   );
   return { ...result, sharedOverCapPairs: overCap };
+}
+
+export function composeEngineProposal(
+  pool: ScoredPlayer[],
+  inputs: EngineProposalInputs,
+  flags: PairRuleFlags = PAIR_RULE_FLAGS_OFF,
+  options: { freshness?: boolean; rematchFallback?: boolean } = {}
+): EngineProposalResult {
+  const rejectedRosters = inputs.rejectedRosters ?? [];
+  const lastOpponents = inputs.lastOpponents ?? new Map();
+  const lastPartners = inputs.lastPartners ?? new Map();
+  const allowFallback = options.rematchFallback === true;
+
+  const raw = options.freshness
+    ? runAlgorithmWithFreshness(
+        pool,
+        inputs.partnershipCounts,
+        inputs.overlapMap,
+        inputs.recentRosters,
+        inputs.opponentCounts,
+        rejectedRosters,
+        lastOpponents,
+        lastPartners,
+        { waitSlackMinutes: inputs.waitSlackMinutes, flags }
+      )
+    : runAlgorithm(
+        pool,
+        inputs.partnershipCounts,
+        inputs.overlapMap,
+        inputs.recentRosters,
+        inputs.opponentCounts,
+        rejectedRosters,
+        lastOpponents,
+        lastPartners,
+        flags
+      );
+
+  const result = applySharedGamesPreference(pool, inputs, flags, raw, lastOpponents, lastPartners);
+
+  if (allowFallback && flags.noImmediateRematch && !result.proposal && result.rematchBlocked) {
+    const yielded = composeEngineProposal(
+      pool,
+      inputs,
+      { ...flags, noImmediateRematch: false },
+      { freshness: options.freshness, rematchFallback: false }
+    );
+    if (yielded.proposal) {
+      console.warn("[matchmaking] immediate rematch preference: no clean four — serving rematch");
+      return { ...yielded, rematchFallback: true };
+    }
+  }
+
+  return result;
 }
