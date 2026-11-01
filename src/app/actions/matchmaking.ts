@@ -800,7 +800,11 @@ async function runEngineInternal(
     // against one spare. Checked AFTER the cheap predicates so the extra round
     // trip only happens on the path that actually wants a pull.
     if (
-      wantsFresherFour(result.forcedRepeat, baseStaleness) &&
+      wantsFresherFour(
+        result.forcedRepeat,
+        baseStaleness,
+        pairFlags.sharedGamesPreference ? result.sharedOverCapPairs : 0
+      ) &&
       !bypassGate &&
       !anchorBlocked &&
       (await hasFeedableCapacity(supabase, sessionId))
@@ -840,6 +844,7 @@ async function runEngineInternal(
             forcedRepeat: result.forcedRepeat,
             backToBackFilter: freshnessRefresh,
             flags: pairFlags,
+            baseOverCap: pairFlags.sharedGamesPreference ? result.sharedOverCapPairs : 0,
           }
         );
 

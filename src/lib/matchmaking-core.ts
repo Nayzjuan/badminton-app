@@ -38,6 +38,7 @@ import {
   MAX_CONSECUTIVE_GAMES_FOR_PULL,
   MAX_OPPONENT_REPEATS,
   MAX_PARTNERSHIP_REPEATS,
+  MAX_SHARED_GAMES,
   RED_ZONE_SCORE_FLOOR,
   RED_ZONE_SKILL_VARIANCE_MAX,
   ROSTER_LOOKBACK_COUNT,
@@ -119,6 +120,23 @@ export type ScoredCandidate = {
 
 export function pairKey(a: string, b: string): string {
   return a < b ? `${a}:${b}` : `${b}:${a}`;
+}
+
+/** How many of a four's 6 pairs have already shared MAX_SHARED_GAMES games. */
+export function countOverCapPairs(
+  fourIds: string[],
+  partnershipCounts: Map<string, number>,
+  opponentCounts: Map<string, number>
+): number {
+  let n = 0;
+  for (let i = 0; i < fourIds.length; i++) {
+    for (let j = i + 1; j < fourIds.length; j++) {
+      const k = pairKey(fourIds[i], fourIds[j]);
+      const shared = (partnershipCounts.get(k) ?? 0) + (opponentCounts.get(k) ?? 0);
+      if (shared >= MAX_SHARED_GAMES) n++;
+    }
+  }
+  return n;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -497,9 +515,10 @@ export function countConsecutiveOpponentRepeats(
  */
 export function wantsFresherFour(
   forcedRepeat: boolean | undefined,
-  baseStaleness: number
+  baseStaleness: number,
+  baseOverCap = 0
 ): boolean {
-  return forcedRepeat === true || baseStaleness > 0;
+  return forcedRepeat === true || baseStaleness > 0 || baseOverCap > 0;
 }
 
 /**
@@ -513,9 +532,11 @@ export function wantsFresherFour(
 export function pullImprovesFreshness(
   forcedRepeat: boolean | undefined,
   baseStaleness: number,
-  augStaleness: number
+  augStaleness: number,
+  baseOverCap = 0,
+  overCap = 0
 ): boolean {
-  return forcedRepeat === true || augStaleness < baseStaleness;
+  return forcedRepeat === true || augStaleness < baseStaleness || overCap < baseOverCap;
 }
 
 /**
@@ -1550,6 +1571,8 @@ export function buildCrossCourtProposal(
     backToBackFilter?: boolean;
     /** Pair-repeat rules. Default both off — today's cross-court output. */
     flags?: PairRuleFlags;
+    /** Over-cap count of the waiting-only four. 0 when R2 is off. */
+    baseOverCap?: number;
   }
 ): CrossCourtPick | null {
   if (pool.length < 3 || bodies.length === 0) return null;
@@ -1558,7 +1581,9 @@ export function buildCrossCourtProposal(
   const seatPool = pool.slice(1, 1 + CROSS_COURT_SEAT_CANDIDATES);
   if (seatPool.length < 2) return null;
 
-  let best: CrossCourtPick | null = null;
+  let best: (CrossCourtPick & { overCap: number }) | null = null;
+  const r2 = args.flags?.sharedGamesPreference === true;
+  const baseOverCap = r2 ? (args.baseOverCap ?? 0) : 0;
 
   // The inner runAlgorithm calls below each get a pool of exactly 4, and
   // getEffectiveLookback(4) is 2 — far shorter than the 4–7 the real waiting
@@ -1640,14 +1665,31 @@ export function buildCrossCourtProposal(
         }
 
         const staleness = countConsecutiveOpponentRepeats(result.proposal, args.lastOpponents);
-        if (!pullImprovesFreshness(args.forcedRepeat, args.baseStaleness, staleness)) continue;
+        const overCap = r2
+          ? countOverCapPairs(fourIds, args.partnershipCounts, args.opponentCounts)
+          : 0;
+        if (overCap > baseOverCap) continue;
+        if (
+          !pullImprovesFreshness(
+            args.forcedRepeat,
+            args.baseStaleness,
+            staleness,
+            baseOverCap,
+            overCap
+          )
+        ) {
+          continue;
+        }
 
         const gamesAhead =
           seatPool[i].games_played - seatMinGames + (seatPool[j].games_played - seatMinGames);
         if (
           best &&
           (gamesAhead > best.gamesAhead ||
-            (gamesAhead === best.gamesAhead && staleness >= best.staleness))
+            (gamesAhead === best.gamesAhead && overCap > best.overCap) ||
+            (gamesAhead === best.gamesAhead &&
+              overCap === best.overCap &&
+              staleness >= best.staleness))
         ) {
           continue;
         }
@@ -1657,11 +1699,12 @@ export function buildCrossCourtProposal(
           pulledPlayerId: body.player_id,
           staleness,
           gamesAhead,
+          overCap,
         };
         // A perfectly fresh four on the fairest possible seats cannot be
         // improved on — stop the search. Staleness 0 ALONE is not enough any
         // more: a later pair may tie it at a lower games-ahead tier.
-        if (staleness === 0 && gamesAhead === 0) return best;
+        if (staleness === 0 && gamesAhead === 0 && overCap === 0) return best;
       }
     }
   }
@@ -2472,6 +2515,132 @@ export function findFresherFour(
   return best?.proposal ?? null;
 }
 
+export function findLessRepeatedFour(
+  pool: ScoredPlayer[],
+  served: MatchProposal,
+  args: {
+    partnershipCounts: Map<string, number>;
+    overlapMap: Map<string, number>;
+    recentRosters: string[][];
+    opponentCounts: Map<string, number>;
+    rejectedRosters: string[][];
+    lastOpponents: LastOpponents;
+    lastPartners: LastPartners;
+    flags?: PairRuleFlags;
+  }
+): MatchProposal | null {
+  if (pool.length < 4) return null;
+  const flags = args.flags ?? PAIR_RULE_FLAGS_OFF;
+  const anchor = pool[0];
+  const servedFour = [...served.teamA, ...served.teamB];
+  const servedIds = servedFour.map((p) => p.player_id);
+  const servedIdSet = new Set(servedIds);
+  const servedOverCap = countOverCapPairs(servedIds, args.partnershipCounts, args.opponentCounts);
+  if (servedOverCap === 0) return null;
+
+  const poolMinGames = pool.reduce(
+    (min, p) => (p.isPulled ? min : Math.min(min, p.games_played)),
+    Infinity
+  );
+  const baselineGames = Number.isFinite(poolMinGames) ? poolMinGames : 0;
+  const servedCompanions = servedFour.filter((p) => p.player_id !== anchor.player_id);
+  const servedGamesAhead = servedCompanions.reduce((s, p) => s + gamesAheadOf(p, baselineGames), 0);
+  const servedRedZone = servedFour.filter((p) => isRedZonePlayer(p));
+  const servedStaleness = countConsecutiveOpponentRepeats(served, args.lastOpponents);
+
+  const candidates = pool
+    .slice(1)
+    .filter(
+      (c) =>
+        (args.partnershipCounts.get(pairKey(anchor.player_id, c.player_id)) ?? 0) <
+        MAX_PARTNERSHIP_REPEATS
+    )
+    .filter((c) => Math.abs(c.skill_level_int - anchor.skill_level_int) <= SKILL_VARIANCE_MAX)
+    .filter(
+      (c) =>
+        !flags.noImmediateRematch ||
+        !isImmediateRematchPair(
+          anchor.player_id,
+          c.player_id,
+          args.lastOpponents,
+          args.lastPartners
+        )
+    );
+
+  const n = candidates.length;
+  if (n < 3) return null;
+  const activeRosters = args.recentRosters.slice(0, getEffectiveLookback(n + 1));
+  const scored = scoreCandidates(
+    candidates,
+    args.overlapMap,
+    Number.isFinite(poolMinGames) ? poolMinGames : undefined
+  );
+  const scoreById = new Map(scored.map((s) => [s.candidate.player_id, s.score]));
+
+  let best: { proposal: MatchProposal; overCap: number; cost: number } | null = null;
+
+  for (let i = 0; i < n - 2; i++) {
+    for (let j = i + 1; j < n - 1; j++) {
+      for (let k = j + 1; k < n; k++) {
+        const triple = [candidates[i], candidates[j], candidates[k]];
+        const four = [anchor, ...triple];
+        if (triple.filter((c) => c.isPulled).length > 1) continue;
+        if (!isGroupValid(four, SKILL_VARIANCE_MAX)) continue;
+        const fourIds = four.map((p) => p.player_id);
+        const fourIdSet = new Set(fourIds);
+        if (fourIds.every((id) => servedIdSet.has(id))) continue;
+        if (!servedRedZone.every((p) => fourIdSet.has(p.player_id))) continue;
+        if (triple.reduce((s, p) => s + gamesAheadOf(p, baselineGames), 0) > servedGamesAhead + 1) {
+          continue;
+        }
+        if (isDiversityViolation(fourIds, activeRosters)) continue;
+        if (isRejectedRoster(fourIds, args.rejectedRosters)) continue;
+        if (flags.noImmediateRematch) {
+          if (hasImmediateRematch(fourIds, args.lastOpponents, args.lastPartners)) continue;
+        } else {
+          if (isBackToBackRepeat(fourIds, args.lastOpponents, args.lastPartners)) continue;
+        }
+
+        const draft = snakeDraft(
+          four,
+          args.partnershipCounts,
+          MAX_PARTNERSHIP_REPEATS,
+          args.opponentCounts,
+          MAX_OPPONENT_REPEATS,
+          args.lastOpponents,
+          args.lastPartners
+        );
+        if (!draft || draft.usedCapOverride) continue;
+        if (
+          !flags.noImmediateRematch &&
+          countConsecutiveOpponentRepeats(draft, args.lastOpponents) > servedStaleness
+        ) {
+          continue;
+        }
+
+        const overCap = countOverCapPairs(fourIds, args.partnershipCounts, args.opponentCounts);
+        if (overCap >= servedOverCap) continue;
+
+        const fairness =
+          (scoreById.get(triple[0].player_id) ?? 0) +
+          (scoreById.get(triple[1].player_id) ?? 0) +
+          (scoreById.get(triple[2].player_id) ?? 0);
+        const staleness = countConsecutiveOpponentRepeats(draft, args.lastOpponents);
+        const cost = fairness + CONSECUTIVE_OPPONENT_PENALTY * staleness;
+        if (!best || overCap < best.overCap || (overCap === best.overCap && cost < best.cost)) {
+          best = {
+            proposal: { teamA: draft.teamA, teamB: draft.teamB, isMixedLevel: false },
+            overCap,
+            cost,
+          };
+        }
+      }
+    }
+  }
+
+  return best?.proposal ?? null;
+}
+
 export function runAlgorithmWithFreshness(
   pool: ScoredPlayer[],
   partnershipCounts: Map<string, number>,
@@ -2587,8 +2756,43 @@ export function composeEngineProposal(
         flags
       );
 
-  return {
-    ...result,
-    sharedOverCapPairs: 0,
-  };
+  if (!flags.sharedGamesPreference || !result.proposal) {
+    return { ...result, sharedOverCapPairs: 0 };
+  }
+
+  const servedIds = [...result.proposal.teamA, ...result.proposal.teamB].map((p) => p.player_id);
+  const overCap = countOverCapPairs(servedIds, inputs.partnershipCounts, inputs.opponentCounts);
+  if (overCap === 0) {
+    return { ...result, sharedOverCapPairs: 0 };
+  }
+
+  const replacement = findLessRepeatedFour(pool, result.proposal, {
+    partnershipCounts: inputs.partnershipCounts,
+    overlapMap: inputs.overlapMap,
+    recentRosters: inputs.recentRosters,
+    opponentCounts: inputs.opponentCounts,
+    rejectedRosters,
+    lastOpponents,
+    lastPartners,
+    flags,
+  });
+  if (replacement) {
+    const newIds = [...replacement.teamA, ...replacement.teamB].map((p) => p.player_id);
+    return {
+      proposal: replacement,
+      capSaturation: false,
+      backToBackRepeat: isBackToBackRepeat(newIds, lastOpponents, lastPartners),
+      lessRepeatedRefresh: true,
+      sharedOverCapPairs: countOverCapPairs(
+        newIds,
+        inputs.partnershipCounts,
+        inputs.opponentCounts
+      ),
+    };
+  }
+
+  console.warn(
+    `[matchmaking] shared-games preference: no alternative — serving ${overCap} over-cap pair(s)`
+  );
+  return { ...result, sharedOverCapPairs: overCap };
 }
