@@ -366,6 +366,34 @@ export function isLastPartnership(aId: string, bId: string, lastPartners?: LastP
   return (!!lastA && lastA.has(bId)) || (!!lastB && lastB.has(aId));
 }
 
+/** True when A and B shared either player's last committed game, either side. */
+export function isImmediateRematchPair(
+  aId: string,
+  bId: string,
+  lastOpponents: LastOpponents = new Map(),
+  lastPartners: LastPartners = new Map()
+): boolean {
+  const rosterA = lastRosterOf(aId, lastOpponents, lastPartners);
+  const rosterB = lastRosterOf(bId, lastOpponents, lastPartners);
+  return (!!rosterA && rosterA.includes(bId)) || (!!rosterB && rosterB.includes(aId));
+}
+
+/** True when any pair among `playerIds` is an immediate-rematch pair. */
+export function hasImmediateRematch(
+  playerIds: string[],
+  lastOpponents: LastOpponents = new Map(),
+  lastPartners: LastPartners = new Map()
+): boolean {
+  for (let i = 0; i < playerIds.length; i++) {
+    for (let j = i + 1; j < playerIds.length; j++) {
+      if (isImmediateRematchPair(playerIds[i], playerIds[j], lastOpponents, lastPartners)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // Skill gap between the two teams of a split — 0 means perfectly balanced.
 function splitSkillGap(split: TeamSplit): number {
   return Math.abs(
@@ -961,7 +989,8 @@ export function buildCombinationGroup(
   anchor: ScoredPlayer,
   scoredCandidates: ScoredCandidate[],
   maxVariance: number,
-  splitPreview?: SplitPreviewContext
+  splitPreview?: SplitPreviewContext,
+  rematch?: { lastOpponents: LastOpponents; lastPartners: LastPartners } | null
 ): ScoredPlayer[] {
   const n = scoredCandidates.length;
   if (n < 3) return [];
@@ -1013,6 +1042,16 @@ export function buildCombinationGroup(
         // The anchor is never pulled (C-3), so capping the triple caps the four.
         if (combo.filter((c) => c.isPulled).length > 1) continue;
         if (!isGroupValid([anchor, ...combo], maxVariance)) continue;
+        if (
+          rematch &&
+          hasImmediateRematch(
+            combo.map((c) => c.player_id),
+            rematch.lastOpponents,
+            rematch.lastPartners
+          )
+        ) {
+          continue;
+        }
 
         if (!previewing) {
           // Early exit — first valid triple in priority order IS optimal.
@@ -1318,7 +1357,7 @@ export type AlgorithmResult = {
   /** True when a partnership constraint (session cap or last-partner ban) blocked a match. */
   capSaturation: boolean;
   /** Which partnership constraint fired. Absent when capSaturation is false. */
-  capSaturationReason?: "session_cap" | "consecutive";
+  capSaturationReason?: "session_cap" | "consecutive" | "immediate_rematch";
   /**
    * True ONLY when the proposal is a forced repeat — the Tier-3 partner rotation
    * or the last-resort fallback (a recent group re-emitted). The cross-court
@@ -1593,6 +1632,12 @@ export function buildCrossCourtProposal(
         ) {
           continue;
         }
+        if (
+          args.flags?.noImmediateRematch &&
+          hasImmediateRematch(fourIds, args.lastOpponents, args.lastPartners ?? new Map())
+        ) {
+          continue;
+        }
 
         const staleness = countConsecutiveOpponentRepeats(result.proposal, args.lastOpponents);
         if (!pullImprovesFreshness(args.forcedRepeat, args.baseStaleness, staleness)) continue;
@@ -1695,7 +1740,6 @@ export function runAlgorithm(
   // existing caller and test stays byte-identical to today's engine.
   flags: PairRuleFlags = PAIR_RULE_FLAGS_OFF
 ): AlgorithmResult {
-  void flags;
   // pool must be pre-scored and pre-sorted (pool[0] = anchor).
   const anchor = pool[0];
   const anchorSkill = anchor.skill_level_int;
@@ -1726,7 +1770,7 @@ export function runAlgorithm(
   // Pre-filter: remove anchor + any player who has already hit the
   // partnership cap with the anchor. This is the universal enforcement
   // point — it propagates through every downstream path.
-  const candidates = pool
+  const capFiltered = pool
     .slice(1)
     .filter(
       (c) =>
@@ -1734,8 +1778,14 @@ export function runAlgorithm(
         MAX_PARTNERSHIP_REPEATS
     );
 
-  // Track whether the cap reduced the candidate pool.
-  const capWasActive = pool.length - 1 > candidates.length;
+  // Track whether the cap reduced the candidate pool. Computed BEFORE the
+  // rematch filter so an R1 drop is not mistaken for a partnership-cap drop.
+  const capWasActive = pool.length - 1 > capFiltered.length;
+  const candidates = flags.noImmediateRematch
+    ? capFiltered.filter(
+        (c) => !isImmediateRematchPair(anchor.player_id, c.player_id, lastOpponents, lastPartners)
+      )
+    : capFiltered;
   // True when the seater refused a four solely because every balanced split
   // reused last game's teammates. OR'd into capSaturation so the organizer
   // sees a partnership-constraint notice, not a silent skill-exhaustion miss.
@@ -1812,7 +1862,13 @@ export function runAlgorithm(
     }
 
     const scored = scoreCandidates(eligible, overlapMap, poolMinGames);
-    const group = buildCombinationGroup(anchor, scored, maxVariance, splitPreview);
+    const group = buildCombinationGroup(
+      anchor,
+      scored,
+      maxVariance,
+      splitPreview,
+      flags.noImmediateRematch ? { lastOpponents, lastPartners } : null
+    );
 
     if (group.length === 3) {
       const proposedIds = [anchor.player_id, ...group.map((g) => g.player_id)];
@@ -1865,7 +1921,11 @@ export function runAlgorithm(
             const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
             if (
               !isDiversityViolation(swappedIds, activeRosters) &&
-              !isRejectedRoster(swappedIds, rejectedRosters)
+              !isRejectedRoster(swappedIds, rejectedRosters) &&
+              !(
+                flags.noImmediateRematch &&
+                hasImmediateRematch(swappedIds, lastOpponents, lastPartners)
+              )
             ) {
               const draft = snakeDraft(
                 [anchor, ...swapGroup],
@@ -1925,7 +1985,11 @@ export function runAlgorithm(
                 const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
                 if (
                   !isDiversityViolation(swappedIds, activeRosters) &&
-                  !isRejectedRoster(swappedIds, rejectedRosters)
+                  !isRejectedRoster(swappedIds, rejectedRosters) &&
+                  !(
+                    flags.noImmediateRematch &&
+                    hasImmediateRematch(swappedIds, lastOpponents, lastPartners)
+                  )
                 ) {
                   const draft = snakeDraft(
                     [anchor, ...swapGroup],
@@ -2068,6 +2132,12 @@ export function runAlgorithm(
             const swappedIds = [anchor.player_id, ...swapGroup.map((p) => p.player_id)];
             if (isDiversityViolation(swappedIds, activeRosters)) continue;
             if (isRejectedRoster(swappedIds, rejectedRosters)) continue;
+            if (
+              flags.noImmediateRematch &&
+              hasImmediateRematch(swappedIds, lastOpponents, lastPartners)
+            ) {
+              continue;
+            }
             const altDraft = snakeDraft(
               [anchor, ...swapGroup],
               partnershipCounts,
@@ -2151,7 +2221,33 @@ export function runAlgorithm(
     }
     const scoredFallback = scoreCandidates(candidates, overlapMap, poolMinGames);
     // Cross-court (N-1): keep at most one pulled body even in the last-resort path.
-    const fallbackGroup = limitPulledToOne(scoredFallback.map((s) => s.candidate)).slice(0, 3);
+    const fallbackOrdered = limitPulledToOne(scoredFallback.map((s) => s.candidate));
+    let fallbackGroup: ScoredPlayer[] = [];
+    if (flags.noImmediateRematch) {
+      // First pairwise-clean triple in score order — an enumeration, not a
+      // greedy top-3, so a clash between 1 and 3 cannot hide a clean 2-3-4.
+      outer: for (let i = 0; i < fallbackOrdered.length - 2; i++) {
+        for (let j = i + 1; j < fallbackOrdered.length - 1; j++) {
+          for (let k = j + 1; k < fallbackOrdered.length; k++) {
+            const triple = [fallbackOrdered[i], fallbackOrdered[j], fallbackOrdered[k]];
+            if (triple.filter((c) => c.isPulled).length > 1) continue;
+            if (
+              hasImmediateRematch(
+                triple.map((p) => p.player_id),
+                lastOpponents,
+                lastPartners
+              )
+            ) {
+              continue;
+            }
+            fallbackGroup = triple;
+            break outer;
+          }
+        }
+      }
+    } else {
+      fallbackGroup = fallbackOrdered.slice(0, 3);
+    }
 
     if (fallbackGroup.length >= 3) {
       const allFour = [anchor, ...fallbackGroup];
@@ -2193,15 +2289,34 @@ export function runAlgorithm(
   // to the organizer. Broadcast itself is a side effect handled there.
   // Session-cap pre-filter wins the reason when both constraints fired —
   // those candidates were gone before the seater ran.
-  const capSaturation = capWasActive || lastPartnerBlocked;
+  let rematchBlocked = false;
+  if (flags.noImmediateRematch) {
+    const withoutR1 = runAlgorithm(
+      pool,
+      partnershipCounts,
+      overlapMap,
+      recentRosters,
+      opponentCounts,
+      rejectedRosters,
+      lastOpponents,
+      lastPartners,
+      { ...flags, noImmediateRematch: false }
+    );
+    rematchBlocked = withoutR1.proposal != null;
+  }
+
+  const capSaturation = capWasActive || rematchBlocked || lastPartnerBlocked;
   return {
     proposal: null,
     capSaturation,
-    ...(capWasActive
-      ? { capSaturationReason: "session_cap" as const }
-      : lastPartnerBlocked
-        ? { capSaturationReason: "consecutive" as const }
-        : {}),
+    ...(rematchBlocked ? { rematchBlocked: true as const } : {}),
+    ...(rematchBlocked
+      ? { capSaturationReason: "immediate_rematch" as const }
+      : capWasActive
+        ? { capSaturationReason: "session_cap" as const }
+        : lastPartnerBlocked
+          ? { capSaturationReason: "consecutive" as const }
+          : {}),
   };
 }
 
@@ -2317,6 +2432,12 @@ export function findFresherFour(
         if (isDiversityViolation(fourIds, activeRosters)) continue;
         if (isBackToBackRepeat(fourIds, args.lastOpponents, args.lastPartners)) continue;
         if (isRejectedRoster(fourIds, args.rejectedRosters)) continue;
+        if (
+          args.flags?.noImmediateRematch &&
+          hasImmediateRematch(fourIds, args.lastOpponents, args.lastPartners)
+        ) {
+          continue;
+        }
 
         if (diagnostics) diagnostics.snakeDraftCalls++;
         const draft = snakeDraft(

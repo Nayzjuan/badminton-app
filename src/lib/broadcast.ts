@@ -332,7 +332,7 @@ export interface CapSaturationPayload {
    * "consecutive" — seating would reuse last game's teammates.
    * Absent on older broadcasts; the UI treats that as session_cap.
    */
-  reason?: "session_cap" | "consecutive";
+  reason?: "session_cap" | "consecutive" | "immediate_rematch";
 }
 
 /**

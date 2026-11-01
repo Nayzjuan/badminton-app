@@ -49,6 +49,7 @@ import {
 import {
   shouldAutoPublishMatch,
   composeEngineProposal,
+  hasImmediateRematch,
   scoreAndSortPool,
   isHeldMatchReady,
   heldDraftExpired,
@@ -67,7 +68,7 @@ import {
   shouldContinueSlot,
 } from "@/lib/matchmaking-slots";
 import {
-  fetchActivePool,
+  fetchActivePoolDetailed,
   fetchRecentClearedRosters,
   fetchSessionMatchSnapshot,
   deriveRecentRosters,
@@ -240,7 +241,7 @@ export async function callNextMatch(
   // 3. Toggle ON: run engine now, then retry promotion.
   // bypassGate=true: organizer explicitly requested a match — don't let the
   // soft gate defer it. Serve the best available group immediately.
-  await runEngineInternal(service, sessionId, true);
+  const engine = await runEngineInternal(service, sessionId, true);
   promoted = await promoteOnDeckMatchInternal(service, sessionId, courtId, startedBy);
   if (promoted.success) return promoted;
   if (promoted.code === "start_logging_missing") return promoted;
@@ -250,7 +251,9 @@ export async function callNextMatch(
 
   return {
     success: false,
-    message: "Not enough players in the queue to form a match.",
+    message: engine.rematchBlocked
+      ? "No legal match right now — every available group would repeat someone's last game. Assign manually or wait for a court to finish."
+      : "Not enough players in the queue to form a match.",
   };
 }
 
@@ -388,7 +391,7 @@ async function runEngineInternal(
   supabase: ReturnType<typeof createServiceClient>,
   sessionId: string,
   bypassGate = false
-): Promise<void> {
+): Promise<{ rematchBlocked: boolean }> {
   const { data: courts, error: courtsErr } = await supabase
     .from("courts")
     .select("id")
@@ -397,13 +400,13 @@ async function runEngineInternal(
 
   if (courtsErr) {
     console.error(`[engine] runEngineInternal: courts query failed — ${courtsErr.message}`);
-    return;
+    return { rematchBlocked: false };
   }
 
   const courtCount = courts?.length ?? 0;
   if (courtCount === 0) {
     console.log(`[engine] runEngineInternal: no open courts for session ${sessionId} — skipping`);
-    return;
+    return { rematchBlocked: false };
   }
 
   // ── Fetch waiting players + pending matches + session in parallel ─
@@ -450,7 +453,7 @@ async function runEngineInternal(
 
   if (draftErr) {
     console.error(`[engine] runEngineInternal: pending-match fetch failed — ${draftErr.message}`);
-    return;
+    return { rematchBlocked: false };
   }
   // waitErr is non-fatal — fall back to default cap if the view is unavailable.
   if (waitErr) {
@@ -557,7 +560,7 @@ async function runEngineInternal(
     console.log(
       `[engine] runEngineInternal: draft cap reached (${draftCount}/${effectiveCap}) — skipping`
     );
-    return;
+    return { rematchBlocked: false };
   }
 
   // ── Soft gate + pool diversity cap ───────────────────────────
@@ -593,9 +596,12 @@ async function runEngineInternal(
           `maxWait=${maxWait.toFixed(1)}min, ` +
           `activeCourts=${activeCount} — deferring on-deck for cross-court mix`
       );
-      return;
+      return { rematchBlocked: false };
     }
   }
+
+  let rematchBlocked = false;
+  let slot0Committed = false;
 
   for (let i = 0; i < slotsAvailable; i++) {
     if (!shouldContinueSlot({ slotIndex: i, estimatedWaiting, bypassGate })) {
@@ -616,10 +622,11 @@ async function runEngineInternal(
     // concurrently — the slot's read phase costs 2 round trips, not 3. The
     // interleave is deterministic for order-sensitive test mocks: `matches`,
     // then `v_queue_with_wait_time`, then `match_players`.
-    const [snapshotResult, rawPool] = await Promise.all([
+    const [snapshotResult, poolDetail] = await Promise.all([
       fetchSessionMatchSnapshot(supabase, sessionId),
-      fetchActivePool(supabase, sessionId),
+      fetchActivePoolDetailed(supabase, sessionId),
     ]);
+    const rawPool = poolDetail.pool;
 
     // Fail CLOSED. Every diversity input the engine has — recent rosters, the
     // partnership/opponent caps, the overlap map — is derived from this one
@@ -662,27 +669,41 @@ async function runEngineInternal(
     const { lastOpponents, lastPartners } = deriveLastSides(snapshot);
 
     // ── Pure algorithm — zero DB calls ───────────────────────────
-    const result = composeEngineProposal(
-      pool,
-      {
-        partnershipCounts,
-        overlapMap,
-        recentRosters,
-        opponentCounts,
-        rejectedRosters,
-        lastOpponents,
-        lastPartners,
-      },
-      pairFlags,
-      { freshness: freshnessRefresh }
-    );
+    const engineInputs = {
+      partnershipCounts,
+      overlapMap,
+      recentRosters,
+      opponentCounts,
+      rejectedRosters,
+      lastOpponents,
+      lastPartners,
+    };
+    let workingPool = pool;
+    let result = composeEngineProposal(workingPool, engineInputs, pairFlags, {
+      freshness: freshnessRefresh,
+    });
+
+    if (
+      !result.proposal &&
+      result.rematchBlocked &&
+      poolDetail.restFiltered &&
+      pairFlags.noImmediateRematch
+    ) {
+      const fullScored = scoreAndSortPool(poolDetail.fullPool);
+      workingPool = [pool[0], ...fullScored.filter((p) => p.player_id !== pool[0].player_id)];
+      result = composeEngineProposal(workingPool, engineInputs, pairFlags, {
+        freshness: freshnessRefresh,
+      });
+    }
+
     const { proposal, capSaturation } = result;
+    if (i === 0 && !proposal) rematchBlocked = !!result.rematchBlocked;
 
     if (!proposal) {
       // Broadcast cap-saturation warning when the cap (not player shortage)
       // was the reason no match formed. The broadcast is fire-and-forget.
       if (capSaturation) {
-        const anchor = pool[0];
+        const anchor = workingPool[0];
         broadcastCapSaturation(sessionId, {
           // isRedZonePlayer, not a score test: CapSaturationPayload documents
           // "red_zone" as "anchor has waited >= CRITICAL_WAIT_MINUTES" and the
@@ -767,7 +788,10 @@ async function runEngineInternal(
     // so it understates the true residual — do not quote it as the figure for
     // the hold as a whole. The hold-age cancel named above is what bounds it,
     // on the best-effort terms stated there.
-    const anchorBlocked = anchorBlocksReach(pool[0].priorityScore, pool[0].wait_minutes ?? 0);
+    const anchorBlocked = anchorBlocksReach(
+      workingPool[0].priorityScore,
+      workingPool[0].wait_minutes ?? 0
+    );
 
     // The courts-stay-fed guard, formerly the `i > 0` proxy. A held draft seats
     // nobody when it is created, so it is only safe while pending FEEDABLE
@@ -802,7 +826,7 @@ async function runEngineInternal(
         // Full derivation (and the three wrong versions of it) lives on
         // buildCrossCourtProposal — read it there rather than paraphrasing.
         const pick = buildCrossCourtProposal(
-          pool,
+          workingPool,
           eligible.map((b) => ({ ...b, priorityScore: -1, isPulled: true as const })),
           {
             partnershipCounts,
@@ -820,6 +844,19 @@ async function runEngineInternal(
         );
 
         if (pick) {
+          if (
+            pairFlags.noImmediateRematch &&
+            hasImmediateRematch(
+              [...pick.proposal.teamA, ...pick.proposal.teamB].map((p) => p.player_id),
+              lastOpponents,
+              lastPartners
+            )
+          ) {
+            console.error(
+              "[matchmaking] final guard: immediate rematch in held proposal — skipping slot"
+            );
+            break;
+          }
           const fromMatchId = pulledMatchId.get(pick.pulledPlayerId);
           if (fromMatchId) {
             const heldExec = await executeHeldMatch(
@@ -830,6 +867,7 @@ async function runEngineInternal(
               fromMatchId
             );
             if (heldExec.success) {
+              if (i === 0) slot0Committed = true;
               committedHeld = true;
               // A held draft consumes 3 waiting players, not 4 (C-1). The
               // enclosing branch already requires !bypassGate, so this is
@@ -855,6 +893,18 @@ async function runEngineInternal(
     // slots a bypass run fills are background work and stay in the review flow.
     // bypassGate=true has a single caller (callNextMatch), which is organizer-
     // authenticated and court-scoped — keep it that way before adding callers.
+    if (
+      pairFlags.noImmediateRematch &&
+      hasImmediateRematch(
+        [...proposal.teamA, ...proposal.teamB].map((p) => p.player_id),
+        lastOpponents,
+        lastPartners
+      )
+    ) {
+      console.error("[matchmaking] final guard: immediate rematch in proposal — skipping slot");
+      break;
+    }
+
     const effectiveAutoPublish = autoPublish || (bypassGate && i === 0);
     const execResult = await executeMatch(
       supabase,
@@ -896,6 +946,8 @@ async function runEngineInternal(
       estimatedWaiting -= PLAYERS_PER_MATCH;
     }
   }
+
+  return { rematchBlocked: slot0Committed ? false : rematchBlocked };
 }
 
 // ─────────────────────────────────────────────────────────────

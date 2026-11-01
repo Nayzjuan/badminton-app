@@ -33,6 +33,7 @@
 
 import {
   composeEngineProposal,
+  hasImmediateRematch,
   isBackToBackRepeat,
   isRedZonePlayer,
   scoreAndSortPool,
@@ -299,12 +300,17 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
   }
 
   /** fetchActivePool's in-memory half: arrived, not on court, rested (or waived). */
-  function activePool(nowMin: number): QueueWithWaitTime[] {
-    const active = waitingQueue(nowMin);
-    const rested = active.filter(
+  function activePoolDetailed(nowMin: number): {
+    pool: QueueWithWaitTime[];
+    fullPool: QueueWithWaitTime[];
+    restFiltered: boolean;
+  } {
+    const fullPool = waitingQueue(nowMin);
+    const rested = fullPool.filter(
       (p) => p.games_played === 0 || (p.wait_minutes ?? 0) >= MIN_REST_MINUTES
     );
-    return rested.length >= PLAYERS_PER_MATCH ? rested : active;
+    const restFiltered = rested.length >= PLAYERS_PER_MATCH && rested.length < fullPool.length;
+    return { pool: restFiltered ? rested : fullPool, fullPool, restFiltered };
   }
 
   function takeDuration(court: SimCourt): number {
@@ -335,13 +341,14 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
   }
 
   function compose(nowMin: number): Draft | null {
-    const rawPool = activePool(nowMin);
+    const poolDetail = activePoolDetailed(nowMin);
+    const rawPool = poolDetail.pool;
     if (rawPool.length < PLAYERS_PER_MATCH) {
       diagnostics.thinPoolEvents++;
       return null;
     }
 
-    const pool = scoreAndSortPool(rawPool);
+    let pool = scoreAndSortPool(rawPool);
     const recentRosters = deriveRecentRosters(snapshot);
     const { partnershipCounts, opponentCounts } = derivePairCounts(snapshot);
     const overlapMap = deriveOverlapMap(snapshot, pool[0].player_id);
@@ -370,21 +377,28 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
     };
 
     const started = performance.now();
-    const result = composeEngineProposal(
-      pool,
-      {
-        partnershipCounts,
-        overlapMap,
-        recentRosters,
-        opponentCounts,
-        rejectedRosters: [],
-        lastOpponents,
-        lastPartners,
-        waitSlackMinutes: waitSlack,
-      },
-      pairFlags,
-      { freshness: freshnessOn }
-    );
+    const engineInputs = {
+      partnershipCounts,
+      overlapMap,
+      recentRosters,
+      opponentCounts,
+      rejectedRosters: [] as string[][],
+      lastOpponents,
+      lastPartners,
+      waitSlackMinutes: waitSlack,
+    };
+    let result = composeEngineProposal(pool, engineInputs, pairFlags, { freshness: freshnessOn });
+    if (
+      !result.proposal &&
+      result.rematchBlocked &&
+      poolDetail.restFiltered &&
+      pairFlags.noImmediateRematch
+    ) {
+      const fullScored = scoreAndSortPool(poolDetail.fullPool);
+      pool = [pool[0], ...fullScored.filter((p) => p.player_id !== pool[0].player_id)];
+      result = composeEngineProposal(pool, engineInputs, pairFlags, { freshness: freshnessOn });
+      diagnostics.restWaivedRetries++;
+    }
     if (freshnessOn) diagnostics.wrapperMs.push(performance.now() - started);
 
     if (!result.proposal) {
@@ -409,6 +423,14 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
     }
 
     const servedIds = [...result.proposal.teamA, ...result.proposal.teamB].map((p) => p.player_id);
+    if (
+      pairFlags.noImmediateRematch &&
+      hasImmediateRematch(servedIds, lastOpponents, lastPartners)
+    ) {
+      console.error("[matchmaking] final guard: immediate rematch in replay proposal — skipping");
+      diagnostics.noMatchEvents++;
+      return null;
+    }
     if (isBackToBackRepeat(servedIds, lastOpponents, lastPartners)) {
       diagnostics.backToBackServed++;
       if (hasAdmissibleFresherFour(pool, result.proposal, bruteArgs)) {

@@ -54,7 +54,7 @@
 // the match_players response that follows it (see ENG-SNAP-1).
 // ============================================================
 
-import { vi, describe, it, expect, beforeEach, onTestFinished } from "vitest";
+import { vi, describe, it, expect, beforeEach, beforeAll, afterAll, onTestFinished } from "vitest";
 
 // ── Hoist mock before any imports ─────────────────────────────
 vi.mock("@/utils/supabase/server", () => ({
@@ -120,6 +120,21 @@ import {
   RED_ZONE_SCORE_FLOOR,
 } from "@/lib/constants";
 import { computePriorityScore } from "@/lib/matchmaking-core";
+
+// This suite asserts today's orchestrator. Pair-repeat rules default ON in
+// production (unset env); keep them off here so existing fixtures stay valid.
+const prevNoRematch = process.env.MATCHMAKING_NO_IMMEDIATE_REMATCH;
+const prevSharedPref = process.env.MATCHMAKING_SHARED_GAMES_PREFERENCE;
+beforeAll(() => {
+  process.env.MATCHMAKING_NO_IMMEDIATE_REMATCH = "off";
+  process.env.MATCHMAKING_SHARED_GAMES_PREFERENCE = "off";
+});
+afterAll(() => {
+  if (prevNoRematch === undefined) delete process.env.MATCHMAKING_NO_IMMEDIATE_REMATCH;
+  else process.env.MATCHMAKING_NO_IMMEDIATE_REMATCH = prevNoRematch;
+  if (prevSharedPref === undefined) delete process.env.MATCHMAKING_SHARED_GAMES_PREFERENCE;
+  else process.env.MATCHMAKING_SHARED_GAMES_PREFERENCE = prevSharedPref;
+});
 
 // ─────────────────────────────────────────────────────────────
 // Mock infrastructure

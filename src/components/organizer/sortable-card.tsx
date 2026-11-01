@@ -94,16 +94,29 @@ export function CapSaturationNotice({
   if (!capSaturation) return null;
 
   const isRedZone = capSaturation.type === "red_zone";
+  const isRematch = capSaturation.reason === "immediate_rematch";
   const isConsecutive = capSaturation.reason === "consecutive";
-  const heading = isConsecutive ? "Last partnership blocked" : "Partner-pair cap reached";
-  const body = isConsecutive
+  const heading = isRematch
+    ? "Immediate rematch blocked"
+    : isConsecutive
+      ? "Last partnership blocked"
+      : "Partner-pair cap reached";
+  const body = isRematch
     ? isRedZone
-      ? `${capSaturation.anchorPlayerName} has been waiting over ${CRITICAL_WAIT_MINUTES} min but seating them would reuse last game's teammates. Manual assignment needed.`
-      : `Could not form a match for ${capSaturation.anchorPlayerName} — remaining combinations would reuse last game's teammates. Consider a manual override or wait for ongoing matches to finish.`
-    : isRedZone
-      ? `${capSaturation.anchorPlayerName} has been waiting over ${CRITICAL_WAIT_MINUTES} min but all available teammates have already hit the ${MAX_PARTNERSHIP_REPEATS}-game partner cap. Manual assignment needed.`
-      : `Could not form a match for ${capSaturation.anchorPlayerName} — all partner combinations have reached the ${MAX_PARTNERSHIP_REPEATS}-game cap. Consider a manual override or wait for ongoing matches to finish.`;
-  const noticeLabel = isConsecutive ? "Last-partnership notice" : "Partner-pair cap notice";
+      ? `${capSaturation.anchorPlayerName} has been waiting over ${CRITICAL_WAIT_MINUTES} min, but every available group would put someone back with a player from their last game. Manual assignment needed.`
+      : `Could not form a match for ${capSaturation.anchorPlayerName} — every remaining group would repeat someone's last game. Assign manually or wait for a court to finish.`
+    : isConsecutive
+      ? isRedZone
+        ? `${capSaturation.anchorPlayerName} has been waiting over ${CRITICAL_WAIT_MINUTES} min but seating them would reuse last game's teammates. Manual assignment needed.`
+        : `Could not form a match for ${capSaturation.anchorPlayerName} — remaining combinations would reuse last game's teammates. Consider a manual override or wait for ongoing matches to finish.`
+      : isRedZone
+        ? `${capSaturation.anchorPlayerName} has been waiting over ${CRITICAL_WAIT_MINUTES} min but all available teammates have already hit the ${MAX_PARTNERSHIP_REPEATS}-game partner cap. Manual assignment needed.`
+        : `Could not form a match for ${capSaturation.anchorPlayerName} — all partner combinations have reached the ${MAX_PARTNERSHIP_REPEATS}-game cap. Consider a manual override or wait for ongoing matches to finish.`;
+  const noticeLabel = isRematch
+    ? "Immediate-rematch notice"
+    : isConsecutive
+      ? "Last-partnership notice"
+      : "Partner-pair cap notice";
 
   return (
     <div

@@ -70,10 +70,16 @@ export type ExecuteMatchResult = {
 // Scoring and sorting is done by scoreAndSortPool() in
 // matchmaking-core.ts so that step is independently testable.
 
-export async function fetchActivePool(
+export type ActivePoolDetailed = {
+  pool: QueueWithWaitTime[];
+  fullPool: QueueWithWaitTime[];
+  restFiltered: boolean;
+};
+
+export async function fetchActivePoolDetailed(
   supabase: DbClient,
   sessionId: string
-): Promise<QueueWithWaitTime[]> {
+): Promise<ActivePoolDetailed> {
   const { data: rawPool, error: poolError } = await supabase
     .from("v_queue_with_wait_time")
     .select("*")
@@ -84,24 +90,36 @@ export async function fetchActivePool(
 
   if (poolError) {
     console.warn("[matchmaking-db] fetchActivePool: query failed:", poolError.message);
-    return [];
+    return { pool: [], fullPool: [], restFiltered: false };
   }
 
   // v_queue_with_wait_time DOES expose is_paused (verified in the view def and
   // the QueueWithWaitTime type), so filter in memory — the old supplemental
   // queue_entries query was dead weight (one extra round trip per pool fetch).
   // Paused players are strictly invisible to the matchmaking engine.
-  const active = (rawPool ?? []).filter((p) => !p.is_paused);
+  const fullPool = (rawPool ?? []).filter((p) => !p.is_paused);
 
   // Minimum rest filter: exclude players who just finished a game and haven't
   // rested long enough. wait_minutes reflects time since re-entering the queue.
   // First-time players (games_played=0) are always eligible — no rest needed.
   // Fallback: if the filter would leave fewer than PLAYERS_PER_MATCH players,
   // waive it so very small sessions can still form matches.
-  const rested = active.filter(
+  const rested = fullPool.filter(
     (p) => p.games_played === 0 || (p.wait_minutes ?? 0) >= MIN_REST_MINUTES
   );
-  return rested.length >= PLAYERS_PER_MATCH ? rested : active;
+  const restFiltered = rested.length >= PLAYERS_PER_MATCH && rested.length < fullPool.length;
+  return {
+    pool: restFiltered ? rested : fullPool,
+    fullPool,
+    restFiltered,
+  };
+}
+
+export async function fetchActivePool(
+  supabase: DbClient,
+  sessionId: string
+): Promise<QueueWithWaitTime[]> {
+  return (await fetchActivePoolDetailed(supabase, sessionId)).pool;
 }
 
 // ─────────────────────────────────────────────────────────────
