@@ -17,11 +17,9 @@
 
 ---
 
-## 2026-10-18 — post-completion ledger rebuild (Fix + score edit)
+## Pair-repeat rules — shipped on `feat/pair-repeat-rules`
 
-Hand-corrected Court 9 match `0e53e4da-…` (Mich↔Miggy; 26–31 Team B). Probe drift on Chu↔Miggy healed via `refresh_cross_session_stats`.
-
-`20261018000000_fix_record_rebuild_ledgers` — Fix drops `_fix_record_partnership_delta`, ends with `refresh_cross_session_stats` + `refresh_alltime_leaderboard`. `updateMatchDetails` score-edit/revert does the same (+ Wrapped when closed). Prod stamp `20261017165116`. Suite FRL.
+R1 hard-blocks an immediate rematch (`isImmediateRematchPair`); R2 prefers fours under `MAX_SHARED_GAMES` (`findLessRepeatedFour`); the manual builder warns on last-game and shared ≥2. Kill switches `MATCHMAKING_NO_IMMEDIATE_REMATCH` / `MATCHMAKING_SHARED_GAMES_PREFERENCE` (unset = on). Replay baseline + threshold compare **not run** — no `.replay-cache/`. Remaining gate: `npx tsx scripts/replay-sessions.ts --draft-queue --jitter 5 --no-rematch off --shared-pref off --save pair-rules-baseline`, then the same with `--no-rematch on --shared-pref off` and `--no-rematch on --shared-pref on`. Branch not pushed.
 
 ## 2026-10-04 — CI follow-up after #100
 

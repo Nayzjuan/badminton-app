@@ -13,6 +13,10 @@
 
 ---
 
+## 2026-10-18 — post-completion ledger rebuild (Fix + score edit)
+
+Archived from `MEMORY.md` after pair-repeat ship. Hand-corrected Court 9 match `0e53e4da-…`. `20261018000000_fix_record_rebuild_ledgers` — Fix ends with `refresh_cross_session_stats` + `refresh_alltime_leaderboard`. Prod stamp `20261017165116`. Suite FRL.
+
 ## Part 0 — sessions 2026-09-18, 2026-09-15, 2026-09-13, 2026-09-11, and 2026-08-22
 
 ## 2026-10-04 — held-draft RESTING publish + skip-rest

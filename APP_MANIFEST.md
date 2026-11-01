@@ -461,7 +461,17 @@ Replaced the former greedy algorithm. Iterates all C(n,3) triples of scored cand
 
 `derivePairCounts(snapshot)` — **pure** projection in `matchmaking-db.ts`, computed from the per-slot session match snapshot (see _Session match snapshot_ below). Aggregates all same-team pairings across all committed match statuses (`completed`, `in_progress`, **and `pending` — including unpublished drafts**) for this session into a `Map<pairKey, count>`. Derived once per `runAlgorithm` invocation (hoisted above anchor selection) at **zero DB cost**. The cap applies the moment a draft is created — not only after publish — so two concurrent draft generations cannot both claim the same pair under separate matches.
 
-_(The old async `fetchPartnershipCounts(supabase, sessionId)` still exists, but the engine no longer calls it — it is now the organizer repeat-pairing badge's helper alone. See `src/app/actions/repeat-pairing.ts`.)_
+_(The old async `fetchPartnershipCounts(supabase, sessionId)` still exists. The organizer repeat-pairing badge no longer calls it: `getSessionPairCounts` takes one `fetchSessionMatchSnapshot` and derives pair counts plus session-wide last sides. See `src/app/actions/repeat-pairing.ts`.)_
+
+#### Immediate rematch and shared-games preference
+
+`composeEngineProposal` is the orchestrator wrapper: `runAlgorithm` → freshness refresh → `findLessRepeatedFour`. Production reads `readPairRuleFlags` (`MATCHMAKING_NO_IMMEDIATE_REMATCH` / `MATCHMAKING_SHARED_GAMES_PREFERENCE`; unset/empty = on). `runAlgorithm`'s default `flags` are both off.
+
+**Immediate rematch (hard).** `isImmediateRematchPair` / `hasImmediateRematch` — a pair shared either player's last committed game, either side. Rejected at every engine path, including last-resort and the final guard before `executeMatch` / `executeHeldMatch`. Attribution re-runs with the rematch flag off; `rematchBlocked` is the gate. Reason precedence: `immediate_rematch` > `session_cap` > `consecutive`. Rest-filter retry keeps the same anchor so `overlapMap` stays valid.
+
+**Shared-games preference (soft).** `MAX_SHARED_GAMES` (2) counts partners + opponents. After the existing ladder, `findLessRepeatedFour` may replace a served four that still has over-cap pairs. No alternative → original served and a `shared-games preference: no alternative` warning is logged. When the preference is off, every over-cap count is 0.
+
+The manual builder (`src/lib/repeat-pairing.ts`) adds last-game and shared ≥2 relations alongside teammate and opponent. Strictly advisory. When `capSaturation.reason` is `immediate_rematch`, last-game warnings stay visible.
 
 **Universal pre-filter** (runs before any skill/diversity/rotation logic): After scoring candidates, any candidate whose `pairKey(anchor, candidate)` count is already at `MAX_PARTNERSHIP_REPEATS` is removed from the pool entirely. This happens before group assembly, before skill expansion, and before the last-resort fallback — there are no waivers.
 
@@ -549,6 +559,7 @@ The three derivations below are **pure** and cost no further round trips:
 | `DRAFT_CAP_XLARGE_THRESHOLD`   | 30    | Waiting player count at which the cap upgrades from 5 → 6.                                                                                                                                                         |
 | `MAX_PARTNERSHIP_REPEATS`      | 2     | Max same-team appearances per session pair; no waivers                                                                                                                                                              |
 | `MAX_OPPONENT_REPEATS`         | 2     | **Soft** cap on cross-net (opponent) appearances per session pair (lowered 3→2, 2026-07). Preference only — snakeDraft/rotatedDraft try to avoid it but degrade gracefully (never a stall). Bites round 3+ (in round 2 no pair has met >once); round-2 opponent freshness is driven by the equal overlap weight above. |
+| `MAX_SHARED_GAMES`             | 2     | **Soft** preference on how many committed matches two players may share, either side. Enforced as a replacement search after the existing pipeline (`findLessRepeatedFour`), never a hard block. Independent of the two caps above. |
 | `MAX_BADMINTON_SCORE`          | 31    | Maximum valid score per game. Enforced server-side via `scoreSchema` in `src/lib/schemas/match.ts` (canonical) and client-side in `use-score-form.ts` + `use-edit-match.ts`. **Draws (equal scores) rejected at both layers** via `.refine()` on the schema and explicit `a === b` guard in hooks. |
 
 #### Engine Capacity (`runEngineInternal`) — Dynamic Draft Cap
@@ -593,17 +604,20 @@ Published on-deck matches do **not** count against the cap — they are already 
      !ok → BREAK the burst. Never fall through to empty history.
 5. For each slot in [0, slotsAvailable):
    a. Pool diversity cap (slots 1+): skip if estimatedWaiting < PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK
-   b. runAlgorithmWithFreshness (or runAlgorithm when MATCHMAKING_FRESHNESS_REFRESH=false):
+   b. composeEngineProposal (runAlgorithm → freshness refresh → findLessRepeatedFour):
         i.  derivePairCounts(snapshot) — pure, once per runAlgorithm (not per candidate)
         ii. deriveOverlapMap(snapshot, anchor) — pure, team-aware, per-tick
         iii.scoreCandidates → buildCombinationGroup → skill window expansion → Tier 1/2/3 swap
-        iv. if the served four is stale, a guarded ±2 refresh may replace it
-        v. executeMatch → create_match_with_players RPC
+        iv. if the served four is a last-game rematch, reject (re-run with rematch off for attribution)
+        v.  if the served four is stale, a guarded ±2 refresh may replace it
+        vi. if the served four still has over-cap pairs, findLessRepeatedFour may replace it
+        vii.executeMatch → create_match_with_players RPC
               • RPC returns matchId (UUID) on success
               • RPC returns NULL on TOCTOU conflict → graceful slot-skip, engine continues
 6. Last-resort fallback: skill window bypassed when anchor wait > FALLBACK_WAIT_MINUTES
-7. Cap saturation: broadcastCapSaturation() fires if the partnership cap was the reason
-   no match formed → CapSaturationNotice shown in on-deck panel
+7. Cap saturation: broadcastCapSaturation() fires if rematch, partnership cap, or last-partner
+   ban was the reason no match formed → CapSaturationNotice shown in on-deck panel
+   (`immediate_rematch` > `session_cap` > `consecutive`)
 ```
 
 #### DB-Level TOCTOU Guards (`create_match_with_players`, migration `20260507000000`)
