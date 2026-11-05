@@ -17,6 +17,10 @@
 
 ---
 
+## OPEN — PIN reconnect "Failed to migrate account" (UNAPPLIED SQL)
+
+Correct PIN, then `reconnectPlayer` surfaces that string iff `migrate_player_identity` errors. Fix is `20261105000000_migrate_identity_reconnect_fkeys.sql`: restore `SECURITY DEFINER` + service_role EXECUTE; make `clubs.created_by` / `club_members.invited_by` / `club_invites` updates fatal before DELETE old; leave the active-organizer tombstone `needs_rename=true`. TS is on `cursor/fix-pin-reconnect-migrate-72ca`. **Hand-apply on `usxftpexoimletqmrggb` — merging ships TypeScript only.** Do not invent a `list_migrations` stamp.
+
 ## Pair-repeat rules — shipped on `feat/pair-repeat-rules`
 
 Owner picked **R1 as same-slot preference**. `composeEngineProposal` yields a rematch from the rested pool (`rematchFallback`); rest is not waived (that skipped the XC-1 pull). Replay vs `pair-rules-baseline`: rematches 564.8 → 265.2; over-cap 137 → 61.8; stalls 30 → 30.6; sit-outs 0. Residual: mixed-level 13.6 → 36.8. Shipping via PR #103.
