@@ -595,7 +595,13 @@ export async function reconnectPlayer(
   );
 
   if (migrateErr) {
-    console.error("[reconnectPlayer] migrate_player_identity RPC failed:", migrateErr.message);
+    console.error(
+      "[reconnectPlayer] migrate_player_identity RPC failed:",
+      migrateErr.message,
+      migrateErr.code,
+      migrateErr.details,
+      migrateErr.hint
+    );
     // The transaction was rolled back — old account is intact.
     // Clean up the newly-created auth user so the player can retry.
     const { error: cleanupErr } = await service.auth.admin.deleteUser(newUserId);

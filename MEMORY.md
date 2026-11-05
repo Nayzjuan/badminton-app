@@ -17,6 +17,10 @@
 
 ---
 
+## PIN reconnect SQL — applied (`20261105153258`)
+
+`migrate_player_identity` on `usxftpexoimletqmrggb` is `SECURITY DEFINER` (`prosecdef=true`, `search_path=public, pg_temp`, ACL `{postgres=X/postgres,service_role=X/postgres}`). Stamp `20261105153258` / `migrate_identity_reconnect_fkeys` (repo file `20261105000000`). Stelle can PIN-reconnect; the RPC is the unblock. Diagnose query: `supabase/data-fixes/20261105_stelle_reconnect_diagnose.sql`. TS RPC-error logging ships with PR #104 on merge to `main`.
+
 ## Pair-repeat rules — shipped on `feat/pair-repeat-rules`
 
 Owner picked **R1 as same-slot preference**. `composeEngineProposal` yields a rematch from the rested pool (`rematchFallback`); rest is not waived (that skipped the XC-1 pull). Replay vs `pair-rules-baseline`: rematches 564.8 → 265.2; over-cap 137 → 61.8; stalls 30 → 30.6; sit-outs 0. Residual: mixed-level 13.6 → 36.8. Shipping via PR #103.
@@ -142,6 +146,7 @@ Resolve a suspected gap file by file, never by count — and check that doc befo
 
 | Applied | Stamp |
 |---|---|
+| `20261105000000_migrate_identity_reconnect_fkeys` | `20261105153258` |
 | `20261018000000_fix_record_rebuild_ledgers` | `20261017165116` |
 | `20261004000000_score_and_start_actor_logging` | `20261003185541` |
 | `20260920000000_queue_status_follows_roster` | `20260920121809` |

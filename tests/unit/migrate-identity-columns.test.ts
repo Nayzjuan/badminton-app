@@ -14,7 +14,7 @@
 // ============================================================
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 // Columns deliberately left to DB defaults (NOT copied) — see the migration.
@@ -47,14 +47,25 @@ function profileColumns(): string[] {
   return cols;
 }
 
+function latestMigrateSql(): { file: string; src: string } {
+  const dir = resolve(ROOT, "supabase/migrations");
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort();
+  for (let i = files.length - 1; i >= 0; i--) {
+    const src = readFileSync(resolve(dir, files[i]), "utf8");
+    if (src.includes("CREATE OR REPLACE FUNCTION public.migrate_player_identity")) {
+      return { file: files[i], src };
+    }
+  }
+  throw new Error("no migrate_player_identity CREATE OR REPLACE found");
+}
+
 function migrateInsertColumns(): string[] {
-  const src = readFileSync(
-    resolve(ROOT, "supabase/migrations/20260913000000_oauth_name_confirm.sql"),
-    "utf8"
-  );
+  const { file, src } = latestMigrateSql();
   // The Step-2 INSERT inside migrate_player_identity.
   const insertIdx = src.indexOf("INSERT INTO profiles (");
-  expect(insertIdx, "migrate INSERT INTO profiles not found").toBeGreaterThan(-1);
+  expect(insertIdx, `migrate INSERT INTO profiles not found in ${file}`).toBeGreaterThan(-1);
   const open = src.indexOf("(", insertIdx);
   const close = src.indexOf(")", open);
   const colList = src.slice(open + 1, close);
@@ -80,7 +91,7 @@ describe("migrate_player_identity column parity (schema-drift guard)", () => {
     expect(
       missing,
       `migrate_player_identity drops these profile columns on reconnect: ${missing.join(", ")}. ` +
-        `Add them to the Step-2 INSERT/SELECT in 20260913000000_oauth_name_confirm.sql.`
+        `Add them to the Step-2 INSERT/SELECT in the latest migrate_player_identity migration.`
     ).toEqual([]);
   });
 
