@@ -18,7 +18,8 @@
 --   3. The active-organizer path kept the old profile and restored
 --      needs_rename=false while the new row already held the same name with
 --      needs_rename=false — 23505 against idx_profiles_unique_active_name
---      whenever that index is live.
+--      whenever that index is live. A later reconnect also 23505s if that
+--      tombstone is still sitting in profiles (Stelle, 2026-08-16).
 --
 -- Hand-apply on production (usxftpexoimletqmrggb). Do not edit 20260913.
 -- ============================================================
@@ -52,6 +53,18 @@ BEGIN
   IF NOT v_old_needs_rename THEN
     UPDATE profiles SET needs_rename = true WHERE id = p_old_user_id;
   END IF;
+
+  -- Leftover organizer tombstones share name+PIN with needs_rename=false
+  -- (Stelle's 2026-08-16 reconnect is the known case). Flag them before
+  -- INSERT so idx_profiles_unique_active_name cannot 23505 against the copy.
+  UPDATE profiles SET needs_rename = true
+  WHERE id <> p_old_user_id
+    AND id <> p_new_user_id
+    AND needs_rename = false
+    AND pin IS NOT DISTINCT FROM (SELECT pin FROM profiles WHERE id = p_old_user_id)
+    AND lower(btrim(regexp_replace(display_name, E'[ \t]+', ' ', 'g')))
+      = (SELECT lower(btrim(regexp_replace(display_name, E'[ \t]+', ' ', 'g')))
+         FROM profiles WHERE id = p_old_user_id);
 
   INSERT INTO identity_migrations (old_id, new_id, display_name)
   SELECT p_old_user_id, p_new_user_id, display_name

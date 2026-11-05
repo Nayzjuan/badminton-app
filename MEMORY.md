@@ -17,9 +17,9 @@
 
 ---
 
-## OPEN — PIN reconnect "Failed to migrate account" (UNAPPLIED SQL)
+## OPEN — Stelle PIN reconnect (UNAPPLIED SQL)
 
-Correct PIN, then `reconnectPlayer` surfaces that string iff `migrate_player_identity` errors. Fix is `20261105000000_migrate_identity_reconnect_fkeys.sql`: restore `SECURITY DEFINER` + service_role EXECUTE; make `clubs.created_by` / `club_members.invited_by` / `club_invites` updates fatal before DELETE old; leave the active-organizer tombstone `needs_rename=true`. TS is on `cursor/fix-pin-reconnect-migrate-72ca`. **Hand-apply on `usxftpexoimletqmrggb` — merging ships TypeScript only.** Do not invent a `list_migrations` stamp.
+Stelle's PIN matches; `migrate_player_identity` then errors ("Failed to migrate account"). She is a CHILLAX admin with a prior identity migration (2026-08-16), so leftover organizer tombstones (23505) and `club_members.invited_by` (23503) are the likely blockers. Fix: `20261105000000_migrate_identity_reconnect_fkeys.sql` on `usxftpexoimletqmrggb` (also flags same-name+same-PIN ghosts). Diagnose: `supabase/data-fixes/20261105_stelle_reconnect_diagnose.sql`. Merging does not apply SQL.
 
 ## Pair-repeat rules — shipped on `feat/pair-repeat-rules`
 

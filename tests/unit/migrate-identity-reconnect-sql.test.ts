@@ -10,6 +10,7 @@
 //   MI-R-3  no-CASCADE FKs update before DELETE old, not in a savepoint
 //   MI-R-4  active-organizer tombstone does not restore needs_rename=false
 //   MI-R-5  INSERT still copies needs_name_confirm
+//   MI-R-6  same-name+same-PIN ghosts are flagged before the INSERT copy
 // ============================================================
 
 import { describe, it, expect } from "vitest";
@@ -77,5 +78,16 @@ describe("MI-R: migrate_player_identity reconnect hardening", () => {
     const close = body.indexOf(")", insertIdx);
     const cols = body.slice(insertIdx, close);
     expect(cols).toMatch(/needs_name_confirm/);
+  });
+
+  it("MI-R-6: same-name+same-PIN ghosts are flagged before INSERT", () => {
+    const body = fnBody();
+    const flag = body.indexOf(
+      "UPDATE profiles SET needs_rename = true\n  WHERE id <> p_old_user_id"
+    );
+    const insertIdx = body.indexOf("INSERT INTO profiles (");
+    expect(flag, "ghost pin+name UPDATE missing").toBeGreaterThan(-1);
+    expect(insertIdx).toBeGreaterThan(flag);
+    expect(body.slice(flag, insertIdx)).toMatch(/pin IS NOT DISTINCT FROM/);
   });
 });
