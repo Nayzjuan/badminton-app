@@ -17,9 +17,9 @@
 
 ---
 
-## OPEN — Stelle PIN reconnect (UNAPPLIED SQL)
+## PIN reconnect SQL — applied (`20261105153258`)
 
-Stelle's PIN matches; `migrate_player_identity` then errors ("Failed to migrate account"). She is a CHILLAX admin with a prior identity migration (2026-08-16), so leftover organizer tombstones (23505) and `club_members.invited_by` (23503) are the likely blockers. Fix: `20261105000000_migrate_identity_reconnect_fkeys.sql` on `usxftpexoimletqmrggb` (also flags same-name+same-PIN ghosts). Diagnose: `supabase/data-fixes/20261105_stelle_reconnect_diagnose.sql`. Merging does not apply SQL.
+`migrate_player_identity` on `usxftpexoimletqmrggb` is `SECURITY DEFINER` (`prosecdef=true`, `search_path=public, pg_temp`, ACL `{postgres=X/postgres,service_role=X/postgres}`). Stamp `20261105153258` / `migrate_identity_reconnect_fkeys` (repo file `20261105000000`). Stelle can PIN-reconnect; the RPC is the unblock. Diagnose query: `supabase/data-fixes/20261105_stelle_reconnect_diagnose.sql`. TS RPC-error logging ships with PR #104 on merge to `main`.
 
 ## Pair-repeat rules — shipped on `feat/pair-repeat-rules`
 
@@ -146,6 +146,7 @@ Resolve a suspected gap file by file, never by count — and check that doc befo
 
 | Applied | Stamp |
 |---|---|
+| `20261105000000_migrate_identity_reconnect_fkeys` | `20261105153258` |
 | `20261018000000_fix_record_rebuild_ledgers` | `20261017165116` |
 | `20261004000000_score_and_start_actor_logging` | `20261003185541` |
 | `20260920000000_queue_status_follows_roster` | `20260920121809` |

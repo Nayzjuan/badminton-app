@@ -13,6 +13,10 @@
 
 ---
 
+## PIN reconnect SQL (Stelle lockout) — applied 2026-11-05
+
+Was OPEN/UNAPPLIED in `MEMORY.md`. Correct PIN matched; `migrate_player_identity` then failed because live RPC was INVOKER. Applied `20261105000000_migrate_identity_reconnect_fkeys.sql` via MCP `apply_migration` on `usxftpexoimletqmrggb`. Prod stamp `20261105153258` / `migrate_identity_reconnect_fkeys`. `prosecdef=true`; no-CASCADE club FKs fatal; organizer tombstone stays `needs_rename=true`; same-name+same-PIN ghosts flagged. Diagnose: `supabase/data-fixes/20261105_stelle_reconnect_diagnose.sql`.
+
 ## 2026-10-18 — post-completion ledger rebuild (Fix + score edit)
 
 Archived from `MEMORY.md` after pair-repeat ship. Hand-corrected Court 9 match `0e53e4da-…`. `20261018000000_fix_record_rebuild_ledgers` — Fix ends with `refresh_cross_session_stats` + `refresh_alltime_leaderboard`. Prod stamp `20261017165116`. Suite FRL.
