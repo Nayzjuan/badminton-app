@@ -1818,7 +1818,8 @@ describe("callNextMatch", () => {
 // above. These three pin the production default (R1 on, yield off):
 //   ME-HR-1  rematch-blocked waiting four → broadcast immediate_rematch,
 //            never create_match_with_players
-//   ME-HR-2  MATCHMAKING_REMATCH_FALLBACK=on → the same four is seated
+//   ME-HR-2  MATCHMAKING_REMATCH_FALLBACK=on before the Manila sunset → seated
+//   ME-HR-2b same env after the sunset → stall, same as ME-HR-1
 //   ME-HR-3  Call Next surfaces the rematch copy, not "not enough players"
 //
 // History is two disjoint last games, not one same-four rematch: a 4-of-4
@@ -1929,6 +1930,16 @@ describe("runEngineInternal — hard rematch", () => {
     });
   }
 
+  // isRematchFallbackEnabled() reads `new Date()` with no inject. Pin Date so
+  // ME-HR-2 does not die the morning after REMATCH_FALLBACK_SUNSET_MANILA.
+  function pinManilaClock(iso: string) {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(iso));
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+  }
+
   it("ME-HR-1: rematch-blocked four broadcasts immediate_rematch and is not seated", async () => {
     enableR1();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -1967,6 +1978,7 @@ describe("runEngineInternal — hard rematch", () => {
 
   it("ME-HR-2: MATCHMAKING_REMATCH_FALLBACK=on seats the rematch four", async () => {
     enableR1({ yieldOn: true });
+    pinManilaClock("2026-11-15T10:00:00.000Z");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     onTestFinished(() => warn.mockRestore());
 
@@ -1991,6 +2003,24 @@ describe("runEngineInternal — hard rematch", () => {
       "p2",
       "p3",
     ]);
+  });
+
+  it("ME-HR-2b: MATCHMAKING_REMATCH_FALLBACK=on is ignored after the Manila sunset", async () => {
+    enableR1({ yieldOn: true });
+    pinManilaClock("2026-11-21T16:00:00.000Z");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    onTestFinished(() => warn.mockRestore());
+
+    const mock = makeMockClient(rematchEngineReads);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
+
+    expect(mock.rpc).not.toHaveBeenCalled();
+    expect(broadcastCapSaturation).toHaveBeenCalledWith(
+      SESSION_ID,
+      expect.objectContaining({ reason: "immediate_rematch" })
+    );
   });
 
   it("ME-HR-3: Call Next reports the rematch stall, not player shortage", async () => {
