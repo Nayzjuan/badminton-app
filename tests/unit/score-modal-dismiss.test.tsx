@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ScoreModal } from "@/components/organizer/score-modal";
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
@@ -25,8 +25,8 @@ describe("ScoreModal dismiss while pending", () => {
     });
     render(<ScoreModal open match={MATCH} onSubmit={() => hanging} onClose={vi.fn()} />);
     const inputs = screen.getAllByRole("spinbutton");
-    await user.type(inputs[0], "21");
-    await user.type(inputs[1], "18");
+    fireEvent.change(inputs[0], { target: { value: "21" } });
+    fireEvent.change(inputs[1], { target: { value: "18" } });
     await user.click(screen.getByRole("button", { name: /end match/i }));
     expect(await screen.findByRole("button", { name: /saving/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /cancel/i })).toBeEnabled();
