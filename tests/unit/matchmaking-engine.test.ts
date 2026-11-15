@@ -1810,6 +1810,232 @@ describe("callNextMatch", () => {
 });
 
 // ═════════════════════════════════════════════════════════════
+// HARD REMATCH — runEngineInternal does not seat a rematch four
+// ═════════════════════════════════════════════════════════════
+//
+// The suite globally sets MATCHMAKING_NO_IMMEDIATE_REMATCH=off, so the
+// rematch stall in runEngineInternal is unreachable from every fixture
+// above. These three pin the production default (R1 on, yield off):
+//   ME-HR-1  rematch-blocked waiting four → broadcast immediate_rematch,
+//            never create_match_with_players
+//   ME-HR-2  MATCHMAKING_REMATCH_FALLBACK=on → the same four is seated
+//   ME-HR-3  Call Next surfaces the rematch copy, not "not enough players"
+//
+// History is two disjoint last games, not one same-four rematch: a 4-of-4
+// overlap with the newest roster is a diversity violation, and withoutR1
+// would also miss, so rematchBlocked would stay false. p0 last faced p1
+// (leavers x,y); p2 last faced p3 (leavers u,v). R1 drops p1 from p0's
+// candidates (only two remain). R1-off still has a legal four.
+
+describe("runEngineInternal — hard rematch", () => {
+  const rematchPool = [
+    {
+      id: "e-p0",
+      session_id: SESSION_ID,
+      player_id: "p0",
+      joined_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+      games_played: 1,
+      status: "waiting" as const,
+      position: null,
+      is_paused: false,
+      created_at: new Date().toISOString(),
+      display_name: "Player 0",
+      skill_level: "intermediate" as const,
+      skill_level_int: 4,
+      wait_minutes: 10,
+      is_bottleneck: false,
+    },
+    {
+      id: "e-p1",
+      session_id: SESSION_ID,
+      player_id: "p1",
+      joined_at: new Date(Date.now() - 9 * 60_000).toISOString(),
+      games_played: 1,
+      status: "waiting" as const,
+      position: null,
+      is_paused: false,
+      created_at: new Date().toISOString(),
+      display_name: "Player 1",
+      skill_level: "intermediate" as const,
+      skill_level_int: 4,
+      wait_minutes: 9,
+      is_bottleneck: false,
+    },
+    {
+      id: "e-p2",
+      session_id: SESSION_ID,
+      player_id: "p2",
+      joined_at: new Date(Date.now() - 8 * 60_000).toISOString(),
+      games_played: 1,
+      status: "waiting" as const,
+      position: null,
+      is_paused: false,
+      created_at: new Date().toISOString(),
+      display_name: "Player 2",
+      skill_level: "intermediate" as const,
+      skill_level_int: 4,
+      wait_minutes: 8,
+      is_bottleneck: false,
+    },
+    {
+      id: "e-p3",
+      session_id: SESSION_ID,
+      player_id: "p3",
+      joined_at: new Date(Date.now() - 7 * 60_000).toISOString(),
+      games_played: 1,
+      status: "waiting" as const,
+      position: null,
+      is_paused: false,
+      created_at: new Date().toISOString(),
+      display_name: "Player 3",
+      skill_level: "intermediate" as const,
+      skill_level_int: 4,
+      wait_minutes: 7,
+      is_bottleneck: false,
+    },
+  ];
+
+  const rematchMatchRows = [{ id: "m2" }, { id: "m1" }];
+  const rematchRosters = [
+    { match_id: "m2", player_id: "p0", team: "a" },
+    { match_id: "m2", player_id: "x", team: "a" },
+    { match_id: "m2", player_id: "p1", team: "b" },
+    { match_id: "m2", player_id: "y", team: "b" },
+    { match_id: "m1", player_id: "p2", team: "a" },
+    { match_id: "m1", player_id: "u", team: "a" },
+    { match_id: "m1", player_id: "p3", team: "b" },
+    { match_id: "m1", player_id: "v", team: "b" },
+  ];
+
+  const rematchEngineReads = [
+    { data: { is_auto_matchmaking_on: true }, error: null },
+    { data: [{ id: "c1" }], error: null },
+    { data: rematchPool, error: null },
+    DRAFTS(0),
+    { data: { max_auto_drafts_override: null }, error: null },
+    { data: [], error: null },
+    { data: rematchMatchRows, error: null },
+    { data: rematchPool, error: null },
+    { data: rematchRosters, error: null },
+  ];
+
+  function enableR1(opts?: { yieldOn?: boolean }) {
+    delete process.env.MATCHMAKING_NO_IMMEDIATE_REMATCH;
+    if (opts?.yieldOn) process.env.MATCHMAKING_REMATCH_FALLBACK = "on";
+    else delete process.env.MATCHMAKING_REMATCH_FALLBACK;
+    onTestFinished(() => {
+      process.env.MATCHMAKING_NO_IMMEDIATE_REMATCH = "off";
+      delete process.env.MATCHMAKING_REMATCH_FALLBACK;
+    });
+  }
+
+  it("ME-HR-1: rematch-blocked four broadcasts immediate_rematch and is not seated", async () => {
+    enableR1();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    onTestFinished(() => {
+      warn.mockRestore();
+      error.mockRestore();
+    });
+
+    const mock = makeMockClient(rematchEngineReads);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
+
+    expect(broadcastCapSaturation).toHaveBeenCalledTimes(1);
+    expect(broadcastCapSaturation).toHaveBeenCalledWith(SESSION_ID, {
+      type: "general",
+      anchorPlayerId: "p0",
+      anchorPlayerName: "Player 0",
+      reason: "immediate_rematch",
+    });
+    expect(mock.rpc).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalledWith(expect.stringContaining("no compatible match"));
+    expect(mock.queriedTables).toEqual([
+      "sessions",
+      "courts",
+      "v_queue_with_wait_time",
+      "matches",
+      "sessions",
+      "match_events",
+      "matches",
+      "v_queue_with_wait_time",
+      "match_players",
+    ]);
+  });
+
+  it("ME-HR-2: MATCHMAKING_REMATCH_FALLBACK=on seats the rematch four", async () => {
+    enableR1({ yieldOn: true });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    onTestFinished(() => warn.mockRestore());
+
+    const mock = makeMockClient(rematchEngineReads, [{ data: "match-rematch", error: null }]);
+    vi.mocked(createServiceClient).mockReturnValue(mock as never);
+
+    await expect(runEngineForSession(SESSION_ID)).resolves.toBeUndefined();
+
+    expect(broadcastCapSaturation).not.toHaveBeenCalled();
+    expect(mock.rpc).toHaveBeenCalledTimes(1);
+    expect(mock.rpc).toHaveBeenCalledWith(
+      "create_match_with_players",
+      expect.objectContaining({ p_origin: "auto" })
+    );
+    const [, payload] = mock.rpc.mock.calls[0] as unknown as [
+      string,
+      { p_team_a_ids: string[]; p_team_b_ids: string[] },
+    ];
+    expect([...payload.p_team_a_ids, ...payload.p_team_b_ids].sort()).toEqual([
+      "p0",
+      "p1",
+      "p2",
+      "p3",
+    ]);
+  });
+
+  it("ME-HR-3: Call Next reports the rematch stall, not player shortage", async () => {
+    enableR1();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    onTestFinished(() => warn.mockRestore());
+
+    const mock = makeMockClient([]);
+    const serviceMock = makeMockClient([
+      { data: { created_by: "test-user" }, error: null },
+      { data: null, error: null },
+      { data: { id: COURT_ID }, error: null },
+      { data: { id: COURT_ID }, error: null },
+      { data: [], error: null },
+      { data: [], error: null },
+      { data: { is_auto_matchmaking_on: true }, error: null },
+      { data: [{ id: "c1" }], error: null },
+      { data: rematchPool, error: null },
+      DRAFTS(0),
+      { data: { max_auto_drafts_override: null }, error: null },
+      { data: [], error: null },
+      { data: rematchMatchRows, error: null },
+      { data: rematchPool, error: null },
+      { data: rematchRosters, error: null },
+      { data: { id: COURT_ID }, error: null },
+      { data: [], error: null },
+      { data: [], error: null },
+    ]);
+    vi.mocked(createServerSupabaseClient).mockResolvedValue(mock as never);
+    vi.mocked(createServiceClient).mockReturnValue(serviceMock as never);
+
+    const result = await callNextMatch(SESSION_ID, COURT_ID);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/every available group would repeat/i);
+    expect(result.message).not.toMatch(/not enough players/i);
+    expect(serviceMock.rpc).not.toHaveBeenCalled();
+    expect(broadcastCapSaturation).toHaveBeenCalledWith(
+      SESSION_ID,
+      expect.objectContaining({ reason: "immediate_rematch" })
+    );
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
 // AUTO-PUBLISH MODE — engine writes is_published per session.auto_publish
 // ═════════════════════════════════════════════════════════════
 //

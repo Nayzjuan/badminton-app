@@ -19,7 +19,7 @@
 
 ## Hard rematch — yield gated (`MATCHMAKING_REMATCH_FALLBACK`)
 
-Default is hard rematch: `runEngineInternal` probes the R1-off four for the cross-court reach but `executeMatch`s it only while `isRematchFallbackEnabled` is true. Replay does not probe XC. R1 preference, R2 soft, held rematch drop, and the `executeMatch` guard stay. Restore the old waiting-four yield with `MATCHMAKING_REMATCH_FALLBACK=on` through Manila date `REMATCH_FALLBACK_SUNSET_MANILA` (`2026-11-21`) inclusive; from 2026-11-22 00:00 Asia/Manila the env is ignored. CapSaturationNotice copy is unchanged (`rg "Immediate rematch blocked" src/lib/cap-saturation-copy.ts`). Prove sunset with `npx vitest run tests/unit/rematch-fallback.test.ts tests/unit/month.test.ts`.
+Default is hard rematch: `runEngineInternal` probes the R1-off four for the cross-court reach but `executeMatch`s it only while `isRematchFallbackEnabled` is true. Replay does not probe XC. R1 preference, R2 soft, held rematch drop, and the `executeMatch` guard stay. Restore the old waiting-four yield with `MATCHMAKING_REMATCH_FALLBACK=on` through Manila date `REMATCH_FALLBACK_SUNSET_MANILA` (`2026-11-21`) inclusive; from 2026-11-22 00:00 Asia/Manila the env is ignored. CapSaturationNotice copy is unchanged (`rg "Immediate rematch blocked" src/lib/cap-saturation-copy.ts`). Prove sunset with `npx vitest run tests/unit/rematch-fallback.test.ts tests/unit/month.test.ts`. Prove the engine stall (broadcast, no RPC, Call Next copy, kill-switch yield) with `npx vitest run tests/unit/matchmaking-engine.test.ts -t ME-HR-`.
 
 ## 2026-10-04 — organizer mutation resilience (slow net)
 
