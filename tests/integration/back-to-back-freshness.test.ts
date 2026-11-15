@@ -27,6 +27,7 @@ faker.seed(4040);
 afterEach(async () => {
   await truncateTracked();
   delete process.env.MATCHMAKING_FRESHNESS_REFRESH;
+  delete process.env.MATCHMAKING_NO_IMMEDIATE_REMATCH;
 });
 
 async function setupSession() {
@@ -92,6 +93,10 @@ async function firstPendingRoster(sessionId: string): Promise<string[]> {
 
 describe("I-1 lookback-gap Oct 3 shape", () => {
   it("drafts a fresh four when the previous near-identical game sits past the lookback", async () => {
+    // Freshness isolation: R1 would rematch-block this five-person pool
+    // (any four includes two of Pat/Nic/Ram from last game). The kill
+    // switch MATCHMAKING_REMATCH_FALLBACK dies after Saturday; R1-off does not.
+    process.env.MATCHMAKING_NO_IMMEDIATE_REMATCH = "off";
     const { session } = await setupSession();
     const dom = await player("lower_intermediate");
     const pat = await player("beginner");
@@ -128,7 +133,7 @@ describe("I-1 lookback-gap Oct 3 shape", () => {
 });
 
 describe("I-2 thin band fail-open", () => {
-  it("still drafts when no fresher four exists", async () => {
+  it("does not seat a last-game rematch when no fresher four exists", async () => {
     const { session } = await setupSession();
     const a = await player("beginner");
     const b = await player("beginner");
@@ -148,9 +153,12 @@ describe("I-2 thin band fail-open", () => {
     ]);
 
     await runEngineForSession(session.id);
-    const roster = await firstPendingRoster(session.id);
-    expect(roster.length).toBe(4);
-    expect(new Set(roster)).toEqual(new Set([a.id, b.id, c.id, d.id]));
+    const { data: pending } = await serviceClient()
+      .from("matches")
+      .select("id")
+      .eq("session_id", session.id)
+      .eq("status", "pending");
+    expect(pending ?? []).toHaveLength(0);
   });
 });
 
@@ -189,6 +197,7 @@ describe("I-3 / I-4 sibling draft is last game for the next slot", () => {
 describe("I-6 kill switch", () => {
   it("MATCHMAKING_FRESHNESS_REFRESH=false serves today's near-identical four", async () => {
     process.env.MATCHMAKING_FRESHNESS_REFRESH = "false";
+    process.env.MATCHMAKING_NO_IMMEDIATE_REMATCH = "off";
     const { session } = await setupSession();
     const dom = await player("lower_intermediate");
     const pat = await player("beginner");
