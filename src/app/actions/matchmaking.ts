@@ -62,8 +62,10 @@ import {
 } from "@/lib/matchmaking-core";
 import {
   isFreshnessRefreshEnabled,
+  isRematchFallbackEnabled,
   planSlots,
   readPairRuleFlags,
+  shouldRetryRematchFallback,
   softGateDecision,
   shouldContinueSlot,
 } from "@/lib/matchmaking-slots";
@@ -684,10 +686,18 @@ async function runEngineInternal(
       rematchFallback: false,
     });
 
-    // Do not waive rest to hunt a rematch-free four. That seats people who
-    // just walked off court and skips the cross-court pull (XC-1). Yield
-    // among the rested pool instead; the reach can still freshen it.
-    if (!result.proposal && result.rematchBlocked && pairFlags.noImmediateRematch) {
+    // Hard rematch by default. Do not waive rest to hunt a rematch-free four
+    // (that skipped XC-1). The old yield among the rested pool is restored
+    // only while MATCHMAKING_REMATCH_FALLBACK is on and before the Manila
+    // Saturday sunset — isRematchFallbackEnabled.
+    if (
+      shouldRetryRematchFallback({
+        hasProposal: !!result.proposal,
+        rematchBlocked: result.rematchBlocked,
+        noImmediateRematch: pairFlags.noImmediateRematch,
+        rematchFallbackEnabled: isRematchFallbackEnabled(),
+      })
+    ) {
       result = composeEngineProposal(workingPool, engineInputs, pairFlags, {
         freshness: freshnessRefresh,
         rematchFallback: true,
@@ -705,7 +715,7 @@ async function runEngineInternal(
         broadcastCapSaturation(sessionId, {
           // isRedZonePlayer, not a score test: CapSaturationPayload documents
           // "red_zone" as "anchor has waited >= CRITICAL_WAIT_MINUTES" and the
-          // UI copy in sortable-card.tsx says "waiting over 20 min", so a score
+          // UI copy in cap-saturation-copy.ts says "waiting over 20 min", so a score
           // test made the payload disagree with both (a wait-22 / 3-games anchor
           // scores 998 and was broadcast as "general").
           type: isRedZonePlayer(anchor) ? "red_zone" : "general",

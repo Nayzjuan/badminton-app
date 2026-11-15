@@ -54,3 +54,16 @@ export function isCurrentManilaMonth(year: number, month: number, now: Date = ne
   const cur = getCurrentManilaMonth(now);
   return cur.year === year && cur.month === month;
 }
+
+/**
+ * Calendar date in CLUB_TIMEZONE (Asia/Manila) as `YYYY-MM-DD`.
+ * `now` is injectable so sunset checks do not depend on the runtime zone.
+ */
+export function getManilaCalendarDate(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: CLUB_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}

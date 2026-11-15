@@ -7,7 +7,12 @@
 // ============================================================
 
 import { describe, it, expect } from "vitest";
-import { formatMonthLabel, getCurrentManilaMonth, isCurrentManilaMonth } from "@/lib/month";
+import {
+  formatMonthLabel,
+  getCurrentManilaMonth,
+  getManilaCalendarDate,
+  isCurrentManilaMonth,
+} from "@/lib/month";
 
 describe("formatMonthLabel", () => {
   it("MON-1: formats a 1-based month + year as 'June 2026'", () => {
@@ -53,5 +58,14 @@ describe("isCurrentManilaMonth", () => {
     expect(isCurrentManilaMonth(2026, 7, at)).toBe(true);
     expect(isCurrentManilaMonth(2026, 6, at)).toBe(false);
     expect(isCurrentManilaMonth(2027, 7, at)).toBe(false);
+  });
+});
+
+describe("getManilaCalendarDate — Asia/Manila, not the runtime zone", () => {
+  it("MON-9: 15:59 UTC on Nov 21 is still Nov 21 in Manila", () => {
+    expect(getManilaCalendarDate(new Date("2026-11-21T15:59:00Z"))).toBe("2026-11-21");
+  });
+  it("MON-10: 16:00 UTC on Nov 21 is Nov 22 in Manila", () => {
+    expect(getManilaCalendarDate(new Date("2026-11-21T16:00:00Z"))).toBe("2026-11-22");
   });
 });

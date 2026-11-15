@@ -1389,8 +1389,9 @@ export type AlgorithmResult = {
   /**
    * True when the no-immediate-rematch rule (R1) is why `runAlgorithm` served
    * nothing. Attribution is a re-run with R1 off. Absent when R1 is off or
-   * did not cause the miss. `composeEngineProposal` may then yield a rematch
-   * (`rematchFallback`) — this flag stays on the failed first pass only.
+   * did not cause the miss. `composeEngineProposal` yields a rematch only when
+   * the caller passes `rematchFallback: true` — this flag stays on the failed
+   * first pass only.
    */
   rematchBlocked?: true;
 };
@@ -2723,7 +2724,8 @@ export type EngineProposalResult = FreshnessResult & {
   lessRepeatedRefresh?: true;
   /**
    * True when the first pass was rematch-blocked and this four is the R1-off
-   * yield. Absent on a rematch-free serve and on a hard miss.
+   * yield. Absent on a rematch-free serve and on a hard miss. Production
+   * retries the yield only while `isRematchFallbackEnabled` is true.
    */
   rematchFallback?: true;
 };

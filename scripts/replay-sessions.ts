@@ -36,6 +36,7 @@ import type { ReplayDiagnostics, SessionFixture } from "./replay/types";
 import {
   isFreshnessRefreshEnabled,
   isNoImmediateRematchEnabled,
+  isRematchFallbackEnabled,
   isSharedGamesPreferenceEnabled,
 } from "../src/lib/matchmaking-slots";
 
@@ -74,6 +75,7 @@ type Args = {
   freshness: boolean | undefined;
   noImmediateRematch: boolean | undefined;
   sharedGamesPreference: boolean | undefined;
+  rematchFallback: boolean | undefined;
   jitter: number;
 };
 
@@ -92,6 +94,7 @@ function parseArgs(argv: string[]): Args {
     freshness: undefined,
     noImmediateRematch: undefined,
     sharedGamesPreference: undefined,
+    rematchFallback: undefined,
     jitter: 0,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -104,6 +107,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--freshness") args.freshness = parseOnOff(argv[++i]);
     else if (a === "--no-rematch") args.noImmediateRematch = parseOnOff(argv[++i]);
     else if (a === "--shared-pref") args.sharedGamesPreference = parseOnOff(argv[++i]);
+    else if (a === "--rematch-fallback") args.rematchFallback = parseOnOff(argv[++i]);
     else if (a === "--session") {
       const id = argv[++i];
       if (id) args.sessions.push(id);
@@ -120,6 +124,7 @@ function parseArgs(argv: string[]): Args {
           "  --freshness on|off   override MATCHMAKING_FRESHNESS_REFRESH",
           "  --no-rematch on|off  override MATCHMAKING_NO_IMMEDIATE_REMATCH",
           "  --shared-pref on|off override MATCHMAKING_SHARED_GAMES_PREFERENCE",
+          "  --rematch-fallback on|off  override MATCHMAKING_REMATCH_FALLBACK",
         ].join("\n")
       );
       process.exit(0);
@@ -139,6 +144,7 @@ type SavedRunFlags = {
   freshness: boolean;
   noImmediateRematch: boolean;
   sharedGamesPreference: boolean;
+  rematchFallback: boolean;
   draftQueue: boolean;
   jitter: number;
 };
@@ -539,6 +545,7 @@ async function main() {
     freshness: args.freshness ?? isFreshnessRefreshEnabled(),
     noImmediateRematch: args.noImmediateRematch ?? isNoImmediateRematchEnabled(),
     sharedGamesPreference: args.sharedGamesPreference ?? isSharedGamesPreferenceEnabled(),
+    rematchFallback: args.rematchFallback ?? isRematchFallbackEnabled(),
     draftQueue: args.draftQueue,
     jitter: args.jitter,
   };
@@ -558,6 +565,7 @@ async function main() {
       `  flags: freshness=${flags.freshness ? "on" : "off"}` +
         ` no-rematch=${flags.noImmediateRematch ? "on" : "off"}` +
         ` shared-pref=${flags.sharedGamesPreference ? "on" : "off"}` +
+        ` rematch-fallback=${flags.rematchFallback ? "on" : "off"}` +
         ` draft-queue=${flags.draftQueue ? "on" : "off"}` +
         ` jitter=${flags.jitter}`
     )
@@ -591,6 +599,7 @@ async function main() {
       freshness: flags.freshness,
       noImmediateRematch: flags.noImmediateRematch,
       sharedGamesPreference: flags.sharedGamesPreference,
+      rematchFallback: flags.rematchFallback,
     };
     let replayMetrics: SessionMetrics;
     let diagnostics: ReplayDiagnostics;

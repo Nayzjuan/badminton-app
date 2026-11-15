@@ -20,6 +20,7 @@ import {
 } from "@/lib/constants";
 import { getDynamicDraftCap, type PairRuleFlags } from "@/lib/matchmaking-core";
 import { isHeldAwaitingReadiness } from "@/lib/cross-court/derive-held-state";
+import { getManilaCalendarDate } from "@/lib/month";
 
 export type PendingCapRow = {
   is_published: boolean;
@@ -106,4 +107,47 @@ export function readPairRuleFlags(): PairRuleFlags {
     noImmediateRematch: isNoImmediateRematchEnabled(),
     sharedGamesPreference: isSharedGamesPreferenceEnabled(),
   };
+}
+
+/**
+ * Inclusive last Manila calendar day the rematch-yield kill switch may fire.
+ * From the next midnight Asia/Manila the env is ignored and the yield stays off.
+ * First Saturday after this ship (activated 2026-11-15 Manila) is 2026-11-21.
+ */
+export const REMATCH_FALLBACK_SUNSET_MANILA = "2026-11-21";
+
+/** Unset / empty / off / false / 0 → off. Unlike R1/R2, default is hard rematch. */
+function isExplicitlyEnabled(env: string | undefined): boolean {
+  if (env == null || env.trim() === "") return false;
+  const v = env.trim().toLowerCase();
+  return v === "true" || v === "1" || v === "on";
+}
+
+/**
+ * Restore the old rematch yield (`composeEngineProposal` rematchFallback:true).
+ * Default off. `MATCHMAKING_REMATCH_FALLBACK=on` works only through
+ * `REMATCH_FALLBACK_SUNSET_MANILA` inclusive; after that always false.
+ * `now` is injectable so the Saturday cutoff is testable.
+ */
+export function isRematchFallbackEnabled(
+  env: string | undefined = process.env.MATCHMAKING_REMATCH_FALLBACK,
+  now: Date = new Date()
+): boolean {
+  if (getManilaCalendarDate(now) > REMATCH_FALLBACK_SUNSET_MANILA) return false;
+  return isExplicitlyEnabled(env);
+}
+
+/** Gate for the production / replay rematch-yield retry. */
+export function shouldRetryRematchFallback(args: {
+  hasProposal: boolean;
+  rematchBlocked?: boolean;
+  noImmediateRematch: boolean;
+  rematchFallbackEnabled: boolean;
+}): boolean {
+  return (
+    !args.hasProposal &&
+    args.rematchBlocked === true &&
+    args.noImmediateRematch &&
+    args.rematchFallbackEnabled
+  );
 }

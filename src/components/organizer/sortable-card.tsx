@@ -31,11 +31,8 @@ import {
 import type { EnrichedMatch } from "@/hooks/use-organizer-data";
 import type { ReuseNotice } from "@/lib/derive-reuse-notice";
 import type { CapSaturationPayload } from "@/lib/broadcast";
-import {
-  CRITICAL_WAIT_MINUTES,
-  CROSS_COURT_REST_FALLBACK_MINUTES,
-  MAX_PARTNERSHIP_REPEATS,
-} from "@/lib/constants";
+import { capSaturationCopy } from "@/lib/cap-saturation-copy";
+import { CROSS_COURT_REST_FALLBACK_MINUTES } from "@/lib/constants";
 import {
   deriveHeldState,
   formatRestCountdown,
@@ -94,67 +91,47 @@ export function CapSaturationNotice({
   if (!capSaturation) return null;
 
   const isRedZone = capSaturation.type === "red_zone";
-  const isRematch = capSaturation.reason === "immediate_rematch";
-  const isConsecutive = capSaturation.reason === "consecutive";
-  const heading = isRematch
-    ? "Immediate rematch blocked"
-    : isConsecutive
-      ? "Last partnership blocked"
-      : "Partner-pair cap reached";
-  const body = isRematch
-    ? isRedZone
-      ? `${capSaturation.anchorPlayerName} has been waiting over ${CRITICAL_WAIT_MINUTES} min, but every available group would put someone back with a player from their last game. Manual assignment needed.`
-      : `Could not form a match for ${capSaturation.anchorPlayerName} — every remaining group would repeat someone's last game. Assign manually or wait for a court to finish.`
-    : isConsecutive
-      ? isRedZone
-        ? `${capSaturation.anchorPlayerName} has been waiting over ${CRITICAL_WAIT_MINUTES} min but seating them would reuse last game's teammates. Manual assignment needed.`
-        : `Could not form a match for ${capSaturation.anchorPlayerName} — remaining combinations would reuse last game's teammates. Consider a manual override or wait for ongoing matches to finish.`
-      : isRedZone
-        ? `${capSaturation.anchorPlayerName} has been waiting over ${CRITICAL_WAIT_MINUTES} min but all available teammates have already hit the ${MAX_PARTNERSHIP_REPEATS}-game partner cap. Manual assignment needed.`
-        : `Could not form a match for ${capSaturation.anchorPlayerName} — all partner combinations have reached the ${MAX_PARTNERSHIP_REPEATS}-game cap. Consider a manual override or wait for ongoing matches to finish.`;
-  const noticeLabel = isRematch
-    ? "Immediate-rematch notice"
-    : isConsecutive
-      ? "Last-partnership notice"
-      : "Partner-pair cap notice";
+  const copy = capSaturationCopy({
+    reason: capSaturation.reason,
+    zone: capSaturation.type,
+    anchorPlayerName: capSaturation.anchorPlayerName,
+  });
+  const tone = isRedZone ? "text-cc-red" : "text-cc-amber";
 
   return (
     <div
       role="alert"
-      aria-label={noticeLabel}
+      aria-live={isRedZone ? "assertive" : "polite"}
+      aria-label={copy.noticeLabel}
       className={[
-        "clip-cut-sm border animate-in slide-in-from-top-1 fade-in duration-200",
-        isRedZone ? "border-cc-red/40 bg-cc-red-dim" : "border-cc-amber/35 bg-cc-amber-dim",
+        "relative overflow-hidden clip-cut-sm border animate-in slide-in-from-top-1 fade-in duration-200",
+        isRedZone ? "border-cc-red/55 bg-cc-red-dim" : "border-cc-amber/50 bg-cc-amber-dim",
       ].join(" ")}
     >
-      <div className="flex items-start justify-between gap-3 px-4 py-3">
-        <div className="flex items-start gap-2.5 min-w-0">
-          <AlertTriangle
-            className={[
-              "h-4 w-4 mt-0.5 shrink-0",
-              isRedZone ? "text-cc-red" : "text-cc-amber",
-            ].join(" ")}
-          />
-          <div className="min-w-0">
-            <p
-              className={[
-                "font-command text-[9.5px] uppercase tracking-[0.13em]",
-                isRedZone ? "text-cc-red" : "text-cc-amber",
-              ].join(" ")}
-            >
-              {heading}
-              {isRedZone && <span className="ml-1.5">— Urgent</span>}
-            </p>
-            <p className="text-[11.5px] mt-0.5 leading-relaxed text-cc-t2">{body}</p>
-          </div>
+      <div
+        aria-hidden
+        className={[
+          "absolute inset-y-0 left-0 w-1.5",
+          isRedZone ? "bg-cc-red" : "bg-cc-amber",
+        ].join(" ")}
+      />
+      <div className="flex items-start gap-3 py-3 pl-4 pr-1 sm:py-3.5 sm:pl-5 sm:pr-2">
+        <AlertTriangle className={["mt-0.5 h-5 w-5 shrink-0", tone].join(" ")} />
+        <div className="min-w-0 flex-1">
+          <p className={["font-command text-[11px] uppercase tracking-[0.12em]", tone].join(" ")}>
+            {copy.heading}
+            {isRedZone && <span className="ml-1.5">— Urgent</span>}
+          </p>
+          <p className="mt-1 text-sm leading-snug text-cc-t1">{copy.body}</p>
         </div>
         {onDismiss && (
           <button
+            type="button"
             onClick={onDismiss}
-            aria-label={`Dismiss ${noticeLabel.toLowerCase()}`}
-            className="shrink-0 p-1 transition-colors text-cc-t3 hover:text-cc-t2"
+            aria-label={`Dismiss ${copy.noticeLabel.toLowerCase()}`}
+            className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center text-cc-t3 transition-colors hover:text-cc-t1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cc-accent"
           >
-            <X className="h-3.5 w-3.5" />
+            <X className="h-4 w-4" />
           </button>
         )}
       </div>

@@ -13,6 +13,14 @@
 
 ---
 
+## Pair-repeat rules — shipped PR #103
+
+Archived from `MEMORY.md` after hard-rematch. Owner picked R1 as same-slot preference. `composeEngineProposal` yielded a rematch from the rested pool (`rematchFallback`); rest was not waived. Replay vs `pair-rules-baseline`: rematches 564.8 → 265.2; over-cap 137 → 61.8; stalls 30 → 30.6; sit-outs 0. Residual: mixed-level 13.6 → 36.8. Yield is now gated — see Hard rematch in `MEMORY.md`.
+
+## 2026-10-04 — CI follow-up after #100
+
+Archived from `MEMORY.md`. `use-organizer-dashboard.ts` was below the perFile floor because Auto-publish and courtside offline/timeout were never driven. OD-CS covers those. I-3 fixture is 12 so slot 2 can fire (`PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK`). Branch `fix/ci-after-held-readiness`.
+
 ## PIN reconnect SQL (Stelle lockout) — applied 2026-11-05
 
 Was OPEN/UNAPPLIED in `MEMORY.md`. Correct PIN matched; `migrate_player_identity` then failed because live RPC was INVOKER. Applied `20261105000000_migrate_identity_reconnect_fkeys.sql` via MCP `apply_migration` on `usxftpexoimletqmrggb`. Prod stamp `20261105153258` / `migrate_identity_reconnect_fkeys`. `prosecdef=true`; no-CASCADE club FKs fatal; organizer tombstone stays `needs_rename=true`; same-name+same-PIN ghosts flagged. Diagnose: `supabase/data-fixes/20261105_stelle_reconnect_diagnose.sql`.
