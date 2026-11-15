@@ -153,7 +153,9 @@ describe("Matchmaking Engine — Suite A", () => {
 
     // Create 6 players — do NOT queue them yet (seedPlayers would queue them,
     // causing duplicate entries after makeCompletedMatch re-adds them).
-    const [p1, p2, p3, p4, p5, p6] = await Promise.all([
+    const [p1, p2, p3, p4, p5, p6, p7, p8] = await Promise.all([
+      makeProfile({ faker }),
+      makeProfile({ faker }),
       makeProfile({ faker }),
       makeProfile({ faker }),
       makeProfile({ faker }),
@@ -173,7 +175,7 @@ describe("Matchmaking Engine — Suite A", () => {
       });
     }
 
-    // Now queue all 6 players so the engine has them available.
+    // Queue 8 so a rematch-free four exists (p5–p8 have no last game).
     // p1 and p2 are at the partnership cap with each other.
     await Promise.all([
       makeQueueEntry({ sessionId: session.id, playerId: p1.id }),
@@ -182,6 +184,8 @@ describe("Matchmaking Engine — Suite A", () => {
       makeQueueEntry({ sessionId: session.id, playerId: p4.id }),
       makeQueueEntry({ sessionId: session.id, playerId: p5.id }),
       makeQueueEntry({ sessionId: session.id, playerId: p6.id }),
+      makeQueueEntry({ sessionId: session.id, playerId: p7.id }),
+      makeQueueEntry({ sessionId: session.id, playerId: p8.id }),
     ]);
 
     await runEngineForSession(session.id);

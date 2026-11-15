@@ -26,6 +26,29 @@ describe("synthetic fixtures", () => {
   });
 });
 
+function pairRefillFixture() {
+  const players = Array.from({ length: 16 }, (_, i) => ({
+    player_id: `p${i}`,
+    display_name: `P${i}`,
+    skill_level_int: 3,
+    skill_level: "intermediate",
+    joinMin: 0,
+  }));
+  return {
+    sessionId: "pair-refill",
+    name: "pair-refill",
+    day: "synthetic",
+    t0: "2026-01-01T00:00:00.000Z",
+    players,
+    courts: [
+      { id: "c0", name: "C0", durationsMin: Array(10).fill(20) },
+      { id: "c1", name: "C1", durationsMin: Array(10).fill(20) },
+    ],
+    horizonMin: 80,
+    realMatches: [],
+  };
+}
+
 describe("draft-queue replay", () => {
   it("composes matches and never stalls the whole synthetic session", () => {
     const fixture = syntheticFixture(1);
@@ -37,28 +60,18 @@ describe("draft-queue replay", () => {
   });
 
   it("draft-queue waitingCount is unfiltered so both courts refill together", () => {
-    const players = Array.from({ length: 16 }, (_, i) => ({
-      player_id: `p${i}`,
-      display_name: `P${i}`,
-      skill_level_int: 3,
-      skill_level: "intermediate",
-      joinMin: 0,
-    }));
-    const fixture = {
-      sessionId: "pair-refill",
-      name: "pair-refill",
-      day: "synthetic",
-      t0: "2026-01-01T00:00:00.000Z",
-      players,
-      courts: [
-        { id: "c0", name: "C0", durationsMin: Array(10).fill(20) },
-        { id: "c1", name: "C1", durationsMin: Array(10).fill(20) },
-      ],
-      horizonMin: 80,
-      realMatches: [],
-    };
-    const result = replaySession(fixture, { freshness: false, draftQueue: true });
+    // Pin the old rematch yield so this assertion is about waitingCount, not R1.
+    const result = replaySession(pairRefillFixture(), {
+      freshness: false,
+      draftQueue: true,
+      rematchFallback: true,
+    });
     expect(result.matches.filter((m) => Math.abs(m.startMin - 40) < 1e-6).length).toBe(2);
+  });
+
+  it("hard rematch does not refill the original fours at t=40", () => {
+    const result = replaySession(pairRefillFixture(), { freshness: false, draftQueue: true });
+    expect(result.matches.filter((m) => Math.abs(m.startMin - 40) < 1e-6).length).toBe(0);
   });
 
   it("ON cannot return a match when OFF cannot (per-call fail-open on a thin tick)", () => {

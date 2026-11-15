@@ -126,6 +126,8 @@ export type ReplayOptions = {
   noImmediateRematch?: boolean;
   /** Override MATCHMAKING_SHARED_GAMES_PREFERENCE for this run. */
   sharedGamesPreference?: boolean;
+  /** Override MATCHMAKING_REMATCH_FALLBACK for this run. Default: production flag. */
+  rematchFallback?: boolean;
   /** Compose ahead like runEngineInternal instead of seating on court-free. */
   draftQueue?: boolean;
   waitSlackMinutes?: number;

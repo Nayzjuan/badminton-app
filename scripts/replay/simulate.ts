@@ -51,9 +51,11 @@ import {
 import {
   isFreshnessRefreshEnabled,
   isNoImmediateRematchEnabled,
+  isRematchFallbackEnabled,
   isSharedGamesPreferenceEnabled,
   planSlots,
   shouldContinueSlot,
+  shouldRetryRematchFallback,
   softGateDecision,
 } from "../../src/lib/matchmaking-slots";
 import {
@@ -167,6 +169,7 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
   const t0Ms = new Date(fixture.t0).getTime();
   const isoAt = (min: number) => new Date(t0Ms + min * 60_000).toISOString();
   const freshnessOn = options.freshness ?? isFreshnessRefreshEnabled();
+  const rematchFallbackOn = options.rematchFallback ?? isRematchFallbackEnabled();
   const pairFlags: PairRuleFlags = {
     noImmediateRematch: options.noImmediateRematch ?? isNoImmediateRematchEnabled(),
     sharedGamesPreference: options.sharedGamesPreference ?? isSharedGamesPreferenceEnabled(),
@@ -392,7 +395,14 @@ export function replaySession(fixture: SessionFixture, options: ReplayOptions = 
       freshness: freshnessOn,
       rematchFallback: false,
     });
-    if (!result.proposal && result.rematchBlocked && pairFlags.noImmediateRematch) {
+    if (
+      shouldRetryRematchFallback({
+        hasProposal: !!result.proposal,
+        rematchBlocked: result.rematchBlocked,
+        noImmediateRematch: pairFlags.noImmediateRematch,
+        rematchFallbackEnabled: rematchFallbackOn,
+      })
+    ) {
       result = composeEngineProposal(pool, engineInputs, pairFlags, {
         freshness: freshnessOn,
         rematchFallback: true,

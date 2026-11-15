@@ -62,8 +62,10 @@ import {
 } from "@/lib/matchmaking-core";
 import {
   isFreshnessRefreshEnabled,
+  isRematchFallbackEnabled,
   planSlots,
   readPairRuleFlags,
+  shouldRetryRematchFallback,
   softGateDecision,
   shouldContinueSlot,
 } from "@/lib/matchmaking-slots";
@@ -684,18 +686,32 @@ async function runEngineInternal(
       rematchFallback: false,
     });
 
-    // Do not waive rest to hunt a rematch-free four. That seats people who
-    // just walked off court and skips the cross-court pull (XC-1). Yield
-    // among the rested pool instead; the reach can still freshen it.
+    // Hard rematch by default. Do not waive rest to hunt a rematch-free four
+    // (that skipped XC-1). Probe the R1-off four so the cross-court reach
+    // still has a waiting base; executeMatch it only while
+    // MATCHMAKING_REMATCH_FALLBACK is on (and before the Manila Saturday sunset).
+    let commitWaitingFour = true;
+    const stallCapSaturation = result.capSaturation;
+    const stallCapReason = result.capSaturationReason;
+    const stallRematchBlocked = result.rematchBlocked;
     if (!result.proposal && result.rematchBlocked && pairFlags.noImmediateRematch) {
-      result = composeEngineProposal(workingPool, engineInputs, pairFlags, {
+      const probe = composeEngineProposal(workingPool, engineInputs, pairFlags, {
         freshness: freshnessRefresh,
         rematchFallback: true,
       });
+      if (probe.proposal) {
+        result = probe;
+        commitWaitingFour = shouldRetryRematchFallback({
+          hasProposal: false,
+          rematchBlocked: true,
+          noImmediateRematch: pairFlags.noImmediateRematch,
+          rematchFallbackEnabled: isRematchFallbackEnabled(),
+        });
+      }
     }
 
     const { proposal, capSaturation } = result;
-    if (i === 0 && !proposal) rematchBlocked = !!result.rematchBlocked;
+    if (i === 0 && !proposal) rematchBlocked = !!stallRematchBlocked;
 
     if (!proposal) {
       // Broadcast cap-saturation warning when the cap (not player shortage)
@@ -705,7 +721,7 @@ async function runEngineInternal(
         broadcastCapSaturation(sessionId, {
           // isRedZonePlayer, not a score test: CapSaturationPayload documents
           // "red_zone" as "anchor has waited >= CRITICAL_WAIT_MINUTES" and the
-          // UI copy in sortable-card.tsx says "waiting over 20 min", so a score
+          // UI copy in cap-saturation-copy.ts says "waiting over 20 min", so a score
           // test made the payload disagree with both (a wait-22 / 3-games anchor
           // scores 998 and was broadcast as "general").
           type: isRedZonePlayer(anchor) ? "red_zone" : "general",
@@ -885,6 +901,23 @@ async function runEngineInternal(
     }
 
     if (committedHeld) continue; // held draft created — on to the next slot
+
+    if (!commitWaitingFour) {
+      // Probe was for XC only. Do not seat the rematch waiting four.
+      if (i === 0) rematchBlocked = !!stallRematchBlocked;
+      if (stallCapSaturation) {
+        const anchor = workingPool[0];
+        broadcastCapSaturation(sessionId, {
+          type: isRedZonePlayer(anchor) ? "red_zone" : "general",
+          anchorPlayerId: anchor.player_id,
+          anchorPlayerName: anchor.display_name,
+          reason: stallCapReason ?? "immediate_rematch",
+        }).catch((err) => {
+          console.warn("[matchmaking] broadcastCapSaturation failed (non-fatal):", err);
+        });
+      }
+      break;
+    }
 
     // ── Commit the match ─────────────────────────────────────────
     // bypassGate slot 0 must be born PUBLISHED regardless of the session's

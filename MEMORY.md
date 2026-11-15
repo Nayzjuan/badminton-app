@@ -17,17 +17,9 @@
 
 ---
 
-## PIN reconnect SQL — applied (`20261105153258`)
+## Hard rematch — yield gated (`MATCHMAKING_REMATCH_FALLBACK`)
 
-`migrate_player_identity` on `usxftpexoimletqmrggb` is `SECURITY DEFINER` (`prosecdef=true`, `search_path=public, pg_temp`, ACL `{postgres=X/postgres,service_role=X/postgres}`). Stamp `20261105153258` / `migrate_identity_reconnect_fkeys` (repo file `20261105000000`). Stelle can PIN-reconnect; the RPC is the unblock. Diagnose query: `supabase/data-fixes/20261105_stelle_reconnect_diagnose.sql`. TS RPC-error logging ships with PR #104 on merge to `main`.
-
-## Pair-repeat rules — shipped on `feat/pair-repeat-rules`
-
-Owner picked **R1 as same-slot preference**. `composeEngineProposal` yields a rematch from the rested pool (`rematchFallback`); rest is not waived (that skipped the XC-1 pull). Replay vs `pair-rules-baseline`: rematches 564.8 → 265.2; over-cap 137 → 61.8; stalls 30 → 30.6; sit-outs 0. Residual: mixed-level 13.6 → 36.8. Shipping via PR #103.
-
-## 2026-10-04 — CI follow-up after #100
-
-`use-organizer-dashboard.ts` was below the perFile floor (lines 78 / statements 75 / branches 70) because Auto-publish and courtside offline/timeout were never driven. OD-CS covers those. I-3 used 8 waiters; after the first four, `shouldContinueSlot` sees 4 and stops (`PLAYERS_PER_MATCH + MIN_FREE_POOL_FOR_ON_DECK`). Fixture is 12 so slot 2 can fire. Branch `fix/ci-after-held-readiness`.
+Default is hard rematch: `runEngineInternal` probes the R1-off four for the cross-court reach but `executeMatch`s it only while `isRematchFallbackEnabled` is true. Replay does not probe XC. R1 preference, R2 soft, held rematch drop, and the `executeMatch` guard stay. Restore the old waiting-four yield with `MATCHMAKING_REMATCH_FALLBACK=on` through Manila date `REMATCH_FALLBACK_SUNSET_MANILA` (`2026-11-21`) inclusive; from 2026-11-22 00:00 Asia/Manila the env is ignored. CapSaturationNotice copy is unchanged (`rg "Immediate rematch blocked" src/lib/cap-saturation-copy.ts`). Prove sunset with `npx vitest run tests/unit/rematch-fallback.test.ts tests/unit/month.test.ts`. Prove the engine stall (broadcast, no RPC, Call Next copy, kill-switch yield) with `npx vitest run tests/unit/matchmaking-engine.test.ts -t ME-HR-`.
 
 ## 2026-10-04 — organizer mutation resilience (slow net)
 
